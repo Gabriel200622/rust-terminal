@@ -211,6 +211,118 @@ pub fn data_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Atomic replacement guarantees complete contents, not that a racing
+    // Windows open always succeeds. Test this Windows error policy on every
+    // host, but apply it only to the Windows stress-test reader below.
+    fn read_with_windows_retries(
+        mut read: impl FnMut() -> std::io::Result<Vec<u8>>,
+    ) -> std::io::Result<Vec<u8>> {
+        use std::time::{Duration, Instant};
+
+        let deadline = Instant::now() + Duration::from_millis(250);
+        loop {
+            match read() {
+                Err(error)
+                    if matches!(error.raw_os_error(), Some(5 | 32 | 33))
+                        && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                result => return result,
+            }
+        }
+    }
+
+    #[test]
+    fn concurrent_reader_recovers_from_windows_access_and_sharing_conflicts() {
+        for code in [5, 32, 33] {
+            let mut attempts = 0;
+            let bytes = read_with_windows_retries(|| {
+                attempts += 1;
+                if attempts == 1 {
+                    Err(std::io::Error::from_raw_os_error(code))
+                } else {
+                    Ok(b"complete file".to_vec())
+                }
+            })
+            .unwrap();
+            assert_eq!(bytes, b"complete file");
+            assert_eq!(attempts, 2);
+        }
+    }
+
+    #[test]
+    fn concurrent_reader_surfaces_unexpected_errors_without_retrying() {
+        for error in [
+            std::io::Error::from_raw_os_error(2),
+            std::io::Error::from_raw_os_error(3),
+            std::io::Error::from_raw_os_error(87),
+            std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "no Windows error code",
+            ),
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid file"),
+        ] {
+            let mut error = Some(error);
+            let raw_code = error.as_ref().unwrap().raw_os_error();
+            let kind = error.as_ref().unwrap().kind();
+            let returned = read_with_windows_retries(|| {
+                Err(error.take().expect("Unexpected error was retried"))
+            })
+            .unwrap_err();
+            assert_eq!(returned.raw_os_error(), raw_code);
+            assert_eq!(returned.kind(), kind);
+        }
+    }
+
+    #[test]
+    fn concurrent_reader_surfaces_persistent_access_denial_after_timeout() {
+        let started = std::time::Instant::now();
+        let mut attempts = 0;
+        let error = read_with_windows_retries(|| {
+            attempts += 1;
+            Err(std::io::Error::from_raw_os_error(5))
+        })
+        .unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(5));
+        assert!(attempts > 1);
+        // Each retry sleeps at least 5 ms within the 250 ms budget.
+        assert!(attempts <= 51);
+        assert!(started.elapsed() >= std::time::Duration::from_millis(250));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn concurrent_reader_recovers_after_a_windows_handle_releases_read_access() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        std::fs::write(&path, b"complete file").unwrap();
+        let mut blocker = Some(
+            std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(&path)
+                .unwrap(),
+        );
+        let bytes = read_with_windows_retries(|| {
+            let result = std::fs::read(&path);
+            if let Err(error) = &result {
+                assert_eq!(error.raw_os_error(), Some(32));
+                // Release only after a real sharing conflict, without making
+                // recovery depend on another thread meeting the retry deadline.
+                drop(blocker.take().expect("Read stayed blocked after release"));
+            }
+            result
+        })
+        .unwrap();
+        assert!(blocker.is_none());
+        assert_eq!(bytes, b"complete file");
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
+
     #[cfg(windows)]
     #[test]
     fn save_retries_a_temporary_windows_sharing_violation() {
@@ -367,27 +479,23 @@ mod tests {
         atomic_write(&path, &vec![b'A'; LENGTH]).unwrap();
         let complete = AtomicBool::new(false);
         let committed = AtomicUsize::new(0);
-        let start = Arc::new(Barrier::new(8));
+        let start = Arc::new(Barrier::new(9));
         std::thread::scope(|scope| {
             let reader = scope.spawn(|| {
-                while !complete.load(Ordering::Acquire) {
-                    let bytes = match std::fs::read(&path) {
-                        Ok(bytes) => bytes,
-                        #[cfg(windows)]
-                        Err(error) if matches!(error.raw_os_error(), Some(5 | 32 | 33)) => {
-                            // Replacement can temporarily deny a new read while
-                            // the previous file is pending deletion on Windows.
-                            // Validate every successful snapshot and require the
-                            // final read after all writers finish to succeed.
-                            std::thread::yield_now();
-                            continue;
-                        }
-                        Err(error) => {
-                            panic!("Cannot read concurrently saved configuration: {error}")
-                        }
-                    };
+                start.wait();
+                let mut observed = 0;
+                loop {
+                    #[cfg(windows)]
+                    let bytes = read_with_windows_retries(|| std::fs::read(&path)).unwrap();
+                    #[cfg(not(windows))]
+                    let bytes = std::fs::read(&path).unwrap();
                     assert_eq!(bytes.len(), LENGTH);
+                    assert!((b'A'..=b'H').contains(&bytes[0]));
                     assert!(bytes.iter().all(|byte| *byte == bytes[0]));
+                    observed += 1;
+                    if complete.load(Ordering::Acquire) {
+                        return observed;
+                    }
                 }
             });
             let writers: Vec<_> = (0..8)
@@ -425,7 +533,7 @@ mod tests {
                 .collect();
             let results: Vec<_> = writers.into_iter().map(|writer| writer.join()).collect();
             complete.store(true, Ordering::Release);
-            reader.join().unwrap();
+            assert!(reader.join().unwrap() > 0);
             for result in results {
                 result.unwrap();
             }
