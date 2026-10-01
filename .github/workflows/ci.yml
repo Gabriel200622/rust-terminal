@@ -73,8 +73,8 @@ jobs:
     name: Check (${{ matrix.check-name }})
     needs: preflight
     # Instantiate the matrix so documentation PRs emit the required per-OS names.
-    # Skip expensive source checks at the step level instead.
-    if: always()
+    # Skip expensive source checks at the step level; let cancelled runs stop.
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -147,7 +147,7 @@ jobs:
     name: Latest stable compatibility (Linux)
     needs: preflight
     # Keep the job successful on documentation-only changes without compiling.
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
