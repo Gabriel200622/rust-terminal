@@ -134,6 +134,7 @@ jobs:
     name: Stage draft release
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
