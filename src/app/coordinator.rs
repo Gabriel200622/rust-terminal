@@ -162,6 +162,51 @@ impl App {
             self.ui.error = Some(format!("Cannot queue workspace save: {error}"));
         }
     }
+    pub(super) fn observe_window(&mut self, ctx: &egui::Context, size: egui::Vec2) {
+        if self.ephemeral || !self.window_writable {
+            return;
+        }
+        if self.restore_maximized {
+            // eframe maps the initially hidden window after its first render.
+            // Some window managers ignore the builder's pre-map maximize
+            // request. Reapply it after rendering and keep startup observations
+            // from replacing the saved geometry while the OS handles it.
+            if ctx.input(|input| input.viewport().maximized) != Some(true)
+                && self.started.elapsed() < Duration::from_secs(2)
+            {
+                crate::platform::window::send(
+                    ctx,
+                    crate::platform::window::WindowOperation::SetMaximized(true),
+                );
+                ctx.request_repaint_after(Duration::from_millis(30));
+                return;
+            }
+            self.restore_maximized = false;
+        }
+        let changed = ctx.input(|input| {
+            let viewport = input.viewport();
+            self.window_state.observe(
+                [size.x, size.y],
+                viewport.maximized,
+                viewport.minimized.unwrap_or(false),
+                viewport.fullscreen.unwrap_or(false),
+            )
+        });
+        if changed {
+            self.window_generation += 1;
+            self.save_window();
+        }
+    }
+    pub(super) fn save_window(&mut self) {
+        if self.ephemeral || !self.window_writable {
+            return;
+        }
+        if let Some(writer) = &self.writer
+            && let Err(error) = writer.submit_window(self.window_generation, self.window_state)
+        {
+            self.ui.error = Some(format!("Cannot queue window save: {error}"));
+        }
+    }
     pub(super) fn poll_saves(&mut self, ctx: &egui::Context) {
         let events = self
             .writer
@@ -185,6 +230,7 @@ impl App {
                         match event.kind {
                             SaveKind::State => "save_state",
                             SaveKind::Config => "save_preferences",
+                            SaveKind::Window => "save_window",
                         },
                         None,
                         Some(event.generation),

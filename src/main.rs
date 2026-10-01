@@ -1,5 +1,5 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
-use pace_terminal::{Launch, app};
+use pace_terminal::{Launch, app, config, persistence::window_state};
 
 fn main() -> anyhow::Result<()> {
     let mut launch = Launch::default();
@@ -58,10 +58,7 @@ fn main() -> anyhow::Result<()> {
                 let w: f32 = w.parse()?;
                 let h: f32 = h.parse()?;
                 anyhow::ensure!(
-                    w.is_finite()
-                        && h.is_finite()
-                        && (640.0..=8192.0).contains(&w)
-                        && (400.0..=8192.0).contains(&h),
+                    window_state::WindowState::valid_size([w, h]),
                     "size must be 640x400 to 8192x8192"
                 );
                 launch.size = Some([w, h]);
@@ -74,7 +71,7 @@ fn main() -> anyhow::Result<()> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Pace — a native GPU terminal\n\nUsage: pace [OPTIONS]\n  --cwd PATH         Open a workspace at PATH\n  --ssh DESTINATION  Open a workspace whose terminals run on an SSH host\n  --config PATH      Use a TOML configuration\n  --data-root PATH   Isolate settings and saved workspace state\n  --command COMMAND  Run a command in the first terminal\n  --no-restore       Start without saved workspaces\n  --size WIDTHxHEIGHT\n  --screenshot PATH  Capture the native window after 3 seconds and exit\n  --diagnostics      Print renderer and display details\n  --version\n  --help"
+                    "Pace — a native GPU terminal\n\nUsage: pace [OPTIONS]\n  --cwd PATH         Open a workspace at PATH\n  --ssh DESTINATION  Open a workspace whose terminals run on an SSH host\n  --config PATH      Use a TOML configuration\n  --data-root PATH   Isolate settings and saved workspace/window state\n  --command COMMAND  Run a command in the first terminal\n  --no-restore       Start without saved workspaces\n  --size WIDTHxHEIGHT Override saved window size and maximized state\n  --screenshot PATH  Capture the native window after 3 seconds and exit\n  --diagnostics      Print renderer and display details\n  --version\n  --help"
                 );
                 return Ok(());
             }
@@ -90,13 +87,45 @@ fn main() -> anyhow::Result<()> {
         launch.ssh.is_none() || launch.command.is_none(),
         "--command cannot be combined with --ssh"
     );
-    let size = launch.size.unwrap_or([1180.0, 760.0]);
+    let window_path = launch
+        .data_root
+        .clone()
+        .unwrap_or_else(config::data_dir)
+        .join("window.json");
+    // Finish the small geometry read before creating the native window, so it
+    // opens at the restored size without a visible resize during bootstrap.
+    let mut window = if launch.screenshot.is_some() {
+        window_state::LoadReport::default()
+    } else {
+        match std::thread::Builder::new()
+            .name("pace-window-restore".into())
+            .spawn(move || window_state::load(&window_path))
+        {
+            Ok(worker) => worker.join().unwrap_or_else(|_| window_state::LoadReport {
+                error: Some(
+                    "Window restoration worker stopped; saved file will be preserved".into(),
+                ),
+                ..Default::default()
+            }),
+            Err(error) => window_state::LoadReport {
+                error: Some(format!(
+                    "Could not start window restoration worker: {error}"
+                )),
+                ..Default::default()
+            },
+        }
+    };
+    if let Some(size) = launch.size {
+        window.state.inner_size = size;
+        window.state.maximized = false;
+    }
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("Pace")
             .with_app_id("dev.pace.terminal")
             .with_icon(native_icon())
-            .with_inner_size(size)
+            .with_inner_size(window.state.inner_size)
+            .with_maximized(window.state.maximized)
             .with_min_inner_size([640.0, 400.0])
             .with_transparent(cfg!(target_os = "linux"))
             .with_decorations(false),
@@ -106,7 +135,7 @@ fn main() -> anyhow::Result<()> {
     eframe::run_native(
         "Pace",
         options,
-        Box::new(move |cc| Ok(Box::new(app::App::new(cc, launch)))),
+        Box::new(move |cc| Ok(Box::new(app::App::new(cc, launch, window)))),
     )
     .map_err(|e| anyhow::anyhow!("Cannot start native renderer: {e}"))
 }
