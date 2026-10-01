@@ -664,6 +664,31 @@ fn workspace_row(
     }
 
     let text_left = tile.right() + 10.0;
+    let show_shortcut = position.0 < 9
+        && ui.input(|input| {
+            input.focused
+                && if cfg!(target_os = "macos") {
+                    input.modifiers.mac_cmd
+                } else {
+                    input.modifiers.ctrl
+                }
+        });
+    let hint_width = if show_shortcut {
+        let digit = position.0 + 1;
+        let hint = if cfg!(target_os = "macos") {
+            format!("⌘{digit}")
+        } else {
+            format!("Ctrl⇧{digit}")
+        };
+        keycaps(
+            &painter,
+            Pos2::new(row.right() - 7.0, row.top() + 15.0),
+            &hint,
+            p.secondary,
+        )
+    } else {
+        0.0
+    };
     let trailing = 30.0;
     let text_width = row.right() - text_left - trailing;
     galley_at(
@@ -678,7 +703,7 @@ fn workspace_row(
             } else {
                 theme::mix(p.secondary, p.fg, 0.45)
             },
-            text_width,
+            row.right() - text_left - (hint_width + 14.0).max(trailing),
         ),
     );
     let detail = Pos2::new(text_left, row.center().y + 9.0);
@@ -723,7 +748,14 @@ fn workspace_row(
     response.context_menu(|ui| workspace_menu(ui, p, workspace, position, actions));
 
     let more = Rect::from_center_size(
-        Pos2::new(row.right() - 17.0, row.center().y),
+        Pos2::new(
+            row.right() - 17.0,
+            if show_shortcut {
+                row.bottom() - 12.0
+            } else {
+                row.center().y
+            },
+        ),
         Vec2::splat(24.0),
     );
     let more_response = ui.interact(more, more_id, Sense::click());
