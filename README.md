@@ -21,6 +21,27 @@ cargo build --release --locked --bin pace
 
 The executable is `target/release/pace` on Linux/macOS and `target\release\pace.exe` on Windows.
 
+### Development builds
+
+The repository defaults to two Cargo build jobs per invocation so agents working
+in parallel leave capacity for the desktop. For a shared compiler cache, install
+[sccache](https://github.com/mozilla/sccache#installation) using a prebuilt release
+or package manager and merge these settings into your user Cargo configuration
+(`~/.cargo/config.toml`, or `$CARGO_HOME/config.toml` when set):
+
+```toml
+[build]
+jobs = 2
+rustc-wrapper = "sccache"
+```
+
+The user-level job limit covers existing worktrees before they receive the
+repository configuration. Keep existing configuration entries when merging.
+The wrapper is optional and configured per user so other contributors and CI
+can build without installing sccache. Worktrees share its local disk cache while
+keeping separate Cargo target directories; use `sccache --show-stats` to inspect
+reuse. [Incremental Rust compilations and binary crates are not cached](https://github.com/mozilla/sccache/blob/v0.17.0/docs/Rust.md).
+
 ## Workspaces and customization
 
 Workspace navigation, independent shell panes, split layouts, scrollback, terminal search, selection/clipboard, a command palette, and settings are integrated in the native interface. Every action is listed in the command palette with its shortcut; secondary-click a terminal or a workspace for its menu, double-click a workspace to rename it, and drag the sidebar's edge to resize it. Terminal text uses bundled JetBrains Mono; interface text uses Geist. Font licenses accompany the assets.
@@ -42,7 +63,7 @@ pace --help
 
 ## Keyboard shortcuts
 
-Use Ctrl+Shift on Linux/Windows and Command on macOS: T opens a workspace, D splits right, E splits below, W closes the focused pane, F searches, P opens commands, B toggles the sidebar, Enter zooms the focused pane to full size and back, and 1–9 select a workspace by its sidebar position. Ctrl+Tab switches workspaces. Escape leaves a sheet or a focused search field; otherwise it goes to the shell, as do Tab and the arrow keys. Ctrl+comma opens preferences; Ctrl+plus/minus adjusts terminal font size. Use Ctrl+Shift+C/V to copy/paste on Linux/Windows, Command+C/V on macOS. Plain Ctrl+C interrupts the shell; Shift+PageUp/PageDown scrolls history. Hold Shift to select text when a TUI owns the mouse.
+Use Ctrl+Shift on Linux/Windows and Command on macOS: T opens a workspace, D splits right, E splits below, W closes the focused pane, F searches, P opens commands, B toggles the sidebar, Enter zooms the focused pane to full size and back, and 1–9 select a workspace by its sidebar position. Ctrl+Tab switches workspaces. Escape leaves a sheet or a focused search field; otherwise it goes to the shell, as do Tab and the arrow keys. Ctrl+comma opens preferences. Ctrl+plus/minus (Command on macOS) zooms the whole app; Ctrl+equals also zooms in, and Ctrl+0 resets app zoom (Command on macOS). On keyboards where Plus requires Shift, use Ctrl+equals for app zoom. Change terminal font size in Preferences or with Ctrl+Shift+plus/minus; Ctrl+Shift+0 resets it to the default (14 pt), on every platform. Use Ctrl+Shift+C/V to copy/paste on Linux/Windows, Command+C/V on macOS. Plain Ctrl+C interrupts the shell; Shift+PageUp/PageDown scrolls history. Hold Shift to select text when a TUI owns the mouse.
 
 The native [desktop icon](assets/pace.svg) and [Linux desktop entry](packaging/pace.desktop) are provided. Install the binary on your PATH and these files in your desktop environment's standard application/icon locations.
 

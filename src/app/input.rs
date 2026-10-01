@@ -202,6 +202,22 @@ impl App {
             else {
                 continue;
             };
+            if let Some(action) = zoom_shortcut(key, m, &self.config) {
+                actions.push(action);
+                ctx.input_mut(|input| {
+                    input.consume_key(m, key);
+                    // Shift+Minus/0 can produce underscore/closing parenthesis.
+                    input.events.retain(|event| {
+                        !matches!(event, egui::Event::Text(text) if match key {
+                            egui::Key::Plus | egui::Key::Equals => matches!(text.as_str(), "+" | "="),
+                            egui::Key::Minus => matches!(text.as_str(), "-" | "_"),
+                            egui::Key::Num0 => matches!(text.as_str(), "0" | ")"),
+                            _ => false,
+                        })
+                    });
+                });
+                continue;
+            }
             if key == egui::Key::Escape {
                 // Escape leaves the topmost transient surface. With none open
                 // it belongs to the terminal: a message never takes a key the
@@ -287,26 +303,38 @@ impl App {
                     });
                 }
             }
-            if (m.ctrl || m.mac_cmd)
-                && matches!(
-                    key,
-                    egui::Key::Plus | egui::Key::Equals | egui::Key::Minus | egui::Key::Num0
-                )
-                && self.ui.overlay != OverlayState::Settings
-            {
-                let mut config = self.config.clone();
-                config.font_size = match key {
-                    egui::Key::Minus => (config.font_size - 1.0).max(9.0),
-                    egui::Key::Num0 => 14.0,
-                    _ => (config.font_size + 1.0).min(32.0),
-                };
-                actions.push(Action::Preferences(config));
-                ctx.input_mut(|i|{i.consume_key(m,key);i.events.retain(|event|!matches!(event,egui::Event::Text(text) if matches!(text.as_str(),"+"|"="|"-"|"0")));});
-            }
         }
         for action in actions {
             self.action(ctx, action);
         }
+    }
+}
+
+fn zoom_shortcut(key: egui::Key, modifiers: egui::Modifiers, current: &Config) -> Option<Action> {
+    use egui::Key;
+    if modifiers.alt
+        || !(modifiers.ctrl || modifiers.mac_cmd)
+        || (modifiers.ctrl && modifiers.mac_cmd)
+    {
+        return None;
+    }
+    if modifiers.ctrl && modifiers.shift {
+        let font_size = match key {
+            Key::Plus | Key::Equals => (current.font_size + 1.0).min(32.0),
+            Key::Minus => (current.font_size - 1.0).max(9.0),
+            Key::Num0 => Config::default().font_size,
+            _ => return None,
+        };
+        return Some(Action::Preferences(Config {
+            font_size,
+            ..current.clone()
+        }));
+    }
+    match key {
+        Key::Plus | Key::Equals => Some(Action::ZoomUiIn),
+        Key::Minus if !modifiers.shift => Some(Action::ZoomUiOut),
+        Key::Num0 if !modifiers.shift => Some(Action::ResetUiZoom),
+        _ => None,
     }
 }
 
