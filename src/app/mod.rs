@@ -77,6 +77,10 @@ pub struct App {
 }
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, launch: Launch) -> Self {
+        // Pace routes zoom before terminal input and reserves Ctrl+Shift for
+        // terminal font size. The toolkit's permissive shortcuts overlap it.
+        cc.egui_ctx
+            .options_mut(|options| options.zoom_with_keyboard = false);
         theme::fonts(&cc.egui_ctx);
         if launch.diagnostics
             && let Some(render) = &cc.wgpu_render_state

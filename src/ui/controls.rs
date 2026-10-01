@@ -66,7 +66,7 @@ pub fn shortcut(key: &str) -> String {
     }
 }
 
-/// The platform's editing chord, used for preferences and font size.
+/// The platform's editing chord, used for preferences and app zoom.
 pub fn edit_shortcut(key: &str) -> String {
     if cfg!(target_os = "macos") {
         format!("⌘{key}")

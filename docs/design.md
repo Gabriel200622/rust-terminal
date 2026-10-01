@@ -133,7 +133,8 @@ icon buttons keep a 28-point target around a 16-point glyph.
   its own title and consequence ("Close terminal?", "Close workspace?", "Quit
   Pace?").
 - **Preferences.** Grouped rows that apply immediately: theme previews drawn
-  from each theme's own palette, accent dots, a stepper for font size, a slider
+  from each theme's own palette, accent dots, a font size stepper with its
+  Ctrl+Shift+Plus/Minus and Ctrl+Shift+0 shortcuts, a slider
   for line spacing, a segmented cursor style, and switches for boolean settings.
 - **Command palette.** Every action with its shortcut, grouped when browsing and
   flat when filtered. Arrow keys move the highlight, Enter runs, and the pointer
@@ -152,8 +153,12 @@ Interface text is Geist in three weights: regular for body and values, medium
 for names, labels and buttons, semibold for sheet titles and tiles. Sizes are
 13 for body and names, 12–12.5 for secondary and control text, 11–11.5 for
 section labels and paths, and 15 for sheet titles and the palette field.
-Terminal text is JetBrains Mono at a configurable size. Labels use sentence
-case.
+Terminal text is JetBrains Mono; Preferences or Ctrl+Shift+Plus/Minus changes
+its size, and Ctrl+Shift+0 resets it to the default. App zoom
+uses Ctrl+Plus/Minus (Command on macOS), with Ctrl+Equals as an unshifted Plus
+alternative and Ctrl+0 to reset (Command on macOS). App zoom scales terminal
+text and chrome together without changing the saved terminal font size. Labels
+use sentence case.
 
 Icons are drawn natively on a 24-point grid with a 1.5-point stroke and rounded
 ends, matching regular-weight text. Recolour an icon for state; do not swap
