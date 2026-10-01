@@ -451,6 +451,48 @@ fn owned_snapshots_preserve_revision_unicode_attributes_and_unchanged_rows() {
 }
 
 #[test]
+fn owned_snapshots_preserve_osc8_targets_across_wrap_resize_and_replacement() {
+    let session = fixture(12, 4, 16);
+    feed(
+        &session,
+        b"\x1b]8;id=docs;https://example.com/docs\x1b\\documentation link\x1b]8;;\x1b\\ plain",
+    );
+    let first = session.viewport();
+    let target = first.rows[0][0].hyperlink.as_ref().unwrap();
+    assert_eq!(target.as_ref(), "https://example.com/docs");
+    assert!(Arc::ptr_eq(
+        target,
+        first.rows[1][0].hyperlink.as_ref().unwrap()
+    ));
+    assert!(first.rows[1][6].hyperlink.is_none());
+    session.terminal.lock().resize(Size {
+        cols: 24,
+        rows: 4,
+        pixel_width: 240,
+        pixel_height: 80,
+    });
+    session.shared.changed();
+    let resized = session.viewport();
+    assert_eq!(
+        resized.rows[0][17].hyperlink.as_deref(),
+        Some("https://example.com/docs")
+    );
+    feed(
+        &session,
+        b"\x1b[1;1H\x1b]8;;https://other.example/\x07new\x1b]8;;\x07",
+    );
+    let replaced = session.viewport();
+    assert_eq!(
+        replaced.rows[0][0].hyperlink.as_deref(),
+        Some("https://other.example/")
+    );
+    assert_eq!(
+        first.rows[0][0].hyperlink.as_deref(),
+        Some("https://example.com/docs")
+    );
+}
+
+#[test]
 fn viewport_scroll_and_selection_use_history_coordinates() {
     let session = fixture(12, 4, 16);
     feed(&session, b"one\r\ntwo\r\nthree\r\nfour\r\nfive");

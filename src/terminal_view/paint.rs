@@ -1,4 +1,4 @@
-//! Painting consumes prepared draw data and emits selection interactions.
+//! Painting consumes prepared draw data and emits selection and link interactions.
 
 use super::cache::Cache;
 use crate::{
@@ -18,6 +18,7 @@ pub enum SelectionInteraction {
 pub struct PaintResult {
     pub response: egui::Response,
     pub interaction: Option<SelectionInteraction>,
+    pub open_link: Option<crate::platform::links::WebLink>,
 }
 
 impl Cache {
@@ -32,6 +33,17 @@ impl Cache {
         search: &str,
         preedit: &str,
     ) -> PaintResult {
+        let response = ui.interact(
+            rect,
+            ui.id().with("terminal"),
+            egui::Sense::click_and_drag(),
+        );
+        let (hovered_link, open_link) = self.link_interaction(ui, &response, rect);
+        response.clone().on_hover_cursor(if hovered_link.is_some() {
+            egui::CursorIcon::PointingHand
+        } else {
+            egui::CursorIcon::Text
+        });
         let selection = self.selection;
         let font = FontId::monospace(config.font_size);
         let painter = ui.painter().with_clip_rect(rect);
@@ -101,6 +113,29 @@ impl Cache {
                 );
             }
         }
+        if let Some(link) = hovered_link {
+            let columns = usize::from(self.columns);
+            for row in link.start / columns..=link.end / columns {
+                let start = if row == link.start / columns {
+                    link.start % columns
+                } else {
+                    0
+                };
+                let end = if row == link.end / columns {
+                    link.end % columns + 1
+                } else {
+                    columns
+                };
+                let y = rect.top() + (row + 1) as f32 * self.cell.y - 2.0;
+                painter.line_segment(
+                    [
+                        Pos2::new(rect.left() + start as f32 * self.cell.x, y),
+                        Pos2::new(rect.left() + end as f32 * self.cell.x, y),
+                    ],
+                    Stroke::new(1.0, p.fg),
+                );
+            }
+        }
         if let Some((x, y, shape)) = self.cursor {
             let pos = rect.min + Vec2::new(x as f32 * self.cell.x, y as f32 * self.cell.y);
             let cursor = Rect::from_min_size(pos, self.cell);
@@ -163,13 +198,10 @@ impl Cache {
                 );
             }
         }
-        let response = ui.interact(
-            rect,
-            ui.id().with("terminal"),
-            egui::Sense::click_and_drag(),
-        );
-        response.clone().on_hover_cursor(egui::CursorIcon::Text);
         let interaction = response.interact_pointer_pos().and_then(|pos| {
+            if self.link_pointer_owned {
+                return None;
+            }
             if self.mode.intersects(TermMode::MOUSE_MODE) && !ui.input(|i| i.modifiers.shift) {
                 return None;
             }
@@ -202,6 +234,7 @@ impl Cache {
         PaintResult {
             response,
             interaction,
+            open_link,
         }
     }
 }

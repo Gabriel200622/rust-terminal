@@ -13,7 +13,7 @@ use terminal_core::{
 #[derive(Default)]
 pub struct Cache {
     pub(super) rows: Vec<CachedRow>,
-    sources: Vec<Arc<[terminal_core::Cell]>>,
+    pub(super) sources: Vec<Arc<[terminal_core::Cell]>>,
     colors: Option<Colors>,
     revision: u64,
     key: Option<CacheKey>,
@@ -28,6 +28,9 @@ pub struct Cache {
     pub(super) selection: Option<terminal_core::SelectionRange>,
     pub resize_error: Option<String>,
     pub(super) background: Color32,
+    pub(super) pressed_link: Option<super::links::Link>,
+    /// The current primary gesture belongs to a link, including its release frame.
+    pub link_pointer_owned: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -122,6 +125,8 @@ impl Cache {
         self.colors = None;
         self.key = None;
         self.revision = u64::MAX;
+        self.pressed_link = None;
+        self.link_pointer_owned = false;
     }
 
     /// Conservative retained CPU allocation estimate for aggregate diagnostics.

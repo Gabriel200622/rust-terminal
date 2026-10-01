@@ -561,6 +561,11 @@ impl App {
                     }
                 }
             }
+            Action::OpenLink(link) => {
+                if let Err(error) = self.link_opener.open(link, ctx.clone()) {
+                    self.ui.error = Some(error.into());
+                }
+            }
             Action::ScrollBottom(pane) => {
                 if let Some(session) = self.sessions.get(pane) {
                     session.scroll_to_bottom();

@@ -2,6 +2,7 @@
 
 mod cache;
 pub mod geometry;
+mod links;
 mod paint;
 
 pub use cache::Cache;

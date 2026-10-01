@@ -87,6 +87,7 @@ pub struct App {
     /// A sheet or the palette was open when focus was last reconciled.
     overlay_was_open: bool,
     diagnostics: diagnostics::Diagnostics,
+    link_opener: crate::platform::links::LinkOpener,
 }
 impl App {
     pub fn new(
@@ -184,9 +185,13 @@ impl App {
             terminal_focus: None,
             overlay_was_open: false,
             diagnostics: diagnostics::Diagnostics::new(launch.diagnostics),
+            link_opener: Default::default(),
         }
     }
     fn poll(&mut self, ctx: &egui::Context) {
+        if let Some(Err(error)) = self.link_opener.poll() {
+            self.ui.error = Some(error.into());
+        }
         let startup = self
             .startup
             .as_ref()
