@@ -21,6 +21,11 @@ bypass coalescing so hidden sessions remain observable. Acknowledge hidden
 sessions when they become visible. Acknowledging after a snapshot can lose a
 change that arrived between that snapshot and acknowledgement.
 
+`SessionMetadata::reported_cwd` retains the last valid OSC 7 directory separately
+from `cwd`, which can also come from local process polling. Remote clients use
+the explicit report because their local process directory does not identify the
+remote shell's directory. Each fresh session starts with no report.
+
 Each session has a reader, writer, and parser/process worker. The reader uses
 pooled 64 KiB buffers and an eight-message output channel. Parsing releases the
 grid mutex between 16 KiB slices. Input accepts at most one MiB per call and two

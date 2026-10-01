@@ -1006,6 +1006,7 @@ mod tests {
             title: title.into(),
             shell: "/usr/bin/zsh".into(),
             cwd: "/tmp".into(),
+            reported_cwd: None,
             process_id: None,
             status: SessionStatus::Running,
             bell_count: 0,

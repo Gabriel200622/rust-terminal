@@ -1142,21 +1142,24 @@ fn remote_of(app: &App, workspace: WorkspaceId) -> Option<&str> {
 }
 
 #[test]
-fn a_remote_terminal_runs_the_ssh_client_with_the_destination_as_its_only_operand() {
+fn a_remote_terminal_runs_the_ssh_client_with_a_pty_and_a_quoted_bootstrap() {
     let config = Config {
         shell: Some("/bin/zsh".into()),
         scrollback: 500,
         ..Config::default()
     };
     let remote = Remote::parse("me@devbox").unwrap();
-    let options = coordinator::session_options(&config, "ssh", "/srv/app".into(), Some(&remote));
+    let options =
+        coordinator::session_options(&config, "ssh", "/srv/app".into(), Some(&remote), None);
     assert_eq!(options.shell.as_deref(), Some("ssh"));
     // `--` ends option parsing, so the destination can only be a host.
-    assert_eq!(options.args, ["--", "me@devbox"]);
+    assert_eq!(options.args[..3], ["-t", "--", "me@devbox"]);
+    assert_eq!(options.args.len(), 4);
+    assert!(options.args[3].starts_with("sh -c '"));
     assert_eq!(options.cwd, std::path::Path::new("/srv/app"));
     assert_eq!(options.scrollback, 500);
 
-    let local = coordinator::session_options(&config, "ssh", "/srv/app".into(), None);
+    let local = coordinator::session_options(&config, "ssh", "/srv/app".into(), None, None);
     assert_eq!(local.shell.as_deref(), Some("/bin/zsh"));
     assert!(local.args.is_empty());
 }
@@ -1337,7 +1340,7 @@ fn remote_workspaces_are_presented_by_host_instead_of_a_local_folder() {
 
 #[cfg(unix)]
 #[test]
-fn a_remote_terminal_keeps_its_local_directory_whatever_the_host_reports() {
+fn a_remote_split_inherits_the_reported_host_directory_and_keeps_its_local_directory() {
     use std::os::unix::fs::PermissionsExt;
     let root = tempfile::tempdir().unwrap();
     let cwd = root.path().join("local");
@@ -1347,7 +1350,8 @@ fn a_remote_terminal_keeps_its_local_directory_whatever_the_host_reports() {
     let client = root.path().join("fake-ssh");
     std::fs::write(
         &client,
-        "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$0.args\"\npwd >> \"$0.cwd\"\n\
+        "#!/bin/sh\nprintf '%s %s %s\\n' \"$1\" \"$2\" \"$3\" >> \"$0.args\"\n\
+         printf '%s\\0' \"$4\" >> \"$0.commands\"\npwd >> \"$0.cwd\"\n\
          printf '\\033]7;file://devbox/srv/on-the-host\\007'\nexec sleep 30\n",
     )
     .unwrap();
@@ -1384,7 +1388,7 @@ fn a_remote_terminal_keeps_its_local_directory_whatever_the_host_reports() {
         std::thread::sleep(Duration::from_millis(2));
     }
     app.poll(&ctx);
-    assert_eq!(lines("args"), "--\nme@devbox\n");
+    assert_eq!(lines("args"), "-t -- me@devbox\n");
     assert_eq!(
         std::path::Path::new(lines("cwd").trim_end())
             .canonicalize()
@@ -1398,12 +1402,16 @@ fn a_remote_terminal_keeps_its_local_directory_whatever_the_host_reports() {
         "a remote directory was saved as a local one"
     );
 
-    // A split opens another connection from the same local directory.
+    // The SSH client's local process polling must not become the remote path.
+    std::thread::sleep(Duration::from_millis(1200));
+    app.poll(&ctx);
+    // A split opens another connection from the same local directory while
+    // passing the host's reported path in the remote bootstrap.
     app.action(&ctx, Action::Split(pane, pace_model::Axis::Vertical));
     let second = app.controller.model().active_pane().unwrap();
     assert_ne!(second, pane);
     assert_eq!(app.controller.model().pane(second).unwrap().cwd(), cwd);
-    while app.sessions.usage().running != 2 || lines("args").lines().count() != 4 {
+    while app.sessions.usage().running != 2 || lines("args").lines().count() != 2 {
         app.poll(&ctx);
         assert!(
             Instant::now() < deadline,
@@ -1412,5 +1420,86 @@ fn a_remote_terminal_keeps_its_local_directory_whatever_the_host_reports() {
         );
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert_eq!(lines("args"), "--\nme@devbox\n--\nme@devbox\n");
+    assert!(
+        lines("commands").contains("/srv/on-the-host"),
+        "the split starts in the host's home directory instead of /srv/on-the-host: {:?}",
+        lines("commands")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn remote_splits_follow_their_source_pane_after_focus_and_directory_changes() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let local = root.path().join("local");
+    let home = root.path().join("fake-ssh.home");
+    let first = home.join("first project");
+    let next = home.join("next ' % λ project");
+    for directory in [&local, &first, &next] {
+        std::fs::create_dir_all(directory).unwrap();
+    }
+    std::fs::write(home.join(".zshrc"), "PROMPT='PACE> '\n").unwrap();
+    let client = root.path().join("fake-ssh");
+    std::fs::write(&client, "#!/bin/sh\nexport HOME=\"$0.home\" SHELL=zsh ZDOTDIR=\"$0.home\" TMPDIR=\"$0.home\"\ncd \"$HOME\"\nexec /bin/sh -c \"$4\"\n").unwrap();
+    std::fs::set_permissions(&client, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    app.command = None;
+    app.ssh_client = client.to_str().unwrap().into();
+    app.initial_cwd = Some(local.clone());
+    app.initial_remote = Some("devbox".into());
+    app.complete_startup(&ctx, loaded(app.config.clone(), Model::default()));
+    let source = app.controller.model().active_pane().unwrap();
+    let wait_for_directory = |app: &mut App, pane, directory: &std::path::Path| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            app.poll(&ctx);
+            if app
+                .sessions
+                .get(pane)
+                .is_some_and(|s| s.metadata().reported_cwd.as_deref() == Some(directory))
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "pane did not enter its remote directory: {:?}",
+                app.ui.error
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    wait_for_directory(&mut app, source, &home);
+    app.sessions
+        .get(source)
+        .unwrap()
+        .write(b"cd 'first project'\r")
+        .unwrap();
+    wait_for_directory(&mut app, source, &first);
+    app.action(&ctx, Action::Split(source, pace_model::Axis::Vertical));
+    let right = app.controller.model().active_pane().unwrap();
+    wait_for_directory(&mut app, right, &first);
+    // The source is now unfocused, but its parser and directory hooks stay live.
+    app.sessions
+        .get(source)
+        .unwrap()
+        .write(b"cd ../next*\r")
+        .unwrap();
+    wait_for_directory(&mut app, source, &next);
+    app.action(&ctx, Action::Split(source, pace_model::Axis::Horizontal));
+    let below = app.controller.model().active_pane().unwrap();
+    wait_for_directory(&mut app, below, &next);
+    assert_eq!(
+        app.sessions
+            .get(right)
+            .unwrap()
+            .metadata()
+            .reported_cwd
+            .as_deref(),
+        Some(first.as_path())
+    );
+    for pane in [source, right, below] {
+        assert_eq!(app.controller.model().pane(pane).unwrap().cwd(), local);
+    }
 }
