@@ -54,7 +54,7 @@ jobs:
   check:
     name: Check (${{ matrix.os }})
     needs: preflight
-    if: needs.preflight.outputs.code == 'true'
+    if: always() && (needs.preflight.result != 'success' || needs.preflight.outputs.code == 'true')
     strategy:
       fail-fast: false
       matrix:
@@ -62,6 +62,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
+      - name: Require successful preflight
+        if: needs.preflight.result != 'success'
+        run: exit 1
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Check source decoding on this platform
         run: python3 scripts/check-architecture.py
@@ -85,34 +88,6 @@ jobs:
         run: cargo test --profile ci --workspace --locked
       - name: Test inspection configuration
         run: cargo test --profile ci --workspace --all-features --locked
-      - name: Diagnose macOS session teardown on failure
-        if: failure() && runner.os == 'macOS'
-        shell: python
-        run: |
-          import json
-          from pathlib import Path
-          import subprocess
-
-          result = subprocess.run(['cargo', 'test', '--profile', 'ci', '-p', 'pace-terminal', '--lib', '--locked', '--no-run', '--message-format=json'], text=True, capture_output=True, check=True)
-          executable = next(item['executable'] for line in result.stdout.splitlines() if (item := json.loads(line)).get('executable'))
-          Path('artifacts').mkdir(exist_ok=True)
-          process = subprocess.Popen([executable, 'runtime::sessions::tests', '--nocapture'])
-          try:
-              process.wait(timeout=1)
-          except subprocess.TimeoutExpired:
-              subprocess.run(['sample', str(process.pid), '1', '-file', 'artifacts/macos-session.sample'], check=False)
-              try:
-                  process.wait(timeout=20)
-              except subprocess.TimeoutExpired:
-                  process.kill()
-                  process.wait()
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: failure() && runner.os == 'macOS'
-        with:
-          name: macos-session-diagnostic
-          path: artifacts/macos-session.sample
-          if-no-files-found: ignore
-          retention-days: 1
       - name: Build native application
         if: runner.os != 'Linux'
         run: cargo build --profile ci --locked --bin pace
@@ -139,10 +114,13 @@ jobs:
   latest:
     name: Latest stable compatibility (Linux)
     needs: preflight
-    if: needs.preflight.outputs.code == 'true'
+    if: always() && (needs.preflight.result != 'success' || needs.preflight.outputs.code == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
+      - name: Require successful preflight
+        if: needs.preflight.result != 'success'
+        run: exit 1
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - run: |
           sudo apt-get update
@@ -163,8 +141,11 @@ jobs:
   native-linux:
     name: Isolated native inspection (Linux X11)
     needs: [preflight, check]
-    if: needs.preflight.outputs.code == 'true'
+    if: always() && (needs.preflight.result != 'success' || needs.preflight.outputs.code == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 1
     steps:
+      - name: Require successful preflight and native matrix
+        if: needs.preflight.result != 'success' || needs.check.result != 'success'
+        run: exit 1
       - run: echo 'Native inspection and restoration passed in the Linux matrix job.'

@@ -73,7 +73,9 @@ Shutdown requests return without joining workers. A cloneable
 `shutdown_completion()` handle reports completion after all workers stop, even
 when the session itself is released. Worker reservations exist before threads
 start, so a rapid close cannot mistake unstarted workers for complete cleanup. Unix I/O uses nonblocking
-descriptors and interruptible polling. Windows starts a short-lived close worker
+descriptors and interruptible polling. Unix shutdown releases the output channel
+and PTY master handles before reaping the child, so BSD terminal output draining
+cannot wait on readers that have already stopped. Windows starts a short-lived close worker
 after the child exits because `ClosePseudoConsole` can wait for final output to
 drain. The reader and parser remain active until that output reaches EOF. Child
 processes are reaped by their owning worker.
