@@ -215,7 +215,8 @@ fn startup_command_reaches_the_original_pty_once_after_focus_changes() {
     let ctx = egui::Context::default();
     app.config.shell = Some("/bin/sh".into());
     app.initial_cwd = Some(first.clone());
-    app.command = Some("printf x >> launch-marker".into());
+    // A shell can create a redirection target before writing its contents.
+    app.command = Some(": >> launch-marker; sleep 0.1; printf x >> launch-marker".into());
     app.action(&ctx, Action::Create(second.clone(), Some("Second".into())));
     app.complete_startup(&ctx, loaded(app.config.clone(), Model::default()));
     let (target, _) = app.command_target.unwrap();
@@ -232,7 +233,7 @@ fn startup_command_reaches_the_original_pty_once_after_focus_changes() {
     }
     app.send_startup_command();
     app.send_startup_command();
-    while !first.join("launch-marker").exists() {
+    while !std::fs::read(first.join("launch-marker")).is_ok_and(|contents| !contents.is_empty()) {
         assert!(
             Instant::now() < deadline,
             "startup command did not reach its target"
