@@ -1,22 +1,10 @@
 //! Transient dialogs edit only UI drafts and emit targeted commands.
 use super::helpers::{
-    ButtonKind, SheetPlacement, button, expand_home, padded, place, sheet, sheet_header,
-    text_field, toast,
+    ButtonKind, SheetPlacement, button, padded, place, sheet, sheet_header, text_field, toast,
 };
 use super::{Action, Close, OverlayState, UiState};
 use crate::theme::{self, Palette};
-use eframe::egui::{self, Align, Align2, Id, Layout, Pos2, Ui, vec2};
-
-fn field_label(ui: &mut Ui, p: Palette, text: &str) {
-    let (_, rect) = ui.allocate_space(vec2(ui.available_width(), 22.0));
-    ui.painter().text(
-        Pos2::new(rect.left() + 2.0, rect.center().y - 1.0),
-        Align2::LEFT_CENTER,
-        text,
-        theme::medium(12.0),
-        p.secondary,
-    );
-}
+use eframe::egui::{self, Align, Id, Layout, Ui, vec2};
 
 /// A sheet measures itself in a hidden first pass, where focus cannot be held.
 fn accepts_focus(ui: &Ui) -> bool {
@@ -56,63 +44,6 @@ fn footer(ui: &mut Ui, salt: &str, add_buttons: impl FnOnce(&mut Ui)) {
             add_buttons(ui);
         },
     );
-}
-
-fn new_workspace(ctx: &egui::Context, p: Palette, state: &mut UiState, actions: &mut Vec<Action>) {
-    let mut create = confirmed_by_enter(ctx, state);
-    let mut cancel = false;
-    let output = sheet(
-        ctx,
-        p,
-        "New workspace",
-        420.0,
-        SheetPlacement::Center,
-        |ui| {
-            sheet_header(ui, p, "New workspace", None);
-            padded(ui, 20.0, |ui| {
-                field_label(ui, p, "Folder");
-                let width = ui.available_width();
-                let directory = text_field(
-                    ui,
-                    p,
-                    Id::new("workspace-directory"),
-                    &mut state.new_cwd,
-                    "~/projects/app",
-                    "Workspace directory",
-                    width,
-                );
-                if state.overlay_focus && accepts_focus(ui) {
-                    directory.request_focus();
-                    state.overlay_focus = false;
-                }
-                ui.add_space(10.0);
-                field_label(ui, p, "Name");
-                text_field(
-                    ui,
-                    p,
-                    Id::new("workspace-name"),
-                    &mut state.new_name,
-                    "Uses the folder name",
-                    "Workspace name",
-                    width,
-                );
-            });
-            ui.add_space(4.0);
-            footer(ui, "new-workspace-actions", |ui| {
-                create |= button(ui, p, "Create", ButtonKind::Primary).clicked();
-                cancel = button(ui, p, "Cancel", ButtonKind::Secondary).clicked();
-            });
-        },
-    );
-    // A focused Cancel button answers Enter itself.
-    if cancel || output.backdrop_clicked {
-        actions.push(Action::CloseOverlay);
-    } else if create && !state.new_cwd.trim().is_empty() {
-        actions.push(Action::Create(
-            expand_home(state.new_cwd.trim()),
-            (!state.new_name.trim().is_empty()).then(|| state.new_name.trim().to_owned()),
-        ));
-    }
 }
 
 fn rename(
@@ -226,7 +157,6 @@ fn confirm_close(ctx: &egui::Context, p: Palette, close: Close, actions: &mut Ve
 
 pub fn show(ctx: &egui::Context, p: Palette, state: &mut UiState, actions: &mut Vec<Action>) {
     match state.overlay {
-        OverlayState::NewWorkspace => new_workspace(ctx, p, state, actions),
         OverlayState::Rename(workspace) => rename(ctx, p, state, workspace, actions),
         OverlayState::ConfirmClose(close) => confirm_close(ctx, p, close, actions),
         _ => {}
@@ -241,17 +171,18 @@ pub fn show(ctx: &egui::Context, p: Palette, state: &mut UiState, actions: &mut 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui::Pos2;
     use pace_model::{PaneId, WorkspaceId};
 
     #[test]
-    fn a_new_dialog_gives_its_first_field_the_keyboard_once_visible() {
+    fn rename_gives_its_field_the_keyboard_once_visible() {
         let ctx = egui::Context::default();
         ctx.set_fonts(crate::platform::fonts::bundled_definitions());
         let config = crate::config::Config::default();
         theme::apply(&ctx, &config);
         let p = Palette::for_config(&config);
         let mut state = UiState {
-            overlay: OverlayState::NewWorkspace,
+            overlay: OverlayState::Rename(WorkspaceId::new(1)),
             overlay_focus: true,
             ..UiState::default()
         };
@@ -269,7 +200,7 @@ mod tests {
         assert!(!state.overlay_focus, "the request is made exactly once");
         assert_eq!(
             ctx.memory(|memory| memory.focused()),
-            Some(Id::new("workspace-directory"))
+            Some(Id::new("workspace-rename"))
         );
         assert!(actions.is_empty());
     }
@@ -282,9 +213,9 @@ mod tests {
         theme::apply(&ctx, &config);
         let p = Palette::for_config(&config);
         let mut state = UiState {
-            overlay: OverlayState::NewWorkspace,
+            overlay: OverlayState::Rename(WorkspaceId::new(1)),
             overlay_focus: true,
-            new_cwd: "/srv/app".into(),
+            rename_name: "Renamed".into(),
             ..UiState::default()
         };
         // The toolkit derives key repeat itself: a press with no release
@@ -317,8 +248,9 @@ mod tests {
         assert!(frame(&mut state, vec![enter(false)]).is_empty());
         let actions = frame(&mut state, vec![enter(true)]);
         assert!(
-            matches!(&actions[..], [Action::Create(path, None)] if path == std::path::Path::new("/srv/app")),
-            "a deliberate Enter creates the workspace"
+            matches!(&actions[..], [Action::SetName(workspace, name), Action::CloseOverlay]
+                if *workspace == WorkspaceId::new(1) && name == "Renamed"),
+            "a deliberate Enter renames the original workspace"
         );
     }
 

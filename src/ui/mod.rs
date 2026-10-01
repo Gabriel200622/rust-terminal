@@ -24,7 +24,6 @@ pub enum OverlayState {
     None,
     Settings,
     Palette,
-    NewWorkspace,
     Rename(WorkspaceId),
     ConfirmClose(Close),
 }
@@ -34,8 +33,6 @@ pub struct UiState {
     pub palette_query: String,
     /// Highlighted command; reset whenever the query changes.
     pub palette_selected: usize,
-    pub new_name: String,
-    pub new_cwd: String,
     pub rename_name: String,
     /// A dialog field should take keyboard focus on its first frame.
     pub overlay_focus: bool,
@@ -47,6 +44,8 @@ pub struct UiState {
     pub zoomed: bool,
     /// Width shown while the sidebar edge is dragged; saved on release.
     pub sidebar_drag: Option<f32>,
+    /// A sidebar toggle still sliding into place.
+    pub sidebar_slide: Option<chrome::SidebarSlide>,
 }
 #[derive(Clone)]
 pub enum Action {
@@ -71,6 +70,9 @@ pub enum Action {
     Copy(PaneId),
     Paste(PaneId),
     Zoom,
+    ZoomUiIn,
+    ZoomUiOut,
+    ResetUiZoom,
     WindowClose,
     Create(PathBuf, Option<String>),
     SetName(WorkspaceId, String),
