@@ -819,6 +819,12 @@ impl eframe::App for App {
                 &mut self.ui,
                 &ui::palette::PaletteView {
                     pane: self.controller.model().active_pane(),
+                    layout: self
+                        .controller
+                        .model()
+                        .active_workspace()
+                        .and_then(|id| self.controller.model().workspace(id))
+                        .map(|workspace| workspace.layout()),
                     workspaces: &views,
                     active: self.controller.model().active_workspace(),
                     config: &self.config,

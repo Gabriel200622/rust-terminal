@@ -195,13 +195,61 @@ impl App {
             let egui::Event::Key {
                 key,
                 physical_key,
-                pressed: true,
+                pressed,
                 modifiers: m,
                 ..
             } = event
             else {
                 continue;
             };
+            let direction = if m.ctrl && m.shift && !m.alt && !m.mac_cmd {
+                match key {
+                    egui::Key::ArrowLeft => Some(pace_model::FocusDirection::Left),
+                    egui::Key::ArrowRight => Some(pace_model::FocusDirection::Right),
+                    egui::Key::ArrowUp => Some(pace_model::FocusDirection::Up),
+                    egui::Key::ArrowDown => Some(pace_model::FocusDirection::Down),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            if let Some(direction) = direction {
+                // Apply earlier shortcuts before checking ownership and capturing
+                // the target. Repeated arrows advance from the new focus.
+                for action in actions.drain(..) {
+                    self.action(ctx, action);
+                }
+                let terminal_owns_keys = self.ui.overlay == OverlayState::None
+                    && !egui::Popup::is_any_open(ctx)
+                    && ctx.memory(|memory| {
+                        memory.focused().is_none() || memory.focused() == self.terminal_focus
+                    });
+                if terminal_owns_keys && self.controller.model().active_pane().is_some() {
+                    if pressed
+                        && let Some(workspace) = self
+                            .controller
+                            .model()
+                            .active_workspace()
+                            .and_then(|id| self.controller.model().workspace(id))
+                        && let Some(target) =
+                            workspace.layout().adjacent(workspace.active(), direction)
+                    {
+                        self.action(ctx, Action::Focus(target));
+                    }
+                    // Consume the chord even at an outer edge, including releases
+                    // that a terminal using the Kitty protocol could otherwise see.
+                    ctx.input_mut(|input| {
+                        input.events.retain(|event| {
+                            !matches!(event, egui::Event::Key { key: value, modifiers, .. }
+                                if *value == key && *modifiers == m)
+                        });
+                    });
+                }
+                continue;
+            }
+            if !pressed {
+                continue;
+            }
             if let Some(action) = zoom_shortcut(key, m, &self.config) {
                 actions.push(action);
                 ctx.input_mut(|input| {
