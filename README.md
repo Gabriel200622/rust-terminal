@@ -21,6 +21,27 @@ cargo build --release --locked --bin pace
 
 The executable is `target/release/pace` on Linux/macOS and `target\release\pace.exe` on Windows.
 
+### Development builds
+
+The repository defaults to two Cargo build jobs per invocation so agents working
+in parallel leave capacity for the desktop. For a shared compiler cache, install
+[sccache](https://github.com/mozilla/sccache#installation) using a prebuilt release
+or package manager and merge these settings into your user Cargo configuration
+(`~/.cargo/config.toml`, or `$CARGO_HOME/config.toml` when set):
+
+```toml
+[build]
+jobs = 2
+rustc-wrapper = "sccache"
+```
+
+The user-level job limit covers existing worktrees before they receive the
+repository configuration. Keep existing configuration entries when merging.
+The wrapper is optional and configured per user so other contributors and CI
+can build without installing sccache. Worktrees share its local disk cache while
+keeping separate Cargo target directories; use `sccache --show-stats` to inspect
+reuse. [Incremental Rust compilations and binary crates are not cached](https://github.com/mozilla/sccache/blob/v0.17.0/docs/Rust.md).
+
 ## Workspaces and customization
 
 Workspace navigation, independent shell panes, split layouts, scrollback, terminal search, selection/clipboard, a command palette, and settings are integrated in the native interface. Every action is listed in the command palette with its shortcut; secondary-click a terminal or a workspace for its menu, double-click a workspace to rename it, and drag the sidebar's edge to resize it. Terminal text uses bundled JetBrains Mono; interface text uses Geist. Font licenses accompany the assets.
