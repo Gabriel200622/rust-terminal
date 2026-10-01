@@ -224,28 +224,17 @@ fn commands(view: &PaletteView) -> Vec<Command> {
             [Action::Settings],
         ),
     ]);
-    for (title, key, size) in [
-        (
-            "Increase font size",
-            "+",
-            (view.config.font_size + 1.0).min(32.0),
-        ),
-        (
-            "Decrease font size",
-            "-",
-            (view.config.font_size - 1.0).max(9.0),
-        ),
-        ("Reset font size", "0", Config::default().font_size),
+    for (title, key, action) in [
+        ("Zoom app in", "+", Action::ZoomUiIn),
+        ("Zoom app out", "-", Action::ZoomUiOut),
+        ("Reset app zoom", "0", Action::ResetUiZoom),
     ] {
         list.push(command(
             "View",
             Icon::TextSize,
             title,
             edit_shortcut(key),
-            [Action::Preferences(Config {
-                font_size: size,
-                ..view.config.clone()
-            })],
+            [action],
         ));
     }
     for (theme, name, icon) in [
@@ -608,7 +597,8 @@ mod tests {
                 .collect()
         };
         assert_eq!(titles("right split"), ["Split right"]);
-        assert_eq!(titles("FONT reset"), ["Reset font size"]);
+        assert_eq!(titles("zoom reset"), ["Reset app zoom"]);
+        assert!(titles("font").is_empty());
         assert!(
             titles("appearance")
                 .iter()
