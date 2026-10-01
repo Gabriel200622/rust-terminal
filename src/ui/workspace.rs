@@ -7,10 +7,10 @@ use crate::{
     theme::{self, Palette, metrics},
 };
 use eframe::egui::{
-    self, Align, Align2, CursorIcon, Layout, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder,
-    Vec2, WidgetInfo, WidgetType, vec2,
+    self, Align, Align2, CursorIcon, Id, LayerId, Layout, Order, Pos2, Rect, Sense, Stroke,
+    StrokeKind, Ui, UiBuilder, Vec2, WidgetInfo, WidgetType, vec2,
 };
-use pace_model::{Axis, PaneId};
+use pace_model::{Axis, Destination, Edge, PaneId};
 use std::collections::BTreeMap;
 use terminal_core::{Mode as TermMode, SessionMetadata, SessionStatus, ViewportSnapshot};
 
@@ -48,6 +48,8 @@ pub struct Stage<'a> {
     pub p: Palette,
     /// Highlighted in the focused pane while search is open.
     pub search: &'a str,
+    /// The terminal being carried by its header, as of the last frame.
+    pub drag: Option<PaneId>,
 }
 
 /// Where part of the layout is drawn, and where it rests once the chrome stops
@@ -65,6 +67,39 @@ pub struct StageOutput {
     pub active_body: Option<Rect>,
     /// Widget identity of the focused terminal, which holds keyboard focus.
     pub active_terminal: Option<egui::Id>,
+    /// The terminal whose header is being dragged this frame.
+    pub dragging: Option<PaneId>,
+    /// Where a carried terminal would land, and the area it would take.
+    pub drop: Option<(Destination, Rect)>,
+}
+
+/// Where a terminal dropped at `pointer` lands on the pane it is over: against
+/// the nearest edge, or in the pane's own place when dropped near its centre.
+/// The rectangle is the area the terminal would take.
+fn drop_destination(card: Rect, pointer: Pos2, pane: PaneId) -> (Destination, Rect) {
+    let x = (pointer.x - card.left()) / card.width().max(1.0);
+    let y = (pointer.y - card.top()) / card.height().max(1.0);
+    let (distance, edge) = [
+        (x, Edge::Left),
+        (1.0 - x, Edge::Right),
+        (y, Edge::Top),
+        (1.0 - y, Edge::Bottom),
+    ]
+    .into_iter()
+    .min_by(|a, b| a.0.total_cmp(&b.0))
+    .unwrap_or((0.0, Edge::Right));
+    if distance > 0.3 {
+        return (Destination::Swap(pane), card);
+    }
+    let half = metrics::GUTTER * 0.5;
+    let centre = card.center();
+    let area = match edge {
+        Edge::Left => Rect::from_min_max(card.min, Pos2::new(centre.x - half, card.bottom())),
+        Edge::Right => Rect::from_min_max(Pos2::new(centre.x + half, card.top()), card.max),
+        Edge::Top => Rect::from_min_max(card.min, Pos2::new(card.right(), centre.y - half)),
+        Edge::Bottom => Rect::from_min_max(Pos2::new(card.left(), centre.y + half), card.max),
+    };
+    (Destination::Beside { pane, edge }, area)
 }
 
 /// The program or shell a pane is showing. Prompt-style titles such as
@@ -257,6 +292,7 @@ fn pane_menu(ui: &mut Ui, p: Palette, id: PaneId, zoomed: bool, actions: &mut Ve
     }
 }
 
+/// Reports whether the terminal is being carried by its title.
 fn pane_header(
     ui: &mut Ui,
     id: PaneId,
@@ -265,7 +301,7 @@ fn pane_header(
     reveal: f32,
     stage: &Stage,
     actions: &mut Vec<Action>,
-) {
+) -> bool {
     let p = stage.p;
     let metadata = &presentation.metadata;
     let selected = id == stage.active;
@@ -318,13 +354,21 @@ fn pane_header(
             elided(&painter, &folder, theme::regular(11.5), p.muted, remaining),
         );
     }
-    let title_response = ui.interact(text_rect, ui.id().with(("pane-title", id)), Sense::click());
-    if title_response.clicked() {
+    // The title is also the handle that carries the terminal elsewhere.
+    let title_response = ui
+        .interact(
+            text_rect,
+            ui.id().with(("pane-title", id)),
+            Sense::click_and_drag(),
+        )
+        .on_hover_cursor(CursorIcon::Grab);
+    if title_response.clicked() || title_response.drag_started() {
         actions.push(Action::Focus(id));
     }
     if title_response.double_clicked() {
         actions.push(Action::Zoom);
     }
+    let carried = title_response.dragged();
     title_response.on_hover_text(format!(
         "{}\n{}",
         if metadata.title.is_empty() {
@@ -338,7 +382,7 @@ fn pane_header(
         }
     ));
     if !show_close {
-        return;
+        return carried;
     }
     ui.scope_builder(
         UiBuilder::new()
@@ -376,6 +420,7 @@ fn pane_header(
             }
         },
     );
+    carried
 }
 
 fn draw_pane(
@@ -427,7 +472,7 @@ fn draw_pane(
             hovered || selected,
             0.12,
         );
-        pane_header(
+        if pane_header(
             ui,
             id,
             Rect::from_min_size(card.min, vec2(card.width(), header_height)),
@@ -435,7 +480,9 @@ fn draw_pane(
             reveal,
             stage,
             actions,
-        );
+        ) {
+            output.dragging = Some(id);
+        }
     }
 
     ui.scope_builder(UiBuilder::new().id_salt(id).max_rect(body), |ui| {
@@ -527,6 +574,26 @@ fn draw_pane(
             Stroke::new(1.5, theme::tint(p.accent, 0.85 * focus)),
             StrokeKind::Inside,
         );
+    }
+    // A carried terminal recedes where it was; any other pane can receive it.
+    let lifted = animate(
+        ui.ctx(),
+        ui.id().with(("pane-lifted", id)),
+        stage.drag == Some(id),
+        0.12,
+    );
+    if lifted > 0.0 {
+        painter.rect_filled(
+            card,
+            metrics::PANE_RADIUS,
+            theme::tint(p.chrome, 0.6 * lifted),
+        );
+    }
+    if stage.drag.is_some_and(|dragged| dragged != id)
+        && let Some(pointer) = ui.ctx().pointer_interact_pos()
+        && card.contains(pointer)
+    {
+        output.drop = Some(drop_destination(card, pointer, id));
     }
 
     if presentation.starting {
@@ -754,6 +821,117 @@ pub fn draw_node(
     }
 }
 
+/// Eases a rectangle toward `target`, repainting only until it arrives.
+fn glide(ctx: &egui::Context, from: Rect, target: Rect) -> Rect {
+    let step = 1.0 - (-ctx.input(|input| input.stable_dt).min(0.1) / 0.04).exp();
+    let next = Rect::from_min_max(
+        from.min + (target.min - from.min) * step,
+        from.max + (target.max - from.max) * step,
+    );
+    if (next.min - target.min).length() < 0.5 && (next.max - target.max).length() < 0.5 {
+        return target;
+    }
+    ctx.request_repaint();
+    next
+}
+
+/// Feedback for a terminal carried by its header: the area it would take on
+/// the pane under the pointer, and a chip that follows the pointer over the
+/// whole window. Releasing over a pane moves the terminal there.
+pub fn pane_drag(ui: &mut Ui, stage: &Stage, output: &StageOutput, actions: &mut Vec<Action>) {
+    let ctx = ui.ctx().clone();
+    let p = stage.p;
+    let target = stage.drag.and(output.drop);
+    if let Some(pane) = stage.drag
+        && let Some((destination, _)) = target
+        && ctx.input(|input| input.pointer.primary_released())
+    {
+        actions.push(Action::MovePane(pane, destination));
+    }
+
+    // The preview glides between drop areas and fades where it was released.
+    let preview = Id::new("pane-drop-preview");
+    let opacity = animate(&ctx, preview, target.is_some(), 0.12);
+    let shown = ctx.data(|data| data.get_temp::<Rect>(preview));
+    let area = match (target, shown) {
+        (Some((_, area)), Some(shown)) if opacity > 0.0 => Some(glide(&ctx, shown, area)),
+        (Some((_, area)), _) => Some(area),
+        (None, shown) => shown.filter(|_| opacity > 0.0),
+    };
+    ctx.data_mut(|data| match area {
+        Some(area) => {
+            data.insert_temp(preview, area);
+        }
+        None => data.remove::<Rect>(preview),
+    });
+    if let Some(area) = area {
+        let painter = ui.painter();
+        painter.rect_filled(
+            area,
+            metrics::PANE_RADIUS,
+            theme::tint(p.accent, 0.2 * opacity),
+        );
+        painter.rect_stroke(
+            area,
+            metrics::PANE_RADIUS,
+            Stroke::new(1.5, theme::tint(p.accent, 0.9 * opacity)),
+            StrokeKind::Inside,
+        );
+        if matches!(target, Some((Destination::Swap(_), _)))
+            && area.width().min(area.height()) > 48.0
+        {
+            let badge = Rect::from_center_size(area.center(), Vec2::splat(32.0));
+            capsule(painter, badge, p);
+            icons::paint(painter, badge.shrink(9.0), Icon::Swap, p.accent);
+        }
+    }
+
+    let carried = stage.drag.filter(|pane| output.dragging == Some(*pane));
+    let reveal = animate(&ctx, Id::new("pane-drag-chip"), carried.is_some(), 0.12);
+    let Some(pane) = carried else {
+        return;
+    };
+    ctx.set_cursor_icon(CursorIcon::Grabbing);
+    let (Some(pointer), Some(presentation)) =
+        (ctx.pointer_latest_pos(), stage.presentations.get(&pane))
+    else {
+        return;
+    };
+    let mut painter = ctx.layer_painter(LayerId::new(Order::Tooltip, Id::new("pane-drag-chip")));
+    painter.set_opacity(reveal);
+    let label = elided(
+        &painter,
+        &pane_label(&presentation.metadata),
+        theme::medium(12.0),
+        p.fg,
+        180.0,
+    );
+    let size = vec2(label.size().x + 42.0, 28.0);
+    let screen = ctx.content_rect().shrink(4.0);
+    let chip = Rect::from_min_size(
+        Pos2::new(
+            (pointer.x + 14.0).min(screen.right() - size.x),
+            (pointer.y + 16.0).min(screen.bottom() - size.y),
+        ),
+        size,
+    );
+    capsule(&painter, chip, p);
+    icons::paint(
+        &painter,
+        Rect::from_center_size(
+            Pos2::new(chip.left() + 16.0, chip.center().y),
+            Vec2::splat(13.0),
+        ),
+        Icon::Terminal,
+        p.secondary,
+    );
+    galley_at(
+        &painter,
+        Pos2::new(chip.left() + 29.0, chip.center().y),
+        label,
+    );
+}
+
 /// A calm placeholder for a window without a workspace.
 pub fn empty_state(
     ui: &mut Ui,
@@ -834,6 +1012,216 @@ mod tests {
         }
     }
 
+    /// Two terminals side by side, drawn headlessly the way the app draws them.
+    struct Bench {
+        ctx: egui::Context,
+        config: Config,
+        panes: BTreeMap<PaneId, PaneRender>,
+        presentations: BTreeMap<PaneId, PanePresentation>,
+        layout: pace_model::Layout,
+        drag: Option<PaneId>,
+    }
+
+    impl Bench {
+        fn new() -> Self {
+            let ctx = egui::Context::default();
+            ctx.set_fonts(crate::platform::fonts::bundled_definitions());
+            let config = Config::default();
+            theme::apply(&ctx, &config);
+            let ids = [PaneId::new(1), PaneId::new(2)];
+            let mut bench = Self {
+                ctx,
+                config,
+                panes: ids.map(|id| (id, PaneRender::new(id))).into(),
+                presentations: ids
+                    .map(|id| {
+                        (
+                            id,
+                            PanePresentation {
+                                metadata: metadata(""),
+                                snapshot: ViewportSnapshot::blank(80, 24),
+                                starting: false,
+                                remote: None,
+                            },
+                        )
+                    })
+                    .into(),
+                layout: pace_model::Layout::Split {
+                    id: pace_model::SplitId::new(1),
+                    axis: Axis::Vertical,
+                    ratio: 0.5,
+                    first: Box::new(pace_model::Layout::Leaf(ids[0])),
+                    second: Box::new(pace_model::Layout::Leaf(ids[1])),
+                },
+                drag: None,
+            };
+            bench.frame(vec![]);
+            bench
+        }
+
+        /// One frame; the drag state is carried over as the app carries it.
+        fn frame(&mut self, events: Vec<egui::Event>) -> Vec<Action> {
+            let mut actions = Vec::new();
+            let mut output = StageOutput::default();
+            let mut frame = self.ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 400.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let stage = Stage {
+                        presentations: &self.presentations,
+                        active: PaneId::new(2),
+                        multiple: true,
+                        zoomed: false,
+                        keyboard: true,
+                        previous_terminal: None,
+                        config: &self.config,
+                        p: Palette::for_config(&self.config),
+                        search: "",
+                        drag: self.drag,
+                    };
+                    let rect = ui.max_rect();
+                    draw_node(
+                        ui,
+                        &self.layout,
+                        Placement {
+                            drawn: rect,
+                            settled: rect,
+                        },
+                        &mut self.panes,
+                        &stage,
+                        &mut actions,
+                        &mut output,
+                    );
+                    pane_drag(ui, &stage, &output, &mut actions);
+                },
+            );
+            frame.textures_delta.clear();
+            self.drag = output.dragging;
+            actions
+        }
+
+        fn button(&mut self, pos: Pos2, pressed: bool) -> Vec<Action> {
+            self.frame(vec![egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            }])
+        }
+
+        /// Picks up the first terminal by its header and carries it to `pos`.
+        fn carry_to(&mut self, pos: Pos2) -> Vec<Action> {
+            let handle = Pos2::new(60.0, 15.0);
+            let mut actions = self.frame(vec![egui::Event::PointerMoved(handle)]);
+            actions.extend(self.button(handle, true));
+            for step in [0.5, 1.0] {
+                actions.extend(self.frame(vec![egui::Event::PointerMoved(handle.lerp(pos, step))]));
+            }
+            actions
+        }
+    }
+
+    fn moves(actions: &[Action]) -> Vec<(PaneId, Destination)> {
+        actions
+            .iter()
+            .filter_map(|action| match action {
+                Action::MovePane(pane, destination) => Some((*pane, *destination)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn dragging_a_header_onto_another_pane_moves_that_terminal_once_on_release() {
+        let (first, second) = (PaneId::new(1), PaneId::new(2));
+        for (pos, destination) in [
+            (
+                Pos2::new(780.0, 200.0),
+                Destination::Beside {
+                    pane: second,
+                    edge: Edge::Right,
+                },
+            ),
+            (Pos2::new(600.0, 200.0), Destination::Swap(second)),
+        ] {
+            let mut bench = Bench::new();
+            let carried = bench.carry_to(pos);
+            assert_eq!(bench.drag, Some(first));
+            assert!(moves(&carried).is_empty(), "nothing moves before release");
+            assert!(
+                carried
+                    .iter()
+                    .any(|action| matches!(action, Action::Focus(pane) if *pane == first)),
+                "the carried terminal takes focus"
+            );
+            assert_eq!(moves(&bench.button(pos, false)), [(first, destination)]);
+            assert_eq!(bench.drag, None);
+            assert!(moves(&bench.frame(vec![])).is_empty());
+        }
+    }
+
+    #[test]
+    fn a_cancelled_or_returned_drag_moves_nothing() {
+        // Released over the pane it came from.
+        let mut bench = Bench::new();
+        let home = Pos2::new(200.0, 200.0);
+        bench.carry_to(home);
+        assert_eq!(bench.drag, Some(PaneId::new(1)));
+        assert!(moves(&bench.button(home, false)).is_empty());
+
+        // Cancelled, as Escape does, while over a valid destination.
+        let mut bench = Bench::new();
+        let pos = Pos2::new(780.0, 200.0);
+        bench.carry_to(pos);
+        bench.ctx.stop_dragging();
+        bench.drag = None;
+        assert!(moves(&bench.frame(vec![])).is_empty());
+        assert_eq!(bench.drag, None, "the held button does not resume the drag");
+        assert!(moves(&bench.button(pos, false)).is_empty());
+
+        // A press and release without movement is a click: focus, no drag.
+        let mut bench = Bench::new();
+        let handle = Pos2::new(60.0, 15.0);
+        bench.frame(vec![egui::Event::PointerMoved(handle)]);
+        bench.button(handle, true);
+        let released = bench.button(handle, false);
+        assert_eq!(bench.drag, None);
+        assert!(moves(&released).is_empty());
+        assert!(
+            released
+                .iter()
+                .any(|action| matches!(action, Action::Focus(pane) if *pane == PaneId::new(1)))
+        );
+    }
+
+    #[test]
+    fn a_drop_lands_against_the_nearest_edge_or_swaps_near_the_centre() {
+        let card = Rect::from_min_size(Pos2::new(100.0, 50.0), vec2(400.0, 200.0));
+        let pane = PaneId::new(3);
+        let at = |x: f32, y: f32| drop_destination(card, Pos2::new(x, y), pane);
+        let beside = |edge| Destination::Beside { pane, edge };
+        assert_eq!(at(120.0, 150.0).0, beside(Edge::Left));
+        assert_eq!(at(480.0, 150.0).0, beside(Edge::Right));
+        assert_eq!(at(300.0, 60.0).0, beside(Edge::Top));
+        assert_eq!(at(300.0, 240.0).0, beside(Edge::Bottom));
+        // Distance is relative to the pane, so a wide pane's corner still
+        // resolves to the edge the pointer is proportionally closest to.
+        assert_eq!(at(180.0, 60.0).0, beside(Edge::Top));
+        assert_eq!(at(300.0, 150.0), (Destination::Swap(pane), card));
+        // Each edge takes its half of the pane, less the gutter between them.
+        let (_, left) = at(120.0, 150.0);
+        let (_, right) = at(480.0, 150.0);
+        assert_eq!(left.right() + metrics::GUTTER, right.left());
+        assert_eq!((left.min, right.max), (card.min, card.max));
+        let (_, top) = at(300.0, 60.0);
+        let (_, bottom) = at(300.0, 240.0);
+        assert_eq!(top.bottom() + metrics::GUTTER, bottom.top());
+        assert_eq!((top.min, bottom.max), (card.min, card.max));
+    }
+
     #[test]
     fn a_sliding_stage_resizes_each_terminal_once_to_where_it_rests() {
         let ctx = egui::Context::default();
@@ -888,6 +1276,7 @@ mod tests {
                             config: &config,
                             p: Palette::for_config(&config),
                             search: "",
+                            drag: None,
                         },
                         &mut actions,
                         &mut StageOutput::default(),

@@ -1,7 +1,20 @@
 use crate::{
-    Axis, Error, Layout, Lifecycle, Model, Pane, PaneId, Remote, SplitId, Workspace, WorkspaceId,
+    Axis, Edge, Error, Layout, Lifecycle, Model, Pane, PaneId, Remote, SplitId, Workspace,
+    WorkspaceId,
 };
 use std::path::PathBuf;
+
+/// Where a moved pane lands. The pane keeps its session and identity, so it
+/// can only enter a workspace on the same machine as its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Destination {
+    /// Against one edge of another pane, in that pane's workspace.
+    Beside { pane: PaneId, edge: Edge },
+    /// In the place of another pane of the same workspace, which takes its place.
+    Swap(PaneId),
+    /// In another workspace, beside its roomiest pane.
+    Workspace(WorkspaceId),
+}
 
 /// All durable UI mutations use this path. Targets are captured when commands
 /// are created rather than resolved against whichever pane is active later.
@@ -23,6 +36,11 @@ pub enum Command {
     FocusPane {
         workspace: WorkspaceId,
         pane: PaneId,
+    },
+    /// Moving the last pane out of a workspace removes that workspace.
+    MovePane {
+        pane: PaneId,
+        destination: Destination,
     },
     ClosePane(PaneId),
     CloseWorkspace(WorkspaceId),
@@ -267,7 +285,11 @@ impl Controller {
                     .checked_add(1)
                     .ok_or(Error::IdentityExhausted)?;
                 let ws = self.model.workspace_mut(workspace)?;
-                if !ws.layout.split(pane, id, split, axis) {
+                let edge = match axis {
+                    Axis::Vertical => Edge::Right,
+                    Axis::Horizontal => Edge::Bottom,
+                };
+                if !ws.layout.split(pane, id, split, edge) {
                     return Err(Error::UnknownPane(pane));
                 }
                 ws.panes.push(Pane {
@@ -300,6 +322,7 @@ impl Controller {
                 ws.active = pane;
                 self.model.active = Some(workspace);
             }
+            Command::MovePane { pane, destination } => dirty = self.move_pane(pane, destination)?,
             Command::ClosePane(pane) => {
                 let workspace = self
                     .model
@@ -480,6 +503,110 @@ impl Controller {
             return Err(Error::TotalPaneLimit);
         }
         Ok(())
+    }
+
+    /// Reports whether anything changed. Sessions are untouched: a pane's
+    /// identity and generation do not depend on where it is shown.
+    fn move_pane(&mut self, pane: PaneId, destination: Destination) -> Result<bool, Error> {
+        let source = self
+            .model
+            .workspace_for_pane(pane)
+            .ok_or(Error::UnknownPane(pane))?;
+        let (target, edge) = match destination {
+            Destination::Beside { pane: target, edge } => (target, edge),
+            Destination::Swap(other) => {
+                let ws = self.model.workspace_mut(source)?;
+                if ws.pane(other).is_none() {
+                    return Err(Error::UnknownPane(other));
+                }
+                let changed = other != pane || ws.active != pane;
+                ws.layout.swap(pane, other);
+                ws.active = pane;
+                return Ok(changed);
+            }
+            Destination::Workspace(workspace) => {
+                let ws = self
+                    .model
+                    .workspace(workspace)
+                    .ok_or(Error::UnknownWorkspace(workspace))?;
+                if workspace == source {
+                    return Ok(false);
+                }
+                ws.layout.roomiest(ws.active)
+            }
+        };
+        let destination = self
+            .model
+            .workspace_for_pane(target)
+            .ok_or(Error::UnknownPane(target))?;
+        if target == pane {
+            return Ok(false);
+        }
+        let split = SplitId::new(self.model.next_split);
+        let next_split = self
+            .model
+            .next_split
+            .checked_add(1)
+            .ok_or(Error::IdentityExhausted)?;
+        // The target is another pane, so the source keeps a leaf unless the
+        // moved pane was alone in a different workspace.
+        let remaining = self
+            .model
+            .workspace(source)
+            .and_then(|ws| ws.layout.clone().remove(pane));
+        if destination == source {
+            let mut layout = remaining.ok_or(Error::InvalidLayout("move removed every leaf"))?;
+            layout.split(target, pane, split, edge);
+            let ws = self.model.workspace_mut(source)?;
+            if layout.same_arrangement(&ws.layout) {
+                // Dropped where it already was: keep the split and its ratio.
+                let changed = ws.active != pane;
+                ws.active = pane;
+                return Ok(changed);
+            }
+            ws.layout = layout;
+            ws.active = pane;
+        } else {
+            // A local shell would be shown as running on the host, and a
+            // connection as a local shell, until the next restart.
+            if self.model.workspace(source).map(|ws| &ws.remote)
+                != self.model.workspace(destination).map(|ws| &ws.remote)
+            {
+                return Err(Error::RemoteMismatch);
+            }
+            let limit = self.model.limits.panes_per_workspace;
+            if self
+                .model
+                .workspace(destination)
+                .is_some_and(|ws| ws.panes.len() >= limit)
+            {
+                return Err(Error::PaneLimit);
+            }
+            let ws = self.model.workspace_mut(source)?;
+            let position = ws
+                .panes
+                .iter()
+                .position(|item| item.id == pane)
+                .ok_or(Error::UnknownPane(pane))?;
+            let moved = ws.panes.remove(position);
+            if let Some(layout) = remaining {
+                ws.layout = layout;
+                if ws.active == pane {
+                    ws.active = ws.panes[position.min(ws.panes.len() - 1)].id;
+                }
+            } else {
+                self.model.workspaces.retain(|item| item.id != source);
+                if self.model.active == Some(source) {
+                    self.model.active = Some(destination);
+                }
+            }
+            let ws = self.model.workspace_mut(destination)?;
+            ws.layout.split(target, pane, split, edge);
+            ws.panes.push(moved);
+            ws.active = pane;
+        }
+        self.model.next_split = next_split;
+        Ok(true)
     }
 
     fn close_workspace(
@@ -715,6 +842,305 @@ mod tests {
         );
     }
 
+    fn split(controller: &mut Controller, pane: PaneId, axis: Axis) -> PaneId {
+        let workspace = controller.model().workspace_for_pane(pane).unwrap();
+        controller
+            .dispatch(Command::SplitPane {
+                workspace,
+                pane,
+                axis,
+                cwd: PathBuf::from("/fake"),
+            })
+            .unwrap();
+        controller.model().workspace(workspace).unwrap().active()
+    }
+    fn split_ids(layout: &Layout) -> Vec<SplitId> {
+        match layout {
+            Layout::Leaf(_) => Vec::new(),
+            Layout::Split {
+                id, first, second, ..
+            } => [vec![*id], split_ids(first), split_ids(second)].concat(),
+        }
+    }
+    fn without_save(effects: Vec<Effect>) -> Vec<Effect> {
+        effects
+            .into_iter()
+            .filter(|effect| !matches!(effect, Effect::Persist { .. }))
+            .collect()
+    }
+
+    #[test]
+    fn moving_a_pane_rearranges_the_layout_without_touching_sessions() {
+        let (mut controller, workspace, first) = setup();
+        let second = split(&mut controller, first, Axis::Vertical);
+        let third = split(&mut controller, second, Axis::Horizontal);
+        let inner = split_ids(controller.model().workspace(workspace).unwrap().layout())[1];
+        let effects = controller
+            .dispatch(Command::MovePane {
+                pane: first,
+                destination: Destination::Beside {
+                    pane: third,
+                    edge: Edge::Bottom,
+                },
+            })
+            .unwrap();
+        // The moved pane takes focus; no session starts or stops.
+        assert_eq!(
+            without_save(effects),
+            [
+                Effect::Focus {
+                    old: Some(third),
+                    new: Some(first)
+                },
+                Effect::ResetSearch
+            ]
+        );
+        let ws = controller.model().workspace(workspace).unwrap();
+        assert_eq!(ws.layout().leaves(), [second, third, first]);
+        assert_eq!(ws.panes().len(), 3);
+        assert_eq!(ws.pane(first).unwrap().generation(), 1);
+        assert!(
+            split_ids(ws.layout()).contains(&inner),
+            "unrelated split kept"
+        );
+        assert!(matches!(
+            ws.layout(),
+            Layout::Split { axis: Axis::Horizontal, second: below, .. }
+                if matches!(&**below, Layout::Split { axis: Axis::Horizontal, .. })
+        ));
+    }
+
+    #[test]
+    fn moving_a_pane_to_where_it_already_is_keeps_the_split_and_its_ratio() {
+        let (mut controller, workspace, first) = setup();
+        let second = split(&mut controller, first, Axis::Vertical);
+        let id = split_ids(controller.model().workspace(workspace).unwrap().layout())[0];
+        controller
+            .dispatch(Command::SetSplitRatio {
+                split: id,
+                ratio: 0.3,
+            })
+            .unwrap();
+        let before = controller.model().clone();
+        let generation = controller.generation();
+        for destination in [
+            Destination::Beside {
+                pane: first,
+                edge: Edge::Right,
+            },
+            Destination::Beside {
+                pane: second,
+                edge: Edge::Left,
+            },
+            Destination::Swap(second),
+            Destination::Workspace(workspace),
+        ] {
+            let effects = controller
+                .dispatch(Command::MovePane {
+                    pane: second,
+                    destination,
+                })
+                .unwrap();
+            assert!(effects.is_empty(), "{destination:?}");
+        }
+        assert_eq!(controller.model(), &before);
+        assert_eq!(controller.generation(), generation);
+    }
+
+    #[test]
+    fn swapping_panes_exchanges_their_places_and_keeps_every_split() {
+        let (mut controller, workspace, first) = setup();
+        let second = split(&mut controller, first, Axis::Vertical);
+        let third = split(&mut controller, second, Axis::Horizontal);
+        let splits = split_ids(controller.model().workspace(workspace).unwrap().layout());
+        controller
+            .dispatch(Command::MovePane {
+                pane: third,
+                destination: Destination::Swap(first),
+            })
+            .unwrap();
+        let ws = controller.model().workspace(workspace).unwrap();
+        assert_eq!(ws.layout().leaves(), [third, second, first]);
+        assert_eq!(split_ids(ws.layout()), splits);
+        assert_eq!(ws.active(), third);
+        assert!(controller.is_dirty());
+    }
+
+    #[test]
+    fn moving_a_pane_to_another_workspace_keeps_the_view_and_the_session() {
+        let (mut controller, home, first) = setup();
+        let second = split(&mut controller, first, Axis::Vertical);
+        let other = create(&mut controller, "other");
+        let resident = controller.model().active_pane().unwrap();
+        controller.dispatch(Command::SelectWorkspace(home)).unwrap();
+        let effects = controller
+            .dispatch(Command::MovePane {
+                pane: second,
+                destination: Destination::Workspace(other),
+            })
+            .unwrap();
+        // The view stays on the source workspace, whose neighbour takes focus.
+        assert_eq!(
+            without_save(effects),
+            [
+                Effect::Focus {
+                    old: Some(second),
+                    new: Some(first)
+                },
+                Effect::ResetSearch
+            ]
+        );
+        let model = controller.model();
+        assert_eq!(model.active_workspace(), Some(home));
+        assert_eq!(
+            model.workspace(home).unwrap().layout(),
+            &Layout::Leaf(first)
+        );
+        let destination = model.workspace(other).unwrap();
+        assert_eq!(destination.layout().leaves(), [resident, second]);
+        assert_eq!(destination.active(), second);
+        assert_eq!(model.workspace_for_pane(second), Some(other));
+        assert_eq!(model.pane_count(), 3);
+        // The session it carried still reports into the same pane.
+        controller
+            .complete(Completion::Started {
+                pane: second,
+                generation: 1,
+            })
+            .unwrap();
+        assert_eq!(
+            controller.model().pane(second).unwrap().lifecycle(),
+            &Lifecycle::Running
+        );
+    }
+
+    #[test]
+    fn panes_sent_to_a_workspace_fill_its_roomiest_pane_instead_of_stacking() {
+        let (mut controller, home, resident) = setup();
+        let mut arrivals = Vec::new();
+        for _ in 0..3 {
+            create(&mut controller, "source");
+            arrivals.push(controller.model().active_pane().unwrap());
+            controller
+                .dispatch(Command::MovePane {
+                    pane: *arrivals.last().unwrap(),
+                    destination: Destination::Workspace(home),
+                })
+                .unwrap();
+        }
+        // An even grid: each arrival halves the largest pane along its longer
+        // side, starting with the focused one when several are as large.
+        let quarter = |layout: &Layout, top: PaneId, bottom: PaneId| {
+            matches!(
+                layout,
+                Layout::Split { axis: Axis::Horizontal, first, second, .. }
+                    if **first == Layout::Leaf(top) && **second == Layout::Leaf(bottom)
+            )
+        };
+        let ws = controller.model().workspace(home).unwrap();
+        assert!(matches!(
+            ws.layout(),
+            Layout::Split { axis: Axis::Vertical, first, second, .. }
+                if quarter(first, resident, arrivals[2]) && quarter(second, arrivals[0], arrivals[1])
+        ));
+        assert_eq!(ws.active(), arrivals[2]);
+        assert_eq!(controller.model().workspaces().len(), 1);
+    }
+
+    #[test]
+    fn moving_the_last_pane_out_removes_its_workspace_and_follows_the_pane() {
+        let (mut controller, home, first) = setup();
+        let other = create(&mut controller, "other");
+        let alone = controller.model().active_pane().unwrap();
+        let effects = controller
+            .dispatch(Command::MovePane {
+                pane: alone,
+                destination: Destination::Beside {
+                    pane: first,
+                    edge: Edge::Left,
+                },
+            })
+            .unwrap();
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::StopSession { .. } | Effect::Focus { .. })),
+            "the same pane stays focused in its new workspace"
+        );
+        let model = controller.model();
+        assert!(model.workspace(other).is_none());
+        assert_eq!(model.active_workspace(), Some(home));
+        assert_eq!(model.active_pane(), Some(alone));
+        assert_eq!(
+            model.workspace(home).unwrap().layout().leaves(),
+            [alone, first]
+        );
+    }
+
+    #[test]
+    fn rejected_moves_are_atomic() {
+        let mut controller = Controller::new(Model::new(Limits {
+            panes_per_workspace: 2,
+            ..Limits::default()
+        }));
+        let home = create(&mut controller, "home");
+        let first = controller.model().active_pane().unwrap();
+        let second = split(&mut controller, first, Axis::Vertical);
+        let other = create(&mut controller, "other");
+        let third = controller.model().active_pane().unwrap();
+        let before = controller.model().clone();
+        let generation = controller.generation();
+        for (pane, destination, error) in [
+            (third, Destination::Workspace(home), Error::PaneLimit),
+            (
+                third,
+                Destination::Beside {
+                    pane: second,
+                    edge: Edge::Top,
+                },
+                Error::PaneLimit,
+            ),
+            // Positions are exchanged only inside one workspace.
+            (third, Destination::Swap(first), Error::UnknownPane(first)),
+            (
+                third,
+                Destination::Workspace(WorkspaceId::new(99)),
+                Error::UnknownWorkspace(WorkspaceId::new(99)),
+            ),
+            (
+                PaneId::new(99),
+                Destination::Workspace(other),
+                Error::UnknownPane(PaneId::new(99)),
+            ),
+        ] {
+            assert_eq!(
+                controller.dispatch(Command::MovePane { pane, destination }),
+                Err(error)
+            );
+        }
+        assert_eq!(controller.model(), &before);
+        assert_eq!(controller.generation(), generation);
+        // Rearranging a full workspace needs no spare capacity.
+        controller
+            .dispatch(Command::MovePane {
+                pane: first,
+                destination: Destination::Beside {
+                    pane: second,
+                    edge: Edge::Bottom,
+                },
+            })
+            .unwrap();
+        assert_eq!(
+            controller
+                .model()
+                .workspace(home)
+                .unwrap()
+                .layout()
+                .leaves(),
+            [second, first]
+        );
+    }
+
     #[test]
     fn invalid_focus_and_split_are_atomic() {
         let (mut controller, workspace, _) = setup();
@@ -780,7 +1206,10 @@ mod tests {
             let ws = &controller.model().workspaces()[index];
             let workspace = ws.id();
             let pane = ws.panes()[(sequence.rotate_right(17) as usize) % ws.panes().len()].id();
-            let command = match (sequence >> 29) % 8 {
+            let other = controller.model().workspaces()
+                [(sequence.rotate_right(29) as usize) % controller.model().workspaces().len()]
+            .active();
+            let command = match sequence % 11 {
                 0 => Command::AddWorkspace {
                     cwd: PathBuf::from("/fake"),
                     name: format!("workspace {step}"),
@@ -802,6 +1231,22 @@ mod tests {
                 6 => Command::SetWorkspaceRemote {
                     workspace,
                     remote: (step % 2 == 0).then(|| format!("host{step}")),
+                },
+                7 => Command::MovePane {
+                    pane,
+                    destination: Destination::Beside {
+                        pane: other,
+                        edge: [Edge::Left, Edge::Right, Edge::Top, Edge::Bottom]
+                            [(sequence.rotate_right(41) as usize) % 4],
+                    },
+                },
+                8 => Command::MovePane {
+                    pane,
+                    destination: Destination::Swap(other),
+                },
+                9 => Command::MovePane {
+                    pane: other,
+                    destination: Destination::Workspace(workspace),
                 },
                 _ => Command::SelectWorkspace(workspace),
             };
@@ -1086,6 +1531,60 @@ mod tests {
         assert_eq!(
             controller.model().workspace(workspace).unwrap().remote(),
             None
+        );
+    }
+
+    #[test]
+    fn a_terminal_moves_only_between_workspaces_on_the_same_machine() {
+        let mut controller = Controller::new(Model::default());
+        let add = |controller: &mut Controller, remote: Option<&str>| {
+            controller
+                .dispatch(Command::AddWorkspace {
+                    cwd: PathBuf::from("/fake"),
+                    name: "workspace".into(),
+                    remote: remote.map(str::to_owned),
+                })
+                .unwrap();
+            (
+                controller.model().active_workspace().unwrap(),
+                controller.model().active_pane().unwrap(),
+            )
+        };
+        let (local, local_pane) = add(&mut controller, None);
+        let (devbox, devbox_pane) = add(&mut controller, Some("me@devbox"));
+        let (same_host, same_host_pane) = add(&mut controller, Some("me@devbox"));
+        let (_, other_host_pane) = add(&mut controller, Some("me@buildbox"));
+        let before = controller.model().clone();
+        for (pane, destination) in [
+            (local_pane, Destination::Workspace(devbox)),
+            (devbox_pane, Destination::Workspace(local)),
+            (
+                other_host_pane,
+                Destination::Beside {
+                    pane: devbox_pane,
+                    edge: Edge::Right,
+                },
+            ),
+        ] {
+            assert_eq!(
+                controller.dispatch(Command::MovePane { pane, destination }),
+                Err(Error::RemoteMismatch)
+            );
+        }
+        assert_eq!(controller.model(), &before);
+
+        // The same host is the same machine: the session moves untouched.
+        let effects = controller
+            .dispatch(Command::MovePane {
+                pane: same_host_pane,
+                destination: Destination::Workspace(devbox),
+            })
+            .unwrap();
+        assert!(starts(&effects).is_empty());
+        assert!(controller.model().workspace(same_host).is_none());
+        assert_eq!(
+            controller.model().workspace(devbox).unwrap().panes().len(),
+            2
         );
     }
 

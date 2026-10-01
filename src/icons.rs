@@ -38,6 +38,7 @@ pub enum Icon {
     Minimize,
     Eraser,
     TextSize,
+    Swap,
     Globe,
 }
 
@@ -273,6 +274,12 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             line(&[[4.8, 15.0], [11.2, 15.0]]);
             line(&[[15.0, 19.0], [18.0, 12.0], [21.0, 19.0]]);
             line(&[[16.2, 16.5], [19.8, 16.5]]);
+        }
+        Icon::Swap => {
+            line(&[[4.0, 8.0], [20.0, 8.0]]);
+            line(&[[16.0, 4.0], [20.0, 8.0], [16.0, 12.0]]);
+            line(&[[20.0, 16.0], [4.0, 16.0]]);
+            line(&[[8.0, 12.0], [4.0, 16.0], [8.0, 20.0]]);
         }
         Icon::Globe => {
             circle(12.0, 12.0, 9.0);

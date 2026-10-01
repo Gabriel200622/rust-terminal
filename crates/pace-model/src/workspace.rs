@@ -17,6 +17,7 @@ pub enum Error {
     InvalidIdentity,
     InvalidName,
     InvalidRemote,
+    RemoteMismatch,
     IdentityExhausted,
 }
 
@@ -37,6 +38,9 @@ impl std::fmt::Display for Error {
             Self::InvalidName => f.write_str("Workspace name cannot be empty"),
             Self::InvalidRemote => f.write_str(
                 "SSH host must be a destination such as user@host, without spaces or a leading dash",
+            ),
+            Self::RemoteMismatch => f.write_str(
+                "A terminal keeps its session, so it cannot move between workspaces on different machines",
             ),
             Self::IdentityExhausted => f.write_str("Identity counter exhausted"),
         }

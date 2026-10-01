@@ -8,8 +8,8 @@ mod layout;
 mod remote;
 mod workspace;
 
-pub use controller::{Command, Completion, Controller, Effect};
+pub use controller::{Command, Completion, Controller, Destination, Effect};
 pub use ids::{PaneId, SessionGeneration, SplitId, WorkspaceId};
-pub use layout::{Axis, Layout};
+pub use layout::{Axis, Edge, Layout};
 pub use remote::Remote;
 pub use workspace::{Error, Lifecycle, Limits, Model, Pane, PaneSpec, Workspace, WorkspaceSpec};
