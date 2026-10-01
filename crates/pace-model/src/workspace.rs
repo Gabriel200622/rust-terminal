@@ -1,4 +1,4 @@
-use crate::{Layout, PaneId, WorkspaceId};
+use crate::{Layout, PaneId, Remote, WorkspaceId};
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
@@ -16,6 +16,8 @@ pub enum Error {
     InvalidRatio,
     InvalidIdentity,
     InvalidName,
+    InvalidRemote,
+    RemoteMismatch,
     IdentityExhausted,
 }
 
@@ -34,6 +36,12 @@ impl std::fmt::Display for Error {
             Self::InvalidRatio => f.write_str("Split ratio must be finite and between 0.1 and 0.9"),
             Self::InvalidIdentity => f.write_str("Identities must be nonzero and unique"),
             Self::InvalidName => f.write_str("Workspace name cannot be empty"),
+            Self::InvalidRemote => f.write_str(
+                "SSH host must be a destination such as user@host, without spaces or a leading dash",
+            ),
+            Self::RemoteMismatch => f.write_str(
+                "A terminal keeps its session, so it cannot move between workspaces on different machines",
+            ),
             Self::IdentityExhausted => f.write_str("Identity counter exhausted"),
         }
     }
@@ -98,6 +106,8 @@ pub struct WorkspaceSpec {
     pub id: WorkspaceId,
     pub name: String,
     pub cwd: PathBuf,
+    /// An SSH destination; validated when the model adopts the workspace.
+    pub remote: Option<String>,
     pub panes: Vec<PaneSpec>,
     pub layout: Layout,
     pub active: PaneId,
@@ -108,6 +118,7 @@ pub struct Workspace {
     pub(crate) id: WorkspaceId,
     pub(crate) name: String,
     pub(crate) cwd: PathBuf,
+    pub(crate) remote: Option<Remote>,
     pub(crate) panes: Vec<Pane>,
     pub(crate) layout: Layout,
     pub(crate) active: PaneId,
@@ -119,8 +130,14 @@ impl Workspace {
     pub fn name(&self) -> &str {
         &self.name
     }
+    /// The local directory its terminals start in. A remote workspace runs
+    /// its SSH client there; the directory on the remote host is not tracked.
     pub fn cwd(&self) -> &Path {
         &self.cwd
+    }
+    /// Set when every terminal of this workspace runs on another machine.
+    pub fn remote(&self) -> Option<&Remote> {
+        self.remote.as_ref()
     }
     pub fn panes(&self) -> &[Pane] {
         &self.panes
@@ -223,6 +240,7 @@ impl Model {
             if spec.name.trim().is_empty() {
                 return Err(Error::InvalidName);
             }
+            let remote = spec.remote.as_deref().map(Remote::parse).transpose()?;
             if spec.panes.is_empty() {
                 return Err(Error::InvalidLayout("workspace has no panes"));
             }
@@ -262,6 +280,7 @@ impl Model {
                 id: spec.id,
                 name: spec.name,
                 cwd: spec.cwd,
+                remote,
                 panes: spec
                     .panes
                     .into_iter()
@@ -296,6 +315,10 @@ impl Model {
                 id: workspace.id,
                 name: workspace.name.clone(),
                 cwd: workspace.cwd.clone(),
+                remote: workspace
+                    .remote
+                    .as_ref()
+                    .map(|remote| remote.destination().to_owned()),
                 panes: workspace
                     .panes
                     .iter()

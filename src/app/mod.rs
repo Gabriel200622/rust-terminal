@@ -20,7 +20,7 @@ use crate::{
     },
 };
 use eframe::egui::{self, Pos2, Rect, Stroke, Vec2, emath::GuiRounding as _};
-use pace_model::{Command, Controller, Effect, Lifecycle, Limits, Model, PaneId};
+use pace_model::{Command, Controller, Effect, Lifecycle, Limits, Model, PaneId, Remote};
 use std::{
     collections::BTreeMap,
     path::PathBuf,
@@ -55,6 +55,10 @@ pub struct App {
     startup: Option<mpsc::Receiver<Startup>>,
     deferred_actions: Vec<Action>,
     initial_cwd: Option<PathBuf>,
+    /// SSH destination of the workspace opened when nothing is restored.
+    initial_remote: Option<String>,
+    /// Program that opens remote terminals.
+    ssh_client: String,
     ui: UiState,
     search_point: Option<Point>,
     search_query: Option<(String, Arc<SearchQuery>)>,
@@ -95,7 +99,8 @@ impl App {
         let config_path = launch.config.unwrap_or_else(|| data.join("config.toml"));
         let state_path = data.join("workspaces.json");
         let ephemeral = launch.screenshot.is_some();
-        let restore = !launch.no_restore && launch.cwd.is_none() && !ephemeral;
+        let restore =
+            !launch.no_restore && launch.cwd.is_none() && launch.ssh.is_none() && !ephemeral;
         let (sender, startup) = mpsc::sync_channel(1);
         let settings = config_path.clone();
         let state = state_path.clone();
@@ -140,6 +145,8 @@ impl App {
             startup: Some(startup),
             deferred_actions: Vec::new(),
             initial_cwd: launch.cwd,
+            initial_remote: launch.ssh,
+            ssh_client: coordinator::SSH_CLIENT.into(),
             ui,
             search_point: None,
             search_query: None,
@@ -230,13 +237,16 @@ impl App {
                         pane.generation(),
                         pane.cwd().to_path_buf(),
                         pane.lifecycle().clone(),
+                        self.remote_of(id).is_some(),
                         session.metadata(),
                     )
                 })
             })
             .collect();
-        for (pane, generation, cwd, lifecycle, metadata) in metadata {
-            if metadata.cwd != cwd {
+        for (pane, generation, cwd, lifecycle, remote, metadata) in metadata {
+            // A remote session reports a directory on its host, or the SSH
+            // client's own. Neither is where this pane's local shell belongs.
+            if !remote && metadata.cwd != cwd {
                 self.dispatch(
                     ctx,
                     Command::PaneCwdChanged {
@@ -307,13 +317,9 @@ impl App {
         }
         self.execute(ctx, self.controller.start_effects());
         if self.controller.model().workspaces().is_empty() {
-            let cwd = self
-                .initial_cwd
-                .take()
-                .or_else(|| directories::BaseDirs::new().map(|dirs| dirs.home_dir().into()))
-                .or_else(|| std::env::current_dir().ok())
-                .unwrap_or_else(|| PathBuf::from("."));
-            self.action(ctx, Action::Create(cwd, None));
+            let cwd = self.initial_cwd.take().unwrap_or_else(default_cwd);
+            let remote = self.initial_remote.take();
+            self.create_workspace(ctx, cwd, None, remote);
         }
         // Bind the CLI command before queued user actions can change focus.
         self.command_target = self.controller.model().active_pane().and_then(|id| {
@@ -327,6 +333,14 @@ impl App {
         }
         self.save_state();
     }
+    /// The SSH destination of the workspace that holds `pane`.
+    fn remote_of(&self, pane: PaneId) -> Option<&Remote> {
+        let model = self.controller.model();
+        model
+            .workspace_for_pane(pane)
+            .and_then(|id| model.workspace(id))
+            .and_then(|workspace| workspace.remote())
+    }
     fn views(&self) -> Vec<WorkspaceView> {
         self.controller
             .model()
@@ -336,6 +350,7 @@ impl App {
                 id: w.id(),
                 name: w.name().into(),
                 cwd: w.cwd().into(),
+                remote: w.remote().map(|remote| remote.destination().to_owned()),
                 panes: w.panes().len(),
                 running: w
                     .panes()
@@ -353,6 +368,9 @@ impl App {
         else {
             return BTreeMap::new();
         };
+        let remote = workspace
+            .remote()
+            .map(|remote| remote.destination().to_owned());
         workspace
             .panes()
             .iter()
@@ -364,6 +382,7 @@ impl App {
                         metadata: session.metadata(),
                         snapshot: session.viewport(),
                         starting: false,
+                        remote: remote.clone(),
                     }
                 } else {
                     let title = match pane.lifecycle() {
@@ -373,7 +392,11 @@ impl App {
                     PanePresentation {
                         metadata: SessionMetadata {
                             title,
-                            shell: self.config.shell.clone().unwrap_or_else(|| "shell".into()),
+                            shell: if remote.is_some() {
+                                self.ssh_client.clone()
+                            } else {
+                                self.config.shell.clone().unwrap_or_else(|| "shell".into())
+                            },
                             cwd: pane.cwd().into(),
                             process_id: None,
                             status: match pane.lifecycle() {
@@ -388,6 +411,7 @@ impl App {
                             ..ViewportSnapshot::blank(80, 24)
                         },
                         starting: !matches!(pane.lifecycle(), Lifecycle::Failed(_)),
+                        remote: remote.clone(),
                     }
                 };
                 (pane.id(), presentation)
@@ -580,7 +604,7 @@ impl eframe::App for App {
                 format!(
                     "{} — {}",
                     ui::workspace::pane_label(&presentation.metadata),
-                    ui::helpers::compact_path(&presentation.metadata.cwd)
+                    presentation.location()
                 )
             })
             .unwrap_or_default();
@@ -841,6 +865,13 @@ impl eframe::App for App {
         let complete = self.sessions.shutdown(Duration::from_secs(2));
         self.diagnostics.shutdown(complete);
     }
+}
+/// Where a workspace opens when no directory was chosen for it.
+fn default_cwd() -> PathBuf {
+    directories::BaseDirs::new()
+        .map(|dirs| dirs.home_dir().into())
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 fn set_session_palette(session: &terminal_core::TerminalSession, p: Palette) {
     use terminal_core::{NamedColor, Rgb};

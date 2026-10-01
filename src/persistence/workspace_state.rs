@@ -8,7 +8,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const SCHEMA_VERSION: u32 = 1;
+/// Version 2 adds the optional SSH destination of a workspace. Version 1 files
+/// are a subset and are read as they are; saving writes the current version,
+/// which builds that predate remote workspaces refuse to replace.
+pub const SCHEMA_VERSION: u32 = 2;
 const MAX_STATE_BYTES: u64 = 8 * 1024 * 1024;
 
 /// This DTO is the disk contract. Runtime layout serialization cannot change it.
@@ -27,6 +30,9 @@ pub struct SavedWorkspace {
     pub id: WorkspaceId,
     pub name: String,
     pub cwd: PathBuf,
+    /// SSH destination of a remote workspace. Never a credential.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh: Option<String>,
     pub panes: Vec<SavedPane>,
     pub layout: SavedLayout,
     pub active: PaneId,
@@ -72,6 +78,9 @@ impl StateSnapshot {
                     id: workspace.id(),
                     name: workspace.name().into(),
                     cwd: workspace.cwd().into(),
+                    ssh: workspace
+                        .remote()
+                        .map(|remote| remote.destination().to_owned()),
                     panes: workspace
                         .panes()
                         .iter()
@@ -110,6 +119,7 @@ impl SavedWorkspace {
             id: self.id,
             name: self.name,
             cwd: self.cwd,
+            remote: self.ssh,
             panes: self
                 .panes
                 .into_iter()
@@ -254,13 +264,16 @@ pub fn load_state(path: &Path, limits: Limits) -> LoadReport {
             preserve_original(path, &bytes, &mut report);
             return report;
         };
-        if version_number != u64::from(SCHEMA_VERSION) {
+        if !(1..=u64::from(SCHEMA_VERSION)).contains(&version_number) {
             report.can_write = false;
             report.diagnostics.push(format!("Unsupported workspace schema version {version} in {}; preserving original and disabling state saves", path.display()));
             return report;
         }
         match serde_json::from_value::<StateSnapshot>(value) {
-            Ok(snapshot) => restore_versioned(snapshot, limits, &mut report),
+            Ok(snapshot) => {
+                report.migrated = snapshot.version != SCHEMA_VERSION;
+                restore_versioned(snapshot, limits, &mut report);
+            }
             Err(error) => report.diagnostics.push(format!(
                 "Invalid workspace schema in {}: {error}",
                 path.display()
@@ -473,6 +486,7 @@ fn restore_legacy(legacy: LegacyState, limits: Limits, report: &mut LoadReport) 
             id,
             name: workspace.name,
             cwd: workspace.cwd,
+            remote: None,
             panes,
             layout,
             active: selected,
@@ -572,6 +586,7 @@ mod tests {
             .dispatch(Command::AddWorkspace {
                 cwd: directory.into(),
                 name: "fixture".into(),
+                remote: None,
             })
             .unwrap();
         let workspace = controller.model().active_workspace().unwrap();
@@ -616,6 +631,78 @@ mod tests {
             serde_json::to_value(StateSnapshot::from_model(&model)).unwrap(),
             serde_json::to_value(snapshot).unwrap()
         );
+    }
+
+    #[test]
+    fn a_remote_workspace_round_trips_its_destination_and_local_ones_stay_unchanged() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("workspaces.json");
+        let mut controller = Controller::new(
+            sample(directory.path())
+                .into_model(Limits::default())
+                .unwrap(),
+        );
+        controller
+            .dispatch(Command::AddWorkspace {
+                cwd: directory.path().into(),
+                name: "devbox".into(),
+                remote: Some("me@devbox".into()),
+            })
+            .unwrap();
+        let saved = serde_json::to_value(StateSnapshot::from_model(controller.model())).unwrap();
+        assert_eq!(saved["version"], 2);
+        assert!(saved["workspaces"][0].get("ssh").is_none());
+        assert_eq!(saved["workspaces"][1]["ssh"], "me@devbox");
+        std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let report = load_state(&path, Limits::default());
+        assert!(report.can_write && !report.migrated);
+        assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+        let model = report.model.unwrap();
+        assert_eq!(model.workspaces()[0].remote(), None);
+        assert_eq!(
+            model.workspaces()[1]
+                .remote()
+                .map(|remote| remote.destination()),
+            Some("me@devbox")
+        );
+    }
+
+    #[test]
+    fn version_one_state_is_read_without_loss_and_saved_as_the_current_version() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("workspaces.json");
+        let mut saved = serde_json::to_value(sample(directory.path())).unwrap();
+        saved["version"] = 1.into();
+        std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let report = load_state(&path, Limits::default());
+        assert!(report.can_write && report.migrated);
+        assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+        // No recovery copy: nothing was repaired or dropped.
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+        let resaved =
+            serde_json::to_value(StateSnapshot::from_model(&report.model.unwrap())).unwrap();
+        saved["version"] = SCHEMA_VERSION.into();
+        assert_eq!(resaved, saved);
+    }
+
+    #[test]
+    fn an_unusable_saved_destination_skips_that_workspace_and_archives_the_original() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("workspaces.json");
+        let mut snapshot = sample(directory.path());
+        snapshot.workspaces[0].ssh = Some("-oProxyCommand=id".into());
+        std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+        let report = load_state(&path, Limits::default());
+        assert!(report.can_write);
+        assert!(report.model.unwrap().workspaces().is_empty());
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|message| message.contains("invalid workspace \"fixture\"")
+                    && message.contains("SSH host"))
+        );
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 2);
     }
 
     #[test]

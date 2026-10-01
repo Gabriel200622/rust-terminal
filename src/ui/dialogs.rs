@@ -94,6 +94,88 @@ fn rename(
     }
 }
 
+/// Connects a workspace over SSH, or creates a connected one when `workspace`
+/// is `None`. It asks only for the host: signing in happens in the terminal,
+/// through the system client, and a new workspace is named after its host.
+fn ssh(
+    ctx: &egui::Context,
+    p: Palette,
+    state: &mut UiState,
+    workspace: Option<pace_model::WorkspaceId>,
+    actions: &mut Vec<Action>,
+) {
+    let title = if workspace.is_some() {
+        "Connect over SSH"
+    } else {
+        "New SSH workspace"
+    };
+    let mut connect = confirmed_by_enter(ctx, state);
+    let mut cancel = false;
+    let output = sheet(ctx, p, title, 420.0, SheetPlacement::Center, |ui| {
+        sheet_header(ui, p, title, None);
+        padded(ui, 20.0, |ui| {
+            let width = ui.available_width();
+            let host = text_field(
+                ui,
+                p,
+                Id::new("ssh-host"),
+                &mut state.ssh_host,
+                "user@host",
+                "SSH host",
+                width,
+            );
+            if state.overlay_focus && accepts_focus(ui) {
+                host.request_focus();
+                state.overlay_focus = false;
+            }
+            ui.add_space(12.0);
+            let problem = (!state.ssh_host.trim().is_empty())
+                .then(|| pace_model::Remote::parse(&state.ssh_host).err())
+                .flatten();
+            let (note, ink) = match problem {
+                Some(error) => (error.to_string(), p.red),
+                None if workspace.is_some() => (
+                    "Every terminal in this workspace restarts on the host. Running processes will stop."
+                        .to_owned(),
+                    p.secondary,
+                ),
+                None => (
+                    "Terminals open on the host using your SSH configuration and keys. Sign-in prompts appear in the terminal."
+                        .to_owned(),
+                    p.secondary,
+                ),
+            };
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(note)
+                        .font(theme::regular(12.0))
+                        .color(ink),
+                )
+                .wrap()
+                .selectable(false),
+            );
+        });
+        ui.add_space(4.0);
+        footer(ui, "ssh-actions", |ui| {
+            connect |= button(ui, p, "Connect", ButtonKind::Primary).clicked();
+            cancel = button(ui, p, "Cancel", ButtonKind::Secondary).clicked();
+        });
+    });
+    if cancel || output.backdrop_clicked {
+        actions.push(Action::CloseOverlay);
+    } else if connect {
+        match pace_model::Remote::parse(&state.ssh_host) {
+            Ok(remote) => actions.push(Action::Connect {
+                workspace,
+                destination: remote.destination().to_owned(),
+            }),
+            // Enter leaves a single-line field. Return the keyboard to the
+            // host so it can be corrected without reaching for the pointer.
+            Err(_) => state.overlay_focus = true,
+        }
+    }
+}
+
 /// Title, consequence and confirming verb for each close target.
 pub fn close_copy(close: Close) -> (&'static str, &'static str, &'static str) {
     match close {
@@ -106,6 +188,11 @@ pub fn close_copy(close: Close) -> (&'static str, &'static str, &'static str) {
             "Close workspace?",
             "Every terminal in this workspace will close, and running processes will stop.",
             "Close",
+        ),
+        Close::Connection(_) => (
+            "Disconnect from SSH?",
+            "Every terminal in this workspace restarts as a local shell. Processes running in them will stop.",
+            "Disconnect",
         ),
         Close::App => (
             "Quit Pace?",
@@ -158,6 +245,7 @@ fn confirm_close(ctx: &egui::Context, p: Palette, close: Close, actions: &mut Ve
 pub fn show(ctx: &egui::Context, p: Palette, state: &mut UiState, actions: &mut Vec<Action>) {
     match state.overlay {
         OverlayState::Rename(workspace) => rename(ctx, p, state, workspace, actions),
+        OverlayState::Ssh(workspace) => ssh(ctx, p, state, workspace, actions),
         OverlayState::ConfirmClose(close) => confirm_close(ctx, p, close, actions),
         _ => {}
     }
@@ -259,9 +347,68 @@ mod tests {
         let pane = close_copy(Close::Pane(PaneId::new(1)));
         let workspace = close_copy(Close::Workspace(WorkspaceId::new(1)));
         let app = close_copy(Close::App);
+        let connection = close_copy(Close::Connection(WorkspaceId::new(1)));
         assert_eq!(pane.0, "Close terminal?");
         assert_ne!(pane.0, workspace.0);
         assert_ne!(workspace.1, app.1);
-        assert_eq!((pane.2, app.2), ("Close", "Quit"));
+        assert_ne!(connection.1, workspace.1);
+        assert_eq!(
+            (pane.2, app.2, connection.2),
+            ("Close", "Quit", "Disconnect")
+        );
+    }
+
+    /// Runs the sheet for a frame with a deliberate Enter. Returns its actions
+    /// and whether the host field asked for the keyboard back.
+    fn confirm_ssh(host: &str, workspace: Option<WorkspaceId>) -> (Vec<Action>, bool) {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(crate::platform::fonts::bundled_definitions());
+        let config = crate::config::Config::default();
+        theme::apply(&ctx, &config);
+        let p = Palette::for_config(&config);
+        let mut state = UiState {
+            overlay: OverlayState::Ssh(workspace),
+            ssh_host: host.into(),
+            ..UiState::default()
+        };
+        let mut actions = Vec::new();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(900.0, 600.0))),
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                ..Default::default()
+            },
+            |ui| show(ui.ctx(), p, &mut state, &mut actions),
+        );
+        output.textures_delta.clear();
+        (actions, state.overlay_focus)
+    }
+
+    #[test]
+    fn the_ssh_sheet_connects_its_own_target_and_only_to_a_usable_host() {
+        let existing = WorkspaceId::new(7);
+        let (actions, refocus) = confirm_ssh(" me@devbox ", Some(existing));
+        assert!(!refocus);
+        assert!(matches!(
+            &actions[..],
+            [Action::Connect { workspace: Some(id), destination }]
+                if *id == existing && destination == "me@devbox"
+        ));
+        assert!(matches!(
+            &confirm_ssh("devbox", None).0[..],
+            [Action::Connect { workspace: None, destination }] if destination == "devbox"
+        ));
+        // Nothing is sent for an empty host, or one the client could misread,
+        // and the field takes the keyboard back so it can be corrected.
+        for host in ["", "  ", "-oProxyCommand=id", "dev box"] {
+            let (actions, refocus) = confirm_ssh(host, None);
+            assert!(actions.is_empty() && refocus, "{host:?}");
+        }
     }
 }

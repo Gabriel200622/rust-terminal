@@ -495,6 +495,15 @@ fn workspace_menu(
         actions.push(Action::MoveWorkspace(workspace.id, index + 1));
         ui.close();
     }
+    if workspace.remote.is_some() {
+        if menu_item(ui, p, Icon::Globe, "Disconnect from SSH", "", false) {
+            actions.push(Action::Disconnect(workspace.id));
+            ui.close();
+        }
+    } else if menu_item(ui, p, Icon::Globe, "Connect over SSH…", "", false) {
+        actions.push(Action::Ssh(Some(workspace.id)));
+        ui.close();
+    }
     menu_separator(ui, p);
     if menu_item(ui, p, Icon::Close, "Close workspace", "", true) {
         actions.push(Action::CloseWorkspace(workspace.id));
@@ -521,6 +530,8 @@ struct RowState {
     dragging: bool,
     /// A terminal carried from the stage, which this row may receive.
     pane_drag: Option<PaneId>,
+    /// The carried terminal's session can run in this workspace.
+    accepts: bool,
 }
 
 fn workspace_row(
@@ -537,6 +548,7 @@ fn workspace_row(
         lift,
         dragging,
         pane_drag,
+        accepts,
     } = state;
     let response = ui.interact(
         row,
@@ -584,8 +596,9 @@ fn workspace_row(
             egui::StrokeKind::Inside,
         );
     }
-    // A carried terminal can be dropped on any workspace but its own.
-    let receiving = pane_drag.filter(|_| !selected && ui.rect_contains_pointer(row));
+    // A carried terminal can be dropped on any workspace but its own, as
+    // long as that workspace is on the same machine.
+    let receiving = pane_drag.filter(|_| !selected && accepts && ui.rect_contains_pointer(row));
     let receive = animate(
         ui.ctx(),
         ui.id().with(("workspace-drop", workspace.id.get())),
@@ -668,13 +681,35 @@ fn workspace_row(
             text_width,
         ),
     );
-    painter.text(
-        Pos2::new(text_left, row.center().y + 9.0),
-        Align2::LEFT_CENTER,
-        helpers::path_label(&workspace.cwd, (text_width / 5.9).max(4.0) as usize),
-        theme::regular(11.0),
-        p.muted,
-    );
+    let detail = Pos2::new(text_left, row.center().y + 9.0);
+    if let Some(destination) = &workspace.remote {
+        // A remote workspace shows its host where a local one shows its folder.
+        icons::paint(
+            &painter,
+            Rect::from_center_size(detail + vec2(5.5, 0.0), Vec2::splat(11.0)),
+            Icon::Globe,
+            p.muted,
+        );
+        galley_at(
+            &painter,
+            detail + vec2(15.0, 0.0),
+            elided(
+                &painter,
+                destination,
+                theme::regular(11.0),
+                p.muted,
+                text_width - 15.0,
+            ),
+        );
+    } else {
+        painter.text(
+            detail,
+            Align2::LEFT_CENTER,
+            helpers::path_label(&workspace.cwd, (text_width / 5.9).max(4.0) as usize),
+            theme::regular(11.0),
+            p.muted,
+        );
+    }
 
     response.widget_info(|| {
         WidgetInfo::selected(WidgetType::SelectableLabel, true, selected, &workspace.name)
@@ -753,6 +788,12 @@ fn workspace_list(
         // Nothing is lifted, or its workspace has closed.
         *drag = WorkspaceDrag::default();
     }
+    // A carried terminal stays on the machine of the workspace it came from.
+    let machine = view
+        .workspaces
+        .iter()
+        .find(|workspace| Some(workspace.id) == view.active)
+        .map(|workspace| &workspace.remote);
     let shown = |id: WorkspaceId, tops: &[(WorkspaceId, f32)]| {
         tops.iter().find(|(row, _)| *row == id).map(|(_, top)| *top)
     };
@@ -855,6 +896,7 @@ fn workspace_list(
                 ),
                 dragging: held.is_some(),
                 pane_drag: view.pane_drag,
+                accepts: Some(&workspace.remote) == machine,
             },
             actions,
         );
@@ -1088,6 +1130,7 @@ mod tests {
                 id: WorkspaceId::new(*id),
                 name: format!("workspace {id}"),
                 cwd: "/srv/app".into(),
+                remote: None,
                 panes: 1,
                 running: true,
             })
@@ -1365,12 +1408,13 @@ mod tests {
         ctx.set_fonts(crate::platform::fonts::bundled_definitions());
         let config = crate::config::Config::default();
         theme::apply(&ctx, &config);
-        let workspaces: Vec<WorkspaceView> = [1, 2]
+        let workspaces: Vec<WorkspaceView> = [(1, None), (2, None), (3, Some("me@devbox"))]
             .into_iter()
-            .map(|id| WorkspaceView {
+            .map(|(id, remote): (u64, Option<&str>)| WorkspaceView {
                 id: WorkspaceId::new(id),
                 name: format!("workspace {id}"),
                 cwd: "/srv/app".into(),
+                remote: remote.map(str::to_owned),
                 panes: 2,
                 running: true,
             })
@@ -1413,6 +1457,7 @@ mod tests {
         // Rows are 46 points tall, two points apart, below the list heading.
         let own = Pos2::new(100.0, metrics::TOOLBAR_HEIGHT + 30.0 + 23.0);
         let other = own + vec2(0.0, 48.0);
+        let on_a_host = other + vec2(0.0, 48.0);
         let release = |pos| egui::Event::PointerButton {
             pos,
             button: egui::PointerButton::Primary,
@@ -1429,6 +1474,8 @@ mod tests {
         for (pos, drag, expected) in [
             (other, Some(pane), Some(WorkspaceId::new(2))),
             (own, Some(pane), None),
+            // Its session is local and would not follow it to another machine.
+            (on_a_host, Some(pane), None),
             // Without a carried terminal a release is an ordinary click.
             (other, None, None),
         ] {
