@@ -2,4 +2,5 @@
 //! Loading is a bootstrap operation; frame-time saves are delegated to the
 //! bounded runtime writer.
 
+pub mod window_state;
 pub mod workspace_state;
