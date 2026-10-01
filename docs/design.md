@@ -116,7 +116,10 @@ icon buttons keep a 28-point target around a 16-point glyph.
   a centred capsule near the pane's bottom edge with one action. A successful
   exit is stated plainly; only failures use the problem colour. "Back to
   bottom" appears at the bottom trailing corner while scrolled into history.
-- **Sheets.** Preferences, new workspace, rename and close confirmation are
+- **Workspace creation.** New workspace immediately opens and selects a fresh
+  shell in the home directory (`~`). Its name can be changed afterward from the
+  sidebar or command palette.
+- **Sheets.** Preferences, rename and close confirmation are
   centred modal sheets over a dimmed window; the dim follows the window's
   rounded shape. The confirming action sits at the trailing edge; destructive
   confirmations are red and are never the Enter default. Each close target has

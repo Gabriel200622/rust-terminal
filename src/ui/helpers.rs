@@ -1,7 +1,6 @@
 //! Label and window helpers, plus the shared controls of the visual system.
 pub use super::controls::*;
 use eframe::egui::{self, Rect, Sense, Vec2};
-use std::path::PathBuf;
 pub fn compact_path(path: &std::path::Path) -> String {
     let text = path.display().to_string();
     if let Some(home) = directories::BaseDirs::new()
@@ -10,14 +9,6 @@ pub fn compact_path(path: &std::path::Path) -> String {
         return format!("~/{}", relative.display());
     }
     text
-}
-pub fn expand_home(text: &str) -> PathBuf {
-    if (text == "~" || text.starts_with("~/"))
-        && let Some(home) = directories::BaseDirs::new()
-    {
-        return home.home_dir().join(text.strip_prefix("~/").unwrap_or(""));
-    }
-    PathBuf::from(text)
 }
 pub fn ellipsize(text: &str, max: usize) -> String {
     if text.chars().count() > max {
