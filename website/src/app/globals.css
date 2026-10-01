@@ -1,0 +1,403 @@
+@import "tailwindcss";
+
+/*
+ * The visual system mirrors Pace's own: `src/theme.rs` (Palette, metrics) and
+ * `docs/design.md`. Keep these values in step with the app rather than
+ * inventing page-only colours.
+ */
+
+:root,
+[data-theme="graphite"],
+[data-theme="dusk"] {
+  color-scheme: dark;
+  --bg: #101012;
+  --chrome: #1c1c1f;
+  --elevated: #29292d;
+  --control: rgb(255 255 255 / 0.063);
+  --hover: rgb(255 255 255 / 0.059);
+  --pressed: rgb(255 255 255 / 0.11);
+  --separator: rgb(255 255 255 / 0.078);
+  --border: rgb(255 255 255 / 0.118);
+  --fg: #ececf1;
+  --secondary: #a0a0a8;
+  --muted: #6d6d76;
+  --green: #30d158;
+  --yellow: #ffd60a;
+  --red: #ff5a52;
+  --scrim: rgb(0 0 0 / 0.47);
+  --shadow: rgb(0 0 0 / 0.43);
+  --thumb: color-mix(in srgb, white 16%, var(--elevated));
+  --thumb-shadow: rgb(0 0 0 / 0.2);
+  --tile-alpha: 20%;
+  --selection-mix: 34%;
+
+  --ansi-0: #2c2c31;
+  --ansi-1: #ff6b63;
+  --ansi-2: #5fd68b;
+  --ansi-3: #ffd166;
+  --ansi-4: #5aa9ff;
+  --ansi-5: #c792f6;
+  --ansi-6: #5fd4e8;
+  --ansi-7: #d6d6dd;
+  --ansi-8: #6d6d76;
+  --ansi-9: #ff8b84;
+  --ansi-10: #86e5a8;
+  --ansi-11: #ffe08f;
+  --ansi-12: #86c1ff;
+  --ansi-13: #ddb3ff;
+  --ansi-14: #8ce4f3;
+  --ansi-15: #f5f5f7;
+
+  /* Accent and workspace identity colours resolve per theme. */
+  --blue: #0a84ff;
+  --indigo: #7d7aff;
+  --purple: #bf5af2;
+  --pink: #ff4f79;
+  --crimson: #ff5a52;
+  --orange: #ff9f0a;
+  --amber: #ffd60a;
+  --emerald: #30d158;
+  --slate: #98989f;
+  --on-orange: #1d1d1f;
+  --on-amber: #1d1d1f;
+  --tile-ink-mix: 0%;
+}
+
+[data-theme="dusk"] {
+  --bg: #12111c;
+  --chrome: #1e1c2b;
+  --elevated: #2b2840;
+  --fg: #e9e7f5;
+  --secondary: #a29fb8;
+  --muted: #6f6c87;
+  --ansi-0: #2f2c42;
+  --ansi-8: #6f6c87;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #ffffff;
+  --chrome: #ececef;
+  --elevated: #ffffff;
+  --control: rgb(0 0 0 / 0.051);
+  --hover: rgb(0 0 0 / 0.051);
+  --pressed: rgb(0 0 0 / 0.102);
+  --separator: rgb(0 0 0 / 0.086);
+  --border: rgb(0 0 0 / 0.133);
+  --fg: #1d1d1f;
+  --secondary: #5e5e66;
+  --muted: #8e8e95;
+  --green: #28a745;
+  --yellow: #e0a800;
+  --red: #e5372d;
+  --scrim: rgb(0 0 0 / 0.275);
+  --shadow: rgb(0 0 0 / 0.18);
+  --thumb: #ffffff;
+  --thumb-shadow: rgb(0 0 0 / 0.086);
+  --tile-alpha: 16%;
+  --selection-mix: 24%;
+
+  --ansi-0: #1d1d1f;
+  --ansi-1: #c9302a;
+  --ansi-2: #1f8a3d;
+  --ansi-3: #9a6700;
+  --ansi-4: #0a63d6;
+  --ansi-5: #9340c8;
+  --ansi-6: #0d7d92;
+  --ansi-7: #8e8e95;
+  --ansi-8: #6e6e75;
+  --ansi-9: #e0453e;
+  --ansi-10: #2aa24b;
+  --ansi-11: #b97b00;
+  --ansi-12: #1e7bf0;
+  --ansi-13: #ab55e4;
+  --ansi-14: #1994aa;
+  --ansi-15: #1d1d1f;
+
+  --blue: #007aff;
+  --indigo: #5856d6;
+  --purple: #af52de;
+  --pink: #ff2d55;
+  --crimson: #ff3b30;
+  --orange: #f08a00;
+  --amber: #e0a800;
+  --emerald: #28a745;
+  --slate: #7c7c82;
+  --on-orange: #ffffff;
+  --on-amber: #ffffff;
+  --tile-ink-mix: 18%;
+}
+
+/*
+ * The accent is declared wherever a theme or an accent is, so a nested theme
+ * preview resolves it against its own palette.
+ */
+:root,
+[data-theme],
+[data-accent] {
+  --accent: var(--blue);
+  --on-accent: #ffffff;
+  /* Opaque, so selected cells keep their exact colour under any glyph. */
+  --selection: color-mix(in srgb, var(--accent) var(--selection-mix), var(--bg));
+}
+[data-accent="indigo"],
+[data-accent="indigo"] [data-theme] {
+  --accent: var(--indigo);
+}
+[data-accent="purple"],
+[data-accent="purple"] [data-theme] {
+  --accent: var(--purple);
+}
+[data-accent="pink"],
+[data-accent="pink"] [data-theme] {
+  --accent: var(--pink);
+}
+[data-accent="red"],
+[data-accent="red"] [data-theme] {
+  --accent: var(--crimson);
+}
+[data-accent="orange"],
+[data-accent="orange"] [data-theme] {
+  --accent: var(--orange);
+  --on-accent: var(--on-orange);
+}
+[data-accent="yellow"],
+[data-accent="yellow"] [data-theme] {
+  --accent: var(--amber);
+  --on-accent: var(--on-amber);
+}
+[data-accent="green"],
+[data-accent="green"] [data-theme] {
+  --accent: var(--emerald);
+}
+[data-accent="graphite"],
+[data-accent="graphite"] [data-theme] {
+  --accent: var(--slate);
+}
+
+@theme inline {
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, "SF Mono", Menlo, monospace;
+
+  --color-bg: var(--bg);
+  --color-chrome: var(--chrome);
+  --color-elevated: var(--elevated);
+  --color-control: var(--control);
+  --color-hover: var(--hover);
+  --color-pressed: var(--pressed);
+  --color-separator: var(--separator);
+  --color-edge: var(--border);
+  --color-fg: var(--fg);
+  --color-secondary: var(--secondary);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-on-accent: var(--on-accent);
+  --color-selection: var(--selection);
+  --color-ok: var(--green);
+  --color-warn: var(--yellow);
+  --color-danger: var(--red);
+  --color-scrim: var(--scrim);
+
+  /* Concentric radii: window = pane + gutter. */
+  --radius-window: 16px;
+  --radius-pane: 10px;
+  --radius-sheet: 14px;
+  --radius-control: 8px;
+  --radius-cap: 5px;
+
+  --shadow-sheet: 0 18px 48px var(--shadow);
+  --shadow-popup: 0 6px 20px color-mix(in srgb, var(--shadow) 70%, transparent);
+  --shadow-window:
+    0 0 0 1px var(--separator), 0 30px 80px -20px var(--shadow), 0 60px 140px -40px var(--shadow);
+
+  /* The app's motion: short, ease-out, only for state changes. */
+  --ease-out: cubic-bezier(0.33, 1, 0.68, 1);
+
+  --animate-pane-in: pane-in 160ms cubic-bezier(0.33, 1, 0.68, 1);
+  --animate-sheet-in: sheet-in 140ms cubic-bezier(0.33, 1, 0.68, 1);
+  --animate-fade-in: fade-in 140ms cubic-bezier(0.33, 1, 0.68, 1);
+  --animate-hud-in: hud-in 1500ms cubic-bezier(0.33, 1, 0.68, 1) forwards;
+  --animate-blink: blink 1s steps(1) infinite;
+  --animate-rise: rise 700ms cubic-bezier(0.33, 1, 0.68, 1) both;
+}
+
+:root {
+  --ease: cubic-bezier(0.33, 1, 0.68, 1);
+}
+
+@keyframes pane-in {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+}
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes hud-in {
+  0% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  9%,
+  82% {
+    opacity: 1;
+    transform: none;
+  }
+  100% {
+    opacity: 0;
+    transform: none;
+  }
+}
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes chapter-fill {
+  from {
+    transform: scaleX(0);
+  }
+}
+@keyframes flow {
+  to {
+    stroke-dashoffset: -28;
+  }
+}
+
+@layer base {
+  html {
+    background: var(--bg);
+    color: var(--fg);
+    scroll-behavior: smooth;
+    scroll-padding-top: 72px;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: var(--selection);
+  }
+
+  :focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+    outline-offset: 2px;
+  }
+}
+
+/* A theme change eases every surface at once, then gets out of the way. */
+html.theme-shift,
+html.theme-shift *,
+html.theme-shift *::before,
+html.theme-shift *::after {
+  transition:
+    background-color 220ms var(--ease),
+    border-color 220ms var(--ease),
+    color 220ms var(--ease),
+    fill 220ms var(--ease),
+    stroke 220ms var(--ease),
+    box-shadow 220ms var(--ease) !important;
+}
+
+@layer components {
+  /* Terminal text: JetBrains Mono on the pane's own grid. */
+  .term {
+    font-family: var(--font-mono);
+    font-size: var(--term-size, 14px);
+    line-height: var(--term-leading, 1.4);
+    font-variant-ligatures: none;
+    font-feature-settings: "liga" 0, "calt" 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    tab-size: 8;
+  }
+  .term-row {
+    min-height: 1lh;
+  }
+
+  .cursor {
+    display: inline-block;
+    width: 1ch;
+    height: 1lh;
+    vertical-align: top;
+    border-radius: 1px;
+    box-shadow: inset 0 0 0 1px var(--muted);
+  }
+  [data-focused="true"] > .term .cursor {
+    box-shadow: none;
+    background: color-mix(in srgb, var(--accent) 42%, transparent);
+  }
+  [data-cursor="beam"] [data-focused="true"] > .term .cursor {
+    background: linear-gradient(var(--accent), var(--accent)) left / 1.5px 100% no-repeat;
+  }
+  [data-cursor="underline"] [data-focused="true"] > .term .cursor {
+    background: linear-gradient(var(--accent), var(--accent)) bottom / 100% 2px no-repeat;
+  }
+  [data-blink="true"] [data-focused="true"] > .term .cursor {
+    animation: blink 1s steps(1) infinite;
+  }
+
+  .term mark {
+    color: inherit;
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--accent) 25%, transparent);
+  }
+
+  .spinner {
+    animation: spin 0.9s linear infinite;
+  }
+
+  /* Quiet scrollbars for sheets, as in the app. */
+  .quiet-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: var(--pressed) transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .hud {
+    display: none;
+  }
+}
+
+/* Connectors flow only while their diagram is on screen. */
+[data-inview="true"] .flow {
+  animation: flow 1.1s linear infinite;
+}
