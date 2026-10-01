@@ -139,7 +139,18 @@ fn commands(view: &PaletteView) -> Vec<Command> {
         shortcut("T"),
         [Action::New],
     ));
+    list.push(command(
+        "Workspace",
+        Icon::Globe,
+        "New SSH workspace",
+        "",
+        [Action::Ssh(None)],
+    ));
     if let Some(active) = view.active {
+        let remote = view
+            .workspaces
+            .iter()
+            .any(|workspace| workspace.id == active && workspace.remote.is_some());
         list.extend([
             command(
                 "Workspace",
@@ -148,6 +159,23 @@ fn commands(view: &PaletteView) -> Vec<Command> {
                 "",
                 [Action::Rename(active)],
             ),
+            if remote {
+                command(
+                    "Workspace",
+                    Icon::Globe,
+                    "Disconnect workspace from SSH",
+                    "",
+                    [Action::Disconnect(active)],
+                )
+            } else {
+                command(
+                    "Workspace",
+                    Icon::Globe,
+                    "Connect workspace over SSH",
+                    "",
+                    [Action::Ssh(Some(active))],
+                )
+            },
             command(
                 "Workspace",
                 Icon::Close,
@@ -486,6 +514,7 @@ mod tests {
                 id: WorkspaceId::new(id),
                 name: "app".into(),
                 cwd: "/srv/app".into(),
+                remote: None,
                 panes: 1,
                 running: true,
             })
@@ -509,6 +538,50 @@ mod tests {
                 .iter()
                 .any(|command| command.title == "Dismiss message")
         );
+    }
+
+    #[test]
+    fn ssh_commands_target_the_active_workspace_and_offer_the_reverse_when_connected() {
+        let config = Config::default();
+        let workspaces: Vec<WorkspaceView> = [(1, None), (2, Some("me@devbox"))]
+            .into_iter()
+            .map(|(id, remote): (u64, Option<&str>)| WorkspaceView {
+                id: WorkspaceId::new(id),
+                name: "app".into(),
+                cwd: "/srv/app".into(),
+                remote: remote.map(str::to_owned),
+                panes: 1,
+                running: true,
+            })
+            .collect();
+        let titles = |active: Option<u64>| -> Vec<(String, Vec<Action>)> {
+            commands(&PaletteView {
+                active: active.map(WorkspaceId::new),
+                ..view(&config, &workspaces)
+            })
+            .into_iter()
+            .filter(|command| command.title.contains("SSH"))
+            .map(|command| (command.title, command.actions))
+            .collect()
+        };
+        let none = titles(None);
+        assert!(matches!(
+            &none[..],
+            [(title, actions)] if title == "New SSH workspace"
+                && matches!(actions[..], [Action::Ssh(None)])
+        ));
+        let local = titles(Some(1));
+        assert!(matches!(
+            &local[..],
+            [_, (title, actions)] if title == "Connect workspace over SSH"
+                && matches!(actions[..], [Action::Ssh(Some(id))] if id == WorkspaceId::new(1))
+        ));
+        let remote = titles(Some(2));
+        assert!(matches!(
+            &remote[..],
+            [_, (title, actions)] if title == "Disconnect workspace from SSH"
+                && matches!(actions[..], [Action::Disconnect(id)] if id == WorkspaceId::new(2))
+        ));
     }
 
     #[test]

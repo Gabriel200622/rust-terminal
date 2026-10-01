@@ -25,10 +25,17 @@ The executable is `target/release/pace` on Linux/macOS and `target\release\pace.
 
 Workspace navigation, independent shell panes, split layouts, scrollback, terminal search, selection/clipboard, a command palette, and settings are integrated in the native interface. Every action is listed in the command palette with its shortcut; secondary-click a terminal or a workspace for its menu, double-click a workspace to rename it, and drag the sidebar's edge to resize it. Terminal text uses bundled JetBrains Mono; interface text uses Geist. Font licenses accompany the assets.
 
-When no saved workspace can be restored, Pace opens a terminal in your home directory (`~`). Use `--cwd` to choose another starting directory.
+### SSH workspaces
+
+A workspace can be connected to another machine over SSH. Every terminal in it, including new splits and restarted terminals, then opens on that host instead of in a local shell. Secondary-click a workspace and choose **Connect over SSH…** to move all of its terminals to a host, or run **New SSH workspace** from the command palette. **Disconnect from SSH** returns the workspace to local shells. Connecting or disconnecting replaces the workspace's terminals, so processes running in them stop.
+
+The host is an OpenSSH destination: `host`, `user@host`, an alias from `~/.ssh/config`, or `ssh://user@host:port`. Pace runs the system `ssh` client (which must be on your `PATH`) once per terminal, so your SSH configuration, keys and agent apply, and password, passphrase and host-key prompts appear in the terminal. Pace stores only the destination, never a credential. Each terminal is its own connection; enable `ControlMaster` in your SSH configuration to share one. Terminals start in the host's login directory with its login shell; the `shell` setting applies to local terminals only. A terminal whose connection ends offers **Reconnect**.
+
+When no saved workspace can be restored, Pace opens a terminal in your home directory (`~`). Use `--cwd` to choose another starting directory, or `--ssh` to open a workspace on a host. `--command` cannot be combined with `--ssh`, and a startup command is never typed into a terminal that is connecting over SSH.
 
 ```sh
 pace --cwd /path/to/project
+pace --ssh user@host
 pace --config config.example.toml
 pace --data-root /path/to/isolated-pace-data
 pace --command 'printf "hello\n"'
@@ -36,7 +43,7 @@ pace --no-restore
 pace --help
 ```
 
-[config.example.toml](config.example.toml) documents the supported settings: three themes, nine accent colours, font size and line height, scrollback limit, shell executable, cursor style/blink, sidebar width, workspace restoration, and close confirmation. Settings are validated; unknown keys are rejected. Workspace restoration restores directories, split positions, and focused panes, and launches fresh shell processes. Commands and process memory are never serialized.
+[config.example.toml](config.example.toml) documents the supported settings: three themes, nine accent colours, font size and line height, scrollback limit, shell executable, cursor style/blink, sidebar width, workspace restoration, and close confirmation. Settings are validated; unknown keys are rejected. Workspace restoration restores directories, split positions, and focused panes, and launches fresh shell processes; a remote workspace opens new SSH connections to its host. Commands and process memory are never serialized.
 
 ## Keyboard shortcuts
 

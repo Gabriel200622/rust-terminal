@@ -342,6 +342,7 @@ mod tests {
             .dispatch(Command::AddWorkspace {
                 cwd: PathBuf::from("/fake"),
                 name: name.into(),
+                remote: None,
             })
             .unwrap();
         StateSnapshot::from_model(controller.model())

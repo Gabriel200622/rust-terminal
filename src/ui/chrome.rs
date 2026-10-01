@@ -386,6 +386,15 @@ fn workspace_menu(ui: &mut Ui, p: Palette, workspace: &WorkspaceView, actions: &
         actions.push(Action::Rename(workspace.id));
         ui.close();
     }
+    if workspace.remote.is_some() {
+        if menu_item(ui, p, Icon::Globe, "Disconnect from SSH", "", false) {
+            actions.push(Action::Disconnect(workspace.id));
+            ui.close();
+        }
+    } else if menu_item(ui, p, Icon::Globe, "Connect over SSH…", "", false) {
+        actions.push(Action::Ssh(Some(workspace.id)));
+        ui.close();
+    }
     menu_separator(ui, p);
     if menu_item(ui, p, Icon::Close, "Close workspace", "", true) {
         actions.push(Action::CloseWorkspace(workspace.id));
@@ -489,13 +498,35 @@ fn workspace_row(
             text_width,
         ),
     );
-    painter.text(
-        Pos2::new(text_left, row.center().y + 9.0),
-        Align2::LEFT_CENTER,
-        helpers::path_label(&workspace.cwd, (text_width / 5.9).max(4.0) as usize),
-        theme::regular(11.0),
-        p.muted,
-    );
+    let detail = Pos2::new(text_left, row.center().y + 9.0);
+    if let Some(destination) = &workspace.remote {
+        // A remote workspace shows its host where a local one shows its folder.
+        icons::paint(
+            &painter,
+            Rect::from_center_size(detail + vec2(5.5, 0.0), Vec2::splat(11.0)),
+            Icon::Globe,
+            p.muted,
+        );
+        galley_at(
+            &painter,
+            detail + vec2(15.0, 0.0),
+            elided(
+                &painter,
+                destination,
+                theme::regular(11.0),
+                p.muted,
+                text_width - 15.0,
+            ),
+        );
+    } else {
+        painter.text(
+            detail,
+            Align2::LEFT_CENTER,
+            helpers::path_label(&workspace.cwd, (text_width / 5.9).max(4.0) as usize),
+            theme::regular(11.0),
+            p.muted,
+        );
+    }
 
     response.widget_info(|| {
         WidgetInfo::selected(WidgetType::SelectableLabel, true, selected, &workspace.name)
