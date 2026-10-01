@@ -14,69 +14,138 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  preflight:
+    name: Fast validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.changes.outputs.code }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # The PR merge commit's first parent is the current base branch.
+          fetch-depth: 2
+      - name: Classify changes
+        id: changes
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+          import subprocess
+
+          paths = subprocess.check_output(['git', 'diff', '--name-only', '-z', 'HEAD^1', 'HEAD']).decode('utf-8').split('\0')
+          code = any(path and not (path.endswith('.md') or path.startswith('artifacts/')) for path in paths)
+          with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:
+              output.write(f'code={str(code).lower()}\n')
+          print('Source/configuration changes: run native matrix' if code else 'Documentation/evidence only: skip compilation')
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        if: steps.changes.outputs.code == 'true'
+        with:
+          toolchain: 1.97.1
+          components: rustfmt
+      - name: Check formatting
+        if: steps.changes.outputs.code == 'true'
+        run: cargo fmt --all -- --check
+      - name: Check dependency boundaries and checker regressions
+        run: |
+          python3 scripts/check-architecture.py
+          python3 scripts/check-architecture.py --self-test
+
   check:
     name: Check (${{ matrix.os }})
+    needs: preflight
+    if: always() && (needs.preflight.result != 'success' || needs.preflight.outputs.code == 'true')
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, macos-15, windows-2025]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 20
     steps:
+      - name: Require successful preflight
+        if: needs.preflight.result != 'success'
+        run: exit 1
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Install Linux build dependencies
+      - name: Check source decoding on this platform
+        run: python3 scripts/check-architecture.py
+      - name: Install Linux build and native inspection dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y pkg-config libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev zsh
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+          sudo apt-get install --no-install-recommends -y pkg-config libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev zsh xvfb libgl1-mesa-dri mesa-vulkan-drivers
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
         with:
           toolchain: 1.97.1
-          components: rustfmt, clippy
+          components: clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
-          key: ${{ matrix.os }}
-      - name: Check formatting
-        if: runner.os == 'Linux'
-        run: cargo fmt --all -- --check
+          key: ci-${{ matrix.os }}
+          cache-on-failure: true
       - name: Check lints
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-      - name: Check dependency boundaries
-        run: python3 scripts/check-architecture.py
+        if: runner.os == 'Linux'
+        run: cargo clippy --profile ci --workspace --all-targets --all-features --locked -- -D warnings
       - name: Test ordinary application configuration
-        run: cargo test --workspace --locked
+        run: cargo test --profile ci --workspace --locked
       - name: Test inspection configuration
-        run: cargo test --workspace --all-features --locked
+        run: cargo test --profile ci --workspace --all-features --locked
       - name: Build native application
-        run: cargo build --locked --bin pace
-
-  latest:
-    name: Latest stable compatibility (Linux)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - run: sudo apt-get update && sudo apt-get install --no-install-recommends -y pkg-config libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev zsh
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
-        with:
-          toolchain: stable
-      - run: cargo +stable test --workspace --all-features --locked
-
-  native-linux:
-    name: Isolated native inspection (Linux X11)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - run: sudo apt-get update && sudo apt-get install --no-install-recommends -y pkg-config libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev zsh xvfb libgl1-mesa-dri mesa-vulkan-drivers
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
-        with:
-          toolchain: 1.97.1
-      - run: cargo build --features inspection --bins --locked
-      - run: xvfb-run -a python3 scripts/native-harness.py --restore --output artifacts/native-ci
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always()
+        if: runner.os != 'Linux'
+        run: cargo build --profile ci --locked --bin pace
+      - name: Build native inspection binaries with the existing dependency cache
+        if: runner.os == 'Linux'
+        run: cargo build --profile ci --features inspection --locked --bin pace --bin pace-inspect
+      - name: Verify isolated native inspection and workspace restoration
+        if: runner.os == 'Linux'
+        env:
+          WGPU_BACKEND: vulkan
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          XDG_RUNTIME_DIR: ${{ runner.temp }}/pace-runtime
+        run: |
+          install -d -m 700 "$XDG_RUNTIME_DIR"
+          xvfb-run -a python3 scripts/native-harness.py --app target/ci/pace --client target/ci/pace-inspect --restore --output artifacts/native-ci
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always() && runner.os == 'Linux'
         with:
           name: native-linux-1.97.1-inspection
           path: artifacts/native-ci
-          if-no-files-found: warn
+          if-no-files-found: ignore
+          retention-days: 7
+
+  latest:
+    name: Latest stable compatibility (Linux)
+    needs: preflight
+    if: always() && (needs.preflight.result != 'success' || needs.preflight.outputs.code == 'true')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Require successful preflight
+        if: needs.preflight.result != 'success'
+        run: exit 1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y pkg-config libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          key: ci-latest
+          cache-on-failure: true
+      - name: Check all targets and features with the latest compiler
+        run: cargo +stable check --profile ci --workspace --all-targets --all-features --locked
+
+  # Keep the required status name while avoiding a separate cold GUI build.
+  # This gate succeeds only after the matrix (including Linux native inspection)
+  # succeeds; a failing or cancelled matrix cannot report native acceptance.
+  native-linux:
+    name: Isolated native inspection (Linux X11)
+    needs: [preflight, check]
+    if: always() && (needs.preflight.result != 'success' || needs.preflight.outputs.code == 'true')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - name: Require successful preflight and native matrix
+        if: needs.preflight.result != 'success' || needs.check.result != 'success'
+        run: exit 1
+      - run: echo 'Native inspection and restoration passed in the Linux matrix job.'

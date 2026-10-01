@@ -312,6 +312,15 @@ pub(super) fn engine_loop(
             thread::sleep(Duration::from_millis(10));
         }
     }
+    #[cfg(not(windows))]
+    {
+        // BSD slave close can wait for terminal output to drain. Once parsing
+        // stops, release blocked sends and every master handle before reaping
+        // the child; otherwise wait() can outlive the retiring I/O workers.
+        shared.stopped.store(true, Ordering::Release);
+        drop(output);
+        master.lock().take();
+    }
     if exit.is_none() {
         // The worker owns the authoritative child handle, so a stale cloned
         // process id can never signal a process after the shell was reaped.
@@ -339,13 +348,12 @@ pub(super) fn engine_loop(
     drop(shutdown_started);
     // A reader blocked on the bounded output channel must be released before
     // ClosePseudoConsole, which can wait for that reader to drain its pipe.
+    #[cfg(windows)]
     drop(output);
     #[cfg(windows)]
     if !conpty_close_started {
         close_conpty(&master, &shared);
     }
-    #[cfg(not(windows))]
-    master.lock().take();
     shared.changed_force();
 }
 

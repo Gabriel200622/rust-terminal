@@ -133,6 +133,7 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 /// Unique temporary files allow concurrent saves; the last successful commit wins.
 /// Preparation/replacement failures preserve the previous destination and remove
 /// the temporary file. A directory-sync failure can occur after the commit.
+/// Windows access/sharing conflicts retry for up to 250 ms on the storage caller.
 fn atomic_write_with(
     path: &Path,
     write: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
@@ -159,11 +160,10 @@ fn atomic_write_with(
         .with_context(|| format!("Cannot synchronize configuration {}", path.display()))?;
     // tempfile uses rename on Unix and MoveFileExW(REPLACE_EXISTING) on Windows.
     // Never remove the old destination before this atomic replacement.
-    let persisted = temporary
-        .persist(path)
-        .map_err(|error| error.error)
+    // Close our prepared file before replacement so another writer cannot
+    // encounter our still-open, delete-pending destination on Windows.
+    persist_temporary(temporary.into_temp_path(), path)
         .with_context(|| format!("Cannot replace configuration {}", path.display()))?;
-    drop(persisted);
     #[cfg(unix)]
     directory.sync_all().with_context(|| {
         format!(
@@ -172,6 +172,34 @@ fn atomic_write_with(
         )
     })?;
     Ok(())
+}
+
+fn persist_temporary(temporary: tempfile::TempPath, path: &Path) -> std::io::Result<()> {
+    #[cfg(not(windows))]
+    return temporary.persist(path).map_err(|error| error.error);
+
+    #[cfg(windows)]
+    {
+        use std::time::{Duration, Instant};
+        let deadline = Instant::now() + Duration::from_millis(250);
+        let mut temporary = temporary;
+        loop {
+            match temporary.persist(path) {
+                Ok(()) => return Ok(()),
+                Err(error)
+                    if matches!(error.error.raw_os_error(), Some(5 | 32 | 33))
+                        && Instant::now() < deadline =>
+                {
+                    // MoveFileEx can temporarily reject replacement while a
+                    // reader/another rename holds the destination. Keep the
+                    // complete temporary file and never unlink the old data.
+                    temporary = error.path;
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => return Err(error.error),
+            }
+        }
+    }
 }
 
 pub fn data_dir() -> PathBuf {
@@ -183,6 +211,41 @@ pub fn data_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    #[test]
+    fn save_retries_a_temporary_windows_sharing_violation() {
+        use std::io::Write;
+        use std::os::windows::fs::OpenOptionsExt;
+        use std::time::Duration;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        std::fs::write(&path, b"previous complete file").unwrap();
+        // FILE_SHARE_READ | FILE_SHARE_WRITE, deliberately without DELETE.
+        let reader = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1 | 2)
+            .open(&path)
+            .unwrap();
+        let (prepared, ready) = std::sync::mpsc::sync_channel(1);
+        std::thread::scope(|scope| {
+            let writer = scope.spawn(|| {
+                atomic_write_with(&path, |file| {
+                    file.write_all(b"replacement complete file")?;
+                    prepared.send(()).unwrap();
+                    Ok(())
+                })
+            });
+            ready.recv_timeout(Duration::from_secs(5)).unwrap();
+            std::thread::sleep(Duration::from_millis(50));
+            assert_eq!(std::fs::read(&path).unwrap(), b"previous complete file");
+            drop(reader);
+            writer.join().unwrap().unwrap();
+        });
+        assert_eq!(std::fs::read(&path).unwrap(), b"replacement complete file");
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
+
     #[test]
     fn rejects_invalid_resources() {
         let mut c = Config {

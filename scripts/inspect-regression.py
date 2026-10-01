@@ -99,6 +99,10 @@ def center(node):
     return ((b['x0'] + b['x1']) / 2, (b['y0'] + b['y1']) / 2)
 
 def click(node):
+    # Dialogs can resize after their first layout pass. Settle that layout and
+    # resolve the semantic target again instead of using a stale screen point.
+    call('settle', 2)
+    node = find(tree(), node['properties']['label'], node['role'])
     call('click', *center(node))
 
 def find(nodes, label, role=None):

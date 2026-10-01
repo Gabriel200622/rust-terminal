@@ -36,9 +36,16 @@ cargo build --release --locked --bin pace
 ```
 
 Rust 1.97.1 is pinned by `rust-toolchain.toml` and is the declared minimum for all
-packages. CI checks that baseline and latest stable, including default and
-inspection configurations. Current
-coverage includes:
+packages. CI tests default and inspection configurations on that baseline on
+Linux, macOS and Windows. Latest stable gets an all-target/all-feature compile
+check rather than a second copy of the Linux test suite. Formatting and
+architecture checks precede compilation; documentation/evidence-only PRs skip
+the build matrix while retaining successful required statuses. The `ci` Cargo
+profile disables optimization/debug symbols, and dependency caches are saved on
+failure. Linux native inspection/restoration reuses the matrix job's compiled
+dependencies instead of starting a separate cold GUI build. These checks are
+correctness evidence; performance measurements still require release builds.
+Current coverage includes:
 
 | Boundary | What is exercised |
 | --- | --- |

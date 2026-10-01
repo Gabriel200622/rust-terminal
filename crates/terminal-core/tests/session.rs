@@ -21,6 +21,7 @@ fn shell(script: &str) -> TerminalSession {
     .unwrap()
 }
 
+#[track_caller]
 fn wait_for(mut condition: impl FnMut() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while !condition() {
@@ -75,10 +76,12 @@ fn terminal_device_status_reply_reaches_the_real_child() {
         )
     });
     let output = screen(&session);
-    assert!(
-        output.contains("1b 5b 31 3b 31 52"),
-        "Missing ESC[1;1R reply: {output}"
-    );
+    // GNU and BSD od use different spacing; compare the actual reply bytes.
+    let bytes: Vec<u8> = output
+        .split_whitespace()
+        .filter_map(|word| u8::from_str_radix(word, 16).ok())
+        .collect();
+    assert_eq!(bytes, b"\x1b[1;1R", "Missing ESC[1;1R reply: {output}");
 }
 
 #[test]
@@ -383,7 +386,9 @@ RPROMPT=
     let session = TerminalSession::spawn(
         SessionOptions {
             shell: Some("zsh".into()),
-            args: vec!["-i".into()],
+            // Global compinit can prompt about insecure runner completion
+            // directories. Load only this fixture's user startup files.
+            args: vec!["-d".into(), "-i".into()],
             cwd: directory.path().into(),
             env: vec![(
                 "ZDOTDIR".into(),

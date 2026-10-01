@@ -453,6 +453,7 @@ mod tests {
             ..SessionOptions::default()
         }
     }
+    #[track_caller]
     fn until(
         manager: &mut SessionManager,
         mut condition: impl FnMut(&SessionManager, &[SessionCompletion]) -> bool,
@@ -475,7 +476,13 @@ mod tests {
             }
             assert!(
                 Instant::now() < deadline,
-                "Session manager operation timed out"
+                "Session manager operation timed out: usage={:?}, closing workers={:?}",
+                manager.usage(),
+                manager
+                    .closing
+                    .iter()
+                    .map(|entry| entry.session.shutdown_completion().active_workers())
+                    .collect::<Vec<_>>()
             );
             thread::sleep(Duration::from_millis(5));
         }

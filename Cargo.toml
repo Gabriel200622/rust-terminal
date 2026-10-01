@@ -47,3 +47,15 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 2
+
+# CI verifies correctness; optimized builds are reserved for native performance
+# measurements and release artifacts. Keep all CI commands on one profile so
+# tests, Clippy, and the native inspection build reuse dependency artifacts.
+[profile.ci]
+inherits = "dev"
+opt-level = 0
+debug = 0
+incremental = false
+
+[profile.ci.package."*"]
+opt-level = 0
