@@ -16,6 +16,8 @@ use std::path::PathBuf;
 pub enum Close {
     Pane(PaneId),
     Workspace(WorkspaceId),
+    /// The SSH connection of a workspace: its terminals return to local shells.
+    Connection(WorkspaceId),
     App,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -25,6 +27,8 @@ pub enum OverlayState {
     Settings,
     Palette,
     Rename(WorkspaceId),
+    /// Connect the workspace over SSH, or create a connected one with `None`.
+    Ssh(Option<WorkspaceId>),
     ConfirmClose(Close),
 }
 #[derive(Default)]
@@ -34,6 +38,7 @@ pub struct UiState {
     /// Highlighted command; reset whenever the query changes.
     pub palette_selected: usize,
     pub rename_name: String,
+    pub ssh_host: String,
     /// A dialog field should take keyboard focus on its first frame.
     pub overlay_focus: bool,
     pub error: Option<String>,
@@ -60,13 +65,22 @@ pub enum Action {
     Ratio(SplitId, f32),
     Rename(WorkspaceId),
     New,
+    /// Open the SSH sheet for a workspace, or for a new one with `None`.
+    Ssh(Option<WorkspaceId>),
+    Connect {
+        workspace: Option<WorkspaceId>,
+        destination: String,
+    },
+    Disconnect(WorkspaceId),
     Settings,
     Palette,
     ToggleSidebar,
     SidebarWidth(f32),
     Find,
     SearchChanged,
-    FindNext { reverse: bool },
+    FindNext {
+        reverse: bool,
+    },
     CloseSearch,
     Clear(PaneId),
     Restart(PaneId),
@@ -93,6 +107,8 @@ pub struct WorkspaceView {
     pub id: WorkspaceId,
     pub name: String,
     pub cwd: PathBuf,
+    /// SSH destination of a remote workspace.
+    pub remote: Option<String>,
     pub panes: usize,
     pub running: bool,
 }

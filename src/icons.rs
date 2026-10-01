@@ -39,6 +39,7 @@ pub enum Icon {
     Eraser,
     TextSize,
     Swap,
+    Globe,
 }
 
 /// Paint an icon into its visual bounds. The caller controls the hit area.
@@ -279,6 +280,17 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             line(&[[16.0, 4.0], [20.0, 8.0], [16.0, 12.0]]);
             line(&[[20.0, 16.0], [4.0, 16.0]]);
             line(&[[8.0, 12.0], [4.0, 16.0], [8.0, 20.0]]);
+        }
+        Icon::Globe => {
+            circle(12.0, 12.0, 9.0);
+            line(&[[3.0, 12.0], [21.0, 12.0]]);
+            // The central meridian, seen slightly from the side.
+            let mut meridian = Vec::with_capacity(25);
+            for step in 0..=24 {
+                let angle = step as f32 * std::f32::consts::TAU / 24.0;
+                meridian.push([12.0 + 4.0 * angle.cos(), 12.0 + 9.0 * angle.sin()]);
+            }
+            line(&meridian);
         }
     }
 }

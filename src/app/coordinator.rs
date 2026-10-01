@@ -3,6 +3,49 @@
 use super::*;
 use crate::persistence::workspace_state::StateSnapshot;
 use crate::runtime::persistence::SaveKind;
+
+/// The system OpenSSH client, resolved through `PATH`.
+pub(super) const SSH_CLIENT: &str = "ssh";
+
+/// A local pane runs the configured shell. A remote pane runs the SSH client
+/// in the same local directory and gets the login shell of its host. `--` ends
+/// the client's options, so the destination is always read as a host.
+pub(super) fn session_options(
+    config: &Config,
+    client: &str,
+    cwd: PathBuf,
+    remote: Option<&Remote>,
+) -> SessionOptions {
+    let (shell, args) = match remote {
+        Some(remote) => (
+            Some(client.into()),
+            vec!["--".into(), remote.destination().into()],
+        ),
+        None => (config.shell.clone(), Vec::new()),
+    };
+    SessionOptions {
+        cwd,
+        cols: 100,
+        rows: 32,
+        scrollback: config.scrollback,
+        shell,
+        args,
+        ..Default::default()
+    }
+}
+
+/// Names a workspace after its host: `me@devbox` and `ssh://me@devbox` are
+/// both `devbox`.
+fn remote_label(destination: &str) -> String {
+    let host = destination
+        .strip_prefix("ssh://")
+        .unwrap_or(destination)
+        .rsplit('@')
+        .next()
+        .unwrap_or_default();
+    if host.is_empty() { destination } else { host }.to_owned()
+}
+
 impl App {
     pub(super) fn dispatch(&mut self, ctx: &egui::Context, command: Command) {
         match self.controller.dispatch(command) {
@@ -28,18 +71,13 @@ impl App {
                     pane,
                     generation,
                     cwd,
+                    remote,
                     replacement,
                 } => {
                     self.renders.insert(pane, PaneRender::new(pane));
                     let wake = ctx.clone();
-                    let options = SessionOptions {
-                        cwd,
-                        cols: 100,
-                        rows: 32,
-                        scrollback: self.config.scrollback,
-                        shell: self.config.shell.clone(),
-                        ..Default::default()
-                    };
+                    let options =
+                        session_options(&self.config, &self.ssh_client, cwd, remote.as_ref());
                     if let Err(error) = self.sessions.start(
                         pane,
                         generation,
@@ -164,7 +202,10 @@ impl App {
         if self.startup.is_some()
             && matches!(
                 action,
-                Action::Create(..) | Action::Preferences(_) | Action::ToggleSidebar
+                Action::Create(..)
+                    | Action::Connect { .. }
+                    | Action::Preferences(_)
+                    | Action::ToggleSidebar
             )
         {
             if matches!(action, Action::Preferences(_)) {
@@ -176,7 +217,7 @@ impl App {
                     Some("Too many workspace operations are waiting for restoration".into());
                 return;
             }
-            if matches!(action, Action::Create(..)) {
+            if matches!(action, Action::Create(..) | Action::Connect { .. }) {
                 self.ui.overlay = OverlayState::None;
             }
             self.deferred_actions.push(action);
@@ -184,21 +225,49 @@ impl App {
             return;
         }
         match action {
-            Action::Create(cwd, name) => {
-                let name = name.unwrap_or_else(|| {
-                    cwd.file_name()
-                        .unwrap_or_else(|| std::ffi::OsStr::new("Home"))
-                        .to_string_lossy()
-                        .into_owned()
-                });
-                self.dispatch(ctx, Command::AddWorkspace { cwd, name });
+            Action::Create(cwd, name) => self.create_workspace(ctx, cwd, name, None),
+            Action::Ssh(workspace) => {
+                // Only a local workspace can be connected; a remote one is
+                // disconnected first.
+                if workspace.is_some_and(|id| {
+                    self.controller
+                        .model()
+                        .workspace(id)
+                        .is_none_or(|workspace| workspace.remote().is_some())
+                }) {
+                    return;
+                }
+                self.ui.ssh_host.clear();
+                self.ui.overlay = OverlayState::Ssh(workspace);
+                self.ui.overlay_focus = true;
+            }
+            Action::Connect {
+                workspace: None,
+                destination,
+            } => self.create_workspace(ctx, default_cwd(), None, Some(destination)),
+            Action::Connect {
+                workspace: Some(workspace),
+                destination,
+            } => {
+                self.dispatch(
+                    ctx,
+                    Command::SetWorkspaceRemote {
+                        workspace,
+                        remote: Some(destination),
+                    },
+                );
                 self.ui.overlay = OverlayState::None;
             }
+            Action::Disconnect(workspace) => self.request_close(ctx, Close::Connection(workspace)),
             Action::Split(pane, axis) => {
                 if let Some(workspace) = self.controller.model().workspace_for_pane(pane) {
+                    // A remote session's directory is on its host; the new
+                    // SSH client starts where this pane's client did.
+                    let local = self.remote_of(pane).is_none();
                     let cwd = self
                         .sessions
                         .get(pane)
+                        .filter(|_| local)
                         .map(|session| session.metadata().cwd)
                         .or_else(|| self.controller.model().pane(pane).map(|p| p.cwd().into()))
                         .unwrap_or_default();
@@ -355,6 +424,13 @@ impl App {
                     Close::Workspace(workspace) => {
                         self.dispatch(ctx, Command::CloseWorkspace(workspace))
                     }
+                    Close::Connection(workspace) => self.dispatch(
+                        ctx,
+                        Command::SetWorkspaceRemote {
+                            workspace,
+                            remote: None,
+                        },
+                    ),
                 }
             }
             Action::CancelClose => self.ui.overlay = OverlayState::None,
@@ -392,6 +468,26 @@ impl App {
         }
     }
 
+    /// Adds a workspace named after its folder, or after its host when remote.
+    pub(super) fn create_workspace(
+        &mut self,
+        ctx: &egui::Context,
+        cwd: PathBuf,
+        name: Option<String>,
+        remote: Option<String>,
+    ) {
+        let name = name.unwrap_or_else(|| match &remote {
+            Some(destination) => remote_label(destination),
+            None => cwd
+                .file_name()
+                .unwrap_or_else(|| std::ffi::OsStr::new("Home"))
+                .to_string_lossy()
+                .into_owned(),
+        });
+        self.dispatch(ctx, Command::AddWorkspace { cwd, name, remote });
+        self.ui.overlay = OverlayState::None;
+    }
+
     pub(super) fn send_startup_command(&mut self) {
         if self.command.is_none() || self.started.elapsed() < Duration::from_millis(650) {
             return;
@@ -409,6 +505,15 @@ impl App {
             self.ui.error = Some(format!(
                 "Startup command cancelled: pane {pane} was closed or restarted"
             ));
+            return;
+        }
+        // Typed text could answer a password or host-key prompt instead of
+        // reaching a shell.
+        if self.remote_of(pane).is_some() {
+            self.command = None;
+            self.ui.error.get_or_insert_with(|| {
+                format!("Startup command cancelled: pane {pane} is connected over SSH")
+            });
             return;
         }
         if self.controller.model().pane(pane).is_some_and(|target| {

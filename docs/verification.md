@@ -312,6 +312,46 @@ not installed locally; CI owns those jobs), operating-system keyboard injection,
 clipboard, screen-reader navigation of the new controls, and an input method
 that is actively composing.
 
+## SSH workspace verification: 2026-10-01
+
+Remote workspaces were exercised on the Linux development host (GNOME Wayland
+session, NVIDIA/Vulkan, OpenSSH 10.2p1) with a debug build that had the
+`inspection` feature enabled.
+
+- **Headless contracts.** Model tests cover destination validation, inherited
+  destinations for new, split, restarted and restored panes, replacement of
+  every pane when a workspace connects or disconnects, and atomic refusal.
+  Persistence tests cover the version 2 round trip, lossless reading of
+  version 1 and skipping an unusable saved destination. Desktop tests cover the
+  client's argument vector, the sheet, palette and confirmation flow, the
+  deferred startup path, the startup-command guard, and a real PTY spawn of a
+  stand-in client proving that a directory reported by the host never replaces
+  a pane's local directory.
+- **Real client and server.** A task-owned OpenSSH server listened on loopback
+  with throwaway keys; the review launch put a pass-through `ssh` first on
+  `PATH` that only added `-F` with a task-owned client configuration. Through
+  the X11 inspection path, connecting a two-pane workspace from its menu
+  produced two accepted public-key logins, a split a third, and "Reconnect"
+  after `exit` another; `SSH_CONNECTION` was set in the panes. Relaunching
+  restored the three-pane layout with three new logins. Disconnecting returned
+  all three panes to local shells in their original directory and removed the
+  destination from saved state.
+- **States reviewed from fresh captures.** Both workspace menus, the connect
+  and new-workspace sheets (empty, unusable host, Graphite and Light), the
+  palette commands, connected single/split panes, an ended connection, the
+  disconnect confirmation, a missing client, and 900×640 and 640×480 windows.
+  The review found that Enter on an unusable host left the field without the
+  keyboard; the sheet now returns focus to it.
+- **Wayland.** A one-shot `--ssh` capture at 1.5× scale rendered the connected
+  workspace, and an idle `--diagnostics` sample settled at one to two frames a
+  second for both a remote and a local workspace.
+
+Not established: a host on another machine or a slow or lossy network, password,
+passphrase and host-key prompts, agent forwarding and `ControlMaster` sharing,
+and any behaviour on macOS or Windows, where the system client and ConPTY path
+are unexercised. The standard isolated regression harness passed with the
+version 2 state file.
+
 ## Historical visual acceptance
 
 The following acceptance record predates the architecture refactor. It is useful
@@ -361,6 +401,6 @@ and distributions for performance claims.
 
 Current scope excludes Kitty graphics and comprehensive complex-script shaping.
 Keyboard encoding also inherits egui's missing keypad identity, lock-state, and
-some physical/layout information. Workspace restoration launches new shells; it
-does not restore live processes. Those boundaries must remain explicit in release
+some physical/layout information. Workspace restoration launches new shells, or
+new SSH connections for a remote workspace; it does not restore live processes. Those boundaries must remain explicit in release
 notes until implementation and native verification expand them.
