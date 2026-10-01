@@ -13,6 +13,11 @@ fn fixture(root: &std::path::Path) -> (App, mpsc::SyncSender<Startup>) {
         config,
         config_path: root.join("config.toml"),
         state_path: root.join("workspaces.json"),
+        window_path: root.join("window.json"),
+        window_state: window_state::WindowState::default(),
+        window_writable: true,
+        window_generation: 0,
+        restore_maximized: false,
         writer: None,
         state_writable: false,
         startup: Some(receiver),
@@ -49,6 +54,96 @@ fn loaded(config: Config, model: Model) -> Startup {
         },
         error: None,
     }
+}
+
+#[test]
+fn maximized_restoration_waits_for_the_os_without_overwriting_normal_geometry() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    app.ephemeral = false;
+    app.restore_maximized = true;
+    app.window_state = window_state::WindowState {
+        inner_size: [900.0, 640.0],
+        maximized: true,
+        ..Default::default()
+    };
+    let ctx = egui::Context::default();
+    for maximized in [false, false, true] {
+        let mut input = egui::RawInput::default();
+        input
+            .viewports
+            .get_mut(&egui::ViewportId::ROOT)
+            .unwrap()
+            .maximized = Some(maximized);
+        ctx.begin_pass(input);
+        app.observe_window(&ctx, egui::vec2(1920.0, 1080.0));
+        let mut output = ctx.end_pass();
+        if !maximized {
+            assert!(
+                output.viewport_output[&egui::ViewportId::ROOT]
+                    .commands
+                    .contains(&egui::ViewportCommand::Maximized(true))
+            );
+        }
+        output.textures_delta.clear();
+        assert_eq!(app.window_state.inner_size, [900.0, 640.0]);
+        assert!(app.window_state.maximized);
+    }
+    assert!(!app.restore_maximized);
+}
+
+#[test]
+fn window_saves_flush_on_exit_even_when_workspace_writes_are_protected() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    app.ephemeral = false;
+    let ctx = egui::Context::default();
+    let mut startup = loaded(app.config.clone(), Model::default());
+    startup.report.can_write = false;
+    app.complete_startup(&ctx, startup);
+    let mut input = egui::RawInput::default();
+    input
+        .viewports
+        .get_mut(&egui::ViewportId::ROOT)
+        .unwrap()
+        .maximized = Some(false);
+    ctx.begin_pass(input);
+    app.observe_window(&ctx, egui::vec2(900.0, 640.0));
+    ctx.end_pass().textures_delta.clear();
+    let mut input = egui::RawInput::default();
+    input
+        .viewports
+        .get_mut(&egui::ViewportId::ROOT)
+        .unwrap()
+        .maximized = Some(true);
+    ctx.begin_pass(input);
+    app.observe_window(&ctx, egui::vec2(1920.0, 1080.0));
+    ctx.end_pass().textures_delta.clear();
+    eframe::App::on_exit(&mut app);
+    let saved = window_state::load(&app.window_path);
+    assert_eq!(saved.state.inner_size, [900.0, 640.0]);
+    assert!(saved.state.maximized);
+    assert!(!app.state_path.exists());
+}
+
+#[test]
+fn protected_window_state_does_not_block_preferences_saves() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    app.ephemeral = false;
+    app.window_writable = false;
+    let original = br#"{"version":999,"opaque":"future window"}"#;
+    std::fs::write(&app.window_path, original).unwrap();
+    let ctx = egui::Context::default();
+    app.complete_startup(&ctx, loaded(app.config.clone(), Model::default()));
+    let config = Config {
+        font_size: 20.0,
+        ..app.config.clone()
+    };
+    app.action(&ctx, Action::Preferences(config));
+    eframe::App::on_exit(&mut app);
+    assert_eq!(std::fs::read(&app.window_path).unwrap(), original);
+    assert_eq!(Config::load(&app.config_path).unwrap().font_size, 20.0);
 }
 
 #[test]

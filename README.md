@@ -38,6 +38,8 @@ pace --help
 
 [config.example.toml](config.example.toml) documents the supported settings: three themes, nine accent colours, font size and line height, scrollback limit, shell executable, cursor style/blink, sidebar width, workspace restoration, and close confirmation. Settings are validated; unknown keys are rejected. Workspace restoration restores directories, split positions, and focused panes, and launches fresh shell processes. Commands and process memory are never serialized.
 
+Pace also remembers the window's size and maximized state when closed. Window state is saved as `window.json` in the data directory, independently of workspace restoration; `--no-restore` and `restore_workspaces = false` only affect workspaces. Use `--size WIDTHxHEIGHT` to override the saved geometry and start with a non-maximized window. Screenshot launches use the default or explicit size and do not save window state.
+
 ## Keyboard shortcuts
 
 Use Ctrl+Shift on Linux/Windows and Command on macOS: T opens a workspace, D splits right, E splits below, W closes the focused pane, F searches, P opens commands, B toggles the sidebar, Enter zooms the focused pane to full size and back, and 1–9 select a workspace by its sidebar position. Ctrl+Tab switches workspaces. Escape leaves a sheet or a focused search field; otherwise it goes to the shell, as do Tab and the arrow keys. Ctrl+comma opens preferences; Ctrl+plus/minus adjusts terminal font size. Use Ctrl+Shift+C/V to copy/paste on Linux/Windows, Command+C/V on macOS. Plain Ctrl+C interrupts the shell; Shift+PageUp/PageDown scrolls history. Hold Shift to select text when a TUI owns the mouse.

@@ -1,12 +1,12 @@
-//! One writer owns both destinations. Frames publish immutable replacements;
-//! there is at most one pending state and one pending configuration snapshot.
+//! One writer owns all destinations. Frames publish immutable replacements;
+//! there is at most one pending snapshot per destination.
 //! Serialization, fsync and replacement happen only on this worker. Submitted
 //! generations are monotonic per destination, so superseded work cannot regress
 //! a saved file. Flushing belongs at the intentional shutdown boundary.
 
 use crate::{
     config::{self, Config},
-    persistence::workspace_state::StateSnapshot,
+    persistence::{window_state::WindowState, workspace_state::StateSnapshot},
 };
 use std::{
     path::PathBuf,
@@ -19,12 +19,14 @@ use std::{
 pub enum SaveKind {
     State,
     Config,
+    Window,
 }
 impl SaveKind {
     fn index(self) -> usize {
         match self {
             Self::State => 0,
             Self::Config => 1,
+            Self::Window => 2,
         }
     }
 }
@@ -39,6 +41,7 @@ pub struct SaveEvent {
 enum Payload {
     State(StateSnapshot),
     Config(Config),
+    Window(WindowState),
 }
 struct Job {
     kind: SaveKind,
@@ -49,10 +52,10 @@ type WriteOperation = dyn Fn(&Job) -> Result<(), String> + Send + Sync;
 
 #[derive(Default)]
 struct Queue {
-    pending: [Option<Job>; 2],
-    latest: [Option<u64>; 2],
-    completed: [Option<SaveEvent>; 2],
-    events: [Option<SaveEvent>; 2],
+    pending: [Option<Job>; 3],
+    latest: [Option<u64>; 3],
+    completed: [Option<SaveEvent>; 3],
+    events: [Option<SaveEvent>; 3],
     stopping: bool,
     exited: bool,
     next_kind: usize,
@@ -75,6 +78,7 @@ impl PersistenceWriter {
     pub fn new(
         state_path: PathBuf,
         config_path: PathBuf,
+        window_path: PathBuf,
         enabled: bool,
         wake: Arc<dyn Fn() + Send + Sync>,
     ) -> std::io::Result<Self> {
@@ -98,6 +102,13 @@ impl PersistenceWriter {
                         config_path.display()
                     )
                 }),
+                Payload::Window(window) => {
+                    let bytes = serde_json::to_vec_pretty(window)
+                        .map_err(|error| format!("Cannot serialize window state: {error}"))?;
+                    config::atomic_write(&window_path, &bytes).map_err(|error| {
+                        format!("Cannot save window to {}: {error:#}", window_path.display())
+                    })
+                }
             }),
         )
     }
@@ -131,6 +142,13 @@ impl PersistenceWriter {
             kind: SaveKind::Config,
             generation,
             payload: Payload::Config(config),
+        })
+    }
+    pub fn submit_window(&self, generation: u64, window: WindowState) -> Result<(), String> {
+        self.submit(Job {
+            kind: SaveKind::Window,
+            generation,
+            payload: Payload::Window(window),
         })
     }
 
@@ -211,7 +229,7 @@ impl PersistenceWriter {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 queue.flushing = false;
-                return Err("Timed out while flushing workspace/preferences snapshots".into());
+                return Err("Timed out while flushing persisted snapshots".into());
             }
             let (next, _) = self
                 .shared
@@ -297,12 +315,12 @@ fn worker_loop(
                 };
                 queue = next;
             }
-            let preferred = queue.next_kind;
-            let job = queue.pending[preferred]
-                .take()
-                .or_else(|| queue.pending[1 - preferred].take());
+            let job = (0..queue.pending.len())
+                .map(|offset| (queue.next_kind + offset) % queue.pending.len())
+                .find(|&index| queue.pending[index].is_some())
+                .and_then(|index| queue.pending[index].take());
             if let Some(job) = job {
-                queue.next_kind = 1 - job.kind.index();
+                queue.next_kind = (job.kind.index() + 1) % queue.pending.len();
                 job
             } else {
                 queue.exited = true;
@@ -409,13 +427,15 @@ mod tests {
     }
 
     #[test]
-    fn state_and_preferences_generations_are_independent_and_flush_latest_files() {
+    fn destination_generations_are_independent_and_flush_latest_files() {
         let directory = tempfile::tempdir().unwrap();
         let state_path = directory.path().join("workspaces.json");
         let config_path = directory.path().join("config.toml");
+        let window_path = directory.path().join("window.json");
         let mut writer = PersistenceWriter::new(
             state_path.clone(),
             config_path.clone(),
+            window_path.clone(),
             true,
             Arc::new(|| {}),
         )
@@ -430,11 +450,22 @@ mod tests {
                 },
             )
             .unwrap();
+        let window = WindowState {
+            inner_size: [900.0, 640.0],
+            maximized: true,
+            ..WindowState::default()
+        };
+        writer.submit_window(2, window).unwrap();
+        writer.submit_window(1, WindowState::default()).unwrap();
         writer.shutdown(Duration::from_secs(2)).unwrap();
         let saved: StateSnapshot =
             serde_json::from_slice(&std::fs::read(state_path).unwrap()).unwrap();
         assert_eq!(saved.workspaces[0].name, "latest state");
         assert_eq!(Config::load(&config_path).unwrap().font_size, 20.0);
+        assert_eq!(
+            crate::persistence::window_state::load(&window_path).state,
+            window
+        );
     }
 
     #[test]
@@ -464,13 +495,22 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let state = directory.path().join("state.json");
         let config = directory.path().join("config.toml");
-        let mut writer =
-            PersistenceWriter::new(state.clone(), config.clone(), false, Arc::new(|| {})).unwrap();
+        let window = directory.path().join("window.json");
+        let mut writer = PersistenceWriter::new(
+            state.clone(),
+            config.clone(),
+            window.clone(),
+            false,
+            Arc::new(|| {}),
+        )
+        .unwrap();
         writer.submit_state(1, snapshot("ephemeral")).unwrap();
         writer.submit_config(1, Config::default()).unwrap();
+        writer.submit_window(1, WindowState::default()).unwrap();
         writer.shutdown(Duration::from_secs(2)).unwrap();
         assert!(!state.exists());
         assert!(!config.exists());
+        assert!(!window.exists());
     }
 
     #[test]
@@ -487,6 +527,7 @@ mod tests {
         let mut writer = PersistenceWriter::new(
             state_path.clone(),
             config_path.clone(),
+            directory.path().join("window.json"),
             true,
             Arc::new(|| {}),
         )

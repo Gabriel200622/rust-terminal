@@ -8,7 +8,10 @@ mod tests;
 use crate::{
     Launch,
     config::{self, Config},
-    persistence::workspace_state::{LoadReport, load_state},
+    persistence::{
+        window_state,
+        workspace_state::{LoadReport, load_state},
+    },
     runtime::{
         persistence::PersistenceWriter,
         sessions::{ResourcePolicy, SessionCompletion, SessionManager},
@@ -50,6 +53,11 @@ pub struct App {
     config: Config,
     config_path: PathBuf,
     state_path: PathBuf,
+    window_path: PathBuf,
+    window_state: window_state::WindowState,
+    window_writable: bool,
+    window_generation: u64,
+    restore_maximized: bool,
     writer: Option<PersistenceWriter>,
     state_writable: bool,
     startup: Option<mpsc::Receiver<Startup>>,
@@ -76,7 +84,11 @@ pub struct App {
     diagnostics: diagnostics::Diagnostics,
 }
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>, launch: Launch) -> Self {
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        launch: Launch,
+        window: window_state::LoadReport,
+    ) -> Self {
         theme::fonts(&cc.egui_ctx);
         if launch.diagnostics
             && let Some(render) = &cc.wgpu_render_state
@@ -120,7 +132,10 @@ impl App {
                 });
                 wake.request_repaint();
             });
-        let mut ui = UiState::default();
+        let mut ui = UiState {
+            error: window.error,
+            ..UiState::default()
+        };
         if let Err(error) = thread_result {
             ui.error = Some(format!("Could not start restoration worker: {error}"));
         }
@@ -131,6 +146,11 @@ impl App {
             config: Config::default(),
             config_path,
             state_path,
+            window_path: data.join("window.json"),
+            window_state: window.state,
+            window_writable: window.can_write,
+            window_generation: 0,
+            restore_maximized: window.state.maximized,
             writer: None,
             state_writable: false,
             startup: Some(startup),
@@ -291,6 +311,7 @@ impl App {
         match PersistenceWriter::new(
             self.state_path.clone(),
             self.config_path.clone(),
+            self.window_path.clone(),
             !self.ephemeral,
             Arc::new(move || repaint.request_repaint()),
         ) {
@@ -527,6 +548,7 @@ impl eframe::App for App {
         let tick = Instant::now();
         let ctx = ui.ctx().clone();
         self.poll(&ctx);
+        self.observe_window(&ctx, ui.max_rect().size());
         if ctx.input(|i| i.viewport().close_requested())
             && !self.exit_approved
             && self.config.confirm_close
@@ -798,10 +820,11 @@ impl eframe::App for App {
     }
     fn on_exit(&mut self) {
         self.save_state();
+        self.save_window();
         if let Some(writer) = &self.writer
             && let Err(error) = writer.flush()
         {
-            eprintln!("Could not flush latest workspace state: {error}");
+            eprintln!("Could not flush latest persisted state: {error}");
         }
         let complete = self.sessions.shutdown(Duration::from_secs(2));
         self.diagnostics.shutdown(complete);
