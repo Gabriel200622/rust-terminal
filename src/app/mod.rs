@@ -19,7 +19,7 @@ use crate::{
         workspace::PanePresentation,
     },
 };
-use eframe::egui::{self, Pos2, Rect, Stroke, Vec2};
+use eframe::egui::{self, Pos2, Rect, Stroke, Vec2, emath::GuiRounding as _};
 use pace_model::{Command, Controller, Effect, Lifecycle, Limits, Model, PaneId, Remote};
 use std::{
     collections::BTreeMap,
@@ -81,6 +81,10 @@ pub struct App {
 }
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, launch: Launch) -> Self {
+        // Pace routes zoom before terminal input and reserves Ctrl+Shift for
+        // terminal font size. The toolkit's permissive shortcuts overlap it.
+        cc.egui_ctx
+            .options_mut(|options| options.zoom_with_keyboard = false);
         theme::fonts(&cc.egui_ctx);
         if launch.diagnostics
             && let Some(render) = &cc.wgpu_render_state
@@ -600,28 +604,52 @@ impl eframe::App for App {
                 )
             })
             .unwrap_or_default();
-        let sidebar =
-            self.controller.model().sidebar() && bounds.width() >= metrics::SIDEBAR_MIN_WINDOW;
+        let sidebar_available = bounds.width() >= metrics::SIDEBAR_MIN_WINDOW;
+        let sidebar_open = self.controller.model().sidebar() && sidebar_available;
+        // Only a toggle slides. A window too narrow for the sidebar, like
+        // restored state, takes its place at once.
+        let sliding = self
+            .ui
+            .sidebar_slide
+            .and_then(|slide| slide.reveal(sidebar_open, ctx.input(|input| input.time)))
+            .filter(|_| sidebar_available);
+        if sliding.is_some() {
+            ctx.request_repaint();
+        } else {
+            self.ui.sidebar_slide = None;
+        }
+        if !sidebar_open {
+            // An edge drag cannot finish once the sidebar is leaving.
+            self.ui.sidebar_drag = None;
+        }
+        let sidebar_width = self
+            .ui
+            .sidebar_drag
+            .unwrap_or(self.config.sidebar_width)
+            .min(bounds.width() - 420.0);
+        // Where the sidebar's trailing edge rests, and where it is this frame.
+        let rest = if sidebar_open { sidebar_width } else { 0.0 };
+        let edge = sliding.map_or(rest, |reveal| {
+            (reveal * sidebar_width).round_to_pixels(ctx.pixels_per_point())
+        });
+        let reveal = sliding.unwrap_or(if sidebar_open { 1.0 } else { 0.0 });
         let chrome = ui::chrome::ChromeView {
             workspaces: &views,
             active,
             pane: active_pane,
             subtitle: &subtitle,
             zoomed: self.ui.zoomed,
-            sidebar,
-            sidebar_available: bounds.width() >= metrics::SIDEBAR_MIN_WINDOW,
+            window: bounds,
+            sidebar: reveal,
+            sidebar_open,
+            sidebar_width,
+            sidebar_available,
         };
-        if !sidebar {
-            // An edge drag cannot finish once the sidebar is gone.
-            self.ui.sidebar_drag = None;
-        }
-        let content = if sidebar {
-            let width = self
-                .ui
-                .sidebar_drag
-                .unwrap_or(self.config.sidebar_width)
-                .min(bounds.width() - 420.0);
-            let side = Rect::from_min_size(bounds.min, Vec2::new(width, bounds.height()));
+        if edge > 0.0 {
+            let side = Rect::from_min_size(
+                Pos2::new(bounds.left() + edge - sidebar_width, bounds.top()),
+                Vec2::new(sidebar_width, bounds.height()),
+            );
             ui::chrome::sidebar(
                 ui,
                 side,
@@ -630,24 +658,25 @@ impl eframe::App for App {
                 &mut self.ui.sidebar_drag,
                 &mut actions,
             );
-            Rect::from_min_max(Pos2::new(side.right(), bounds.top()), bounds.max)
-        } else {
-            bounds
-        };
-        let toolbar = Rect::from_min_size(
-            content.min,
-            Vec2::new(content.width(), metrics::TOOLBAR_HEIGHT),
+        }
+        let toolbar = Rect::from_min_max(
+            Pos2::new(bounds.left() + edge, bounds.top()),
+            Pos2::new(bounds.right(), bounds.top() + metrics::TOOLBAR_HEIGHT),
         );
         ui::chrome::toolbar(ui, toolbar, p, &chrome, &mut self.ui, &mut actions);
+        ui::chrome::leading_controls(ui, p, &chrome, &mut actions);
         // Panes sit in the chrome like inset content; the sidebar supplies its
         // own trailing margin.
-        let stage = Rect::from_min_max(
-            Pos2::new(
-                content.left() + if sidebar { 0.0 } else { metrics::GUTTER },
-                toolbar.bottom(),
-            ),
-            bounds.max - Vec2::splat(metrics::GUTTER),
-        );
+        let stage_from = |edge: f32| {
+            Rect::from_min_max(
+                Pos2::new(bounds.left() + edge.max(metrics::GUTTER), toolbar.bottom()),
+                bounds.max - Vec2::splat(metrics::GUTTER),
+            )
+        };
+        let stage = ui::workspace::Placement {
+            drawn: stage_from(edge),
+            settled: stage_from(rest),
+        };
         let visible: std::collections::HashSet<_> = self
             .controller
             .model()
@@ -712,7 +741,7 @@ impl eframe::App for App {
                 &mut output,
             );
         } else {
-            ui::workspace::empty_state(ui, stage, p, self.startup.is_some(), &mut actions);
+            ui::workspace::empty_state(ui, stage.drawn, p, self.startup.is_some(), &mut actions);
         }
         for action in actions.drain(..) {
             self.action(&ctx, action);

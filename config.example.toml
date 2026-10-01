@@ -8,7 +8,10 @@ theme = "graphite"
 # blue, indigo, purple, pink, red, orange, yellow, green, or graphite
 accent = "blue"
 
-# Terminal text size: 9–32. Line-height multiplier: 1.0–2.0.
+# Saved terminal text size: 9–32; adjust in Preferences or with Ctrl+Shift+Plus/Minus.
+# Ctrl+Shift+0 resets terminal text size to the default (14).
+# App zoom uses Ctrl+Plus/Minus (Command on macOS) without changing this value.
+# Line-height multiplier: 1.0–2.0.
 font_size = 14.0
 line_height = 1.4
 

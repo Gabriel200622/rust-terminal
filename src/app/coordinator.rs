@@ -336,7 +336,14 @@ impl App {
                 };
             }
             Action::ToggleSidebar => {
-                self.dispatch(ctx, Command::SetSidebar(!self.controller.model().sidebar()))
+                let shown = self.controller.model().sidebar();
+                self.ui.sidebar_slide = Some(ui::chrome::SidebarSlide::toggled(
+                    self.ui.sidebar_slide,
+                    shown,
+                    ctx.input(|input| input.time),
+                ));
+                self.dispatch(ctx, Command::SetSidebar(!shown));
+                ctx.request_repaint();
             }
             Action::SidebarWidth(width) => {
                 let config = Config {
@@ -346,6 +353,9 @@ impl App {
                 self.action(ctx, Action::Preferences(config));
             }
             Action::Zoom => self.ui.zoomed = !self.ui.zoomed,
+            Action::ZoomUiIn => egui::gui_zoom::zoom_in(ctx),
+            Action::ZoomUiOut => egui::gui_zoom::zoom_out(ctx),
+            Action::ResetUiZoom => ctx.set_zoom_factor(1.0),
             Action::Find => {
                 let editing = ctx.memory(|memory| memory.has_focus(ui::search::input_id()));
                 if self.ui.search_open && !editing {
