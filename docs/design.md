@@ -149,8 +149,9 @@ icon buttons keep a 28-point target around a 16-point glyph.
   states that connecting an existing workspace restarts its terminals, and
   names the problem in place of that note while the host is unusable.
 - **Preferences.** Grouped rows that apply immediately: theme previews drawn
-  from each theme's own palette, accent dots, a font size stepper with its
-  Ctrl+Shift+Plus/Minus and Ctrl+Shift+0 shortcuts (Command+Shift on macOS), a
+  from each theme's own palette, accent dots, a window zoom percentage stepper,
+  a font size stepper with its Ctrl+Shift+Plus/Minus and Ctrl+Shift+0 shortcuts
+  (Command+Shift on macOS), a
   slider for line spacing, a segmented cursor style, and switches for boolean
   settings.
 - **Command palette.** Every action with its shortcut, grouped when browsing and
@@ -175,7 +176,9 @@ Terminal text is JetBrains Mono. Preferences or Ctrl+Shift+Plus/Minus
 macOS) resets it to the default. App zoom
 uses Ctrl+Plus/Minus (Command on macOS), with Ctrl+Equals as an unshifted Plus
 alternative and Ctrl+0 to reset (Command on macOS). App zoom scales terminal
-text and chrome together without changing the saved terminal font size. Labels
+text and chrome together without changing the saved terminal font size. Window
+zoom also appears under Appearance in Preferences and persists across launches,
+whether changed there, by shortcut or from the command palette. Labels
 use sentence case.
 
 Icons are drawn natively on a 24-point grid with a 1.5-point stroke and rounded

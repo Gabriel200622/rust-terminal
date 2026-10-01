@@ -60,6 +60,27 @@ fn loaded(config: Config, model: Model) -> Startup {
 }
 
 #[test]
+fn window_zoom_preserves_native_window_dimensions() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    app.ephemeral = false;
+    let ctx = egui::Context::default();
+    for zoom in [1.0, 1.5, 0.8] {
+        ctx.set_zoom_factor(zoom);
+        let mut input = egui::RawInput::default();
+        input
+            .viewports
+            .get_mut(&egui::ViewportId::ROOT)
+            .unwrap()
+            .maximized = Some(false);
+        ctx.begin_pass(input);
+        app.observe_window(&ctx, egui::vec2(900.0, 600.0) / zoom);
+        ctx.end_pass().textures_delta.clear();
+        assert_eq!(app.window_state.inner_size, [900.0, 600.0]);
+    }
+}
+
+#[test]
 fn maximized_restoration_waits_for_the_os_without_overwriting_normal_geometry() {
     let root = tempfile::tempdir().unwrap();
     let (mut app, _sender) = fixture(root.path());
@@ -595,8 +616,10 @@ fn app_zoom_shortcuts_scale_the_ui_without_changing_terminal_preferences() {
             let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
             output.textures_delta.clear();
             assert_eq!(ctx.zoom_factor(), 1.1);
+            assert_eq!(app.config.window_zoom, 1.1);
             assert_eq!(app.config.font_size, 19.0);
-            assert_eq!(app.preference_generation, 0);
+            let generation = app.preference_generation;
+            assert!(generation > 0);
 
             let primary = egui::Modifiers {
                 shift: false,
@@ -606,6 +629,7 @@ fn app_zoom_shortcuts_scale_the_ui_without_changing_terminal_preferences() {
             let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
             output.textures_delta.clear();
             assert_eq!(ctx.zoom_factor(), 1.0);
+            assert_eq!(app.config.window_zoom, 1.0);
 
             assert!(press(&mut app, &ctx, key(egui::Key::Equals, None, primary)));
             let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
@@ -615,8 +639,111 @@ fn app_zoom_shortcuts_scale_the_ui_without_changing_terminal_preferences() {
             let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
             output.textures_delta.clear();
             assert_eq!(ctx.zoom_factor(), 1.0);
+            assert_eq!(app.config.window_zoom, 1.0);
+            assert_eq!(app.preference_generation, generation + 3);
         }
     }
+}
+
+#[test]
+fn window_zoom_preferences_and_reset_survive_shutdown_and_startup() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    app.ephemeral = false;
+    let ctx = egui::Context::default();
+    app.complete_startup(&ctx, loaded(app.config.clone(), Model::default()));
+    app.action(
+        &ctx,
+        Action::Preferences(Config {
+            window_zoom: 1.3,
+            font_size: 19.0,
+            restore_workspaces: false,
+            ..app.config.clone()
+        }),
+    );
+    eframe::App::on_exit(&mut app);
+
+    let saved = Config::load(&app.config_path).unwrap();
+    let (mut reopened, _sender) = fixture(root.path());
+    reopened.ephemeral = false;
+    let reopened_ctx = egui::Context::default();
+    reopened.complete_startup(&reopened_ctx, loaded(saved, Model::default()));
+    reopened_ctx
+        .run_ui(egui::RawInput::default(), |_| {})
+        .textures_delta
+        .clear();
+    assert_eq!(reopened_ctx.zoom_factor(), 1.3);
+    assert_eq!(reopened.config.font_size, 19.0);
+    assert!(!reopened.config.restore_workspaces);
+
+    reopened.action(&reopened_ctx, Action::ResetUiZoom);
+    eframe::App::on_exit(&mut reopened);
+    let saved = Config::load(&reopened.config_path).unwrap();
+    assert_eq!(saved.window_zoom, 1.0);
+    assert_eq!(saved.font_size, 19.0);
+
+    let (mut reset, _sender) = fixture(root.path());
+    let reset_ctx = egui::Context::default();
+    reset.complete_startup(&reset_ctx, loaded(saved, Model::default()));
+    reset_ctx
+        .run_ui(egui::RawInput::default(), |_| {})
+        .textures_delta
+        .clear();
+    assert_eq!(reset_ctx.zoom_factor(), 1.0);
+}
+
+#[test]
+fn pending_zoom_actions_adjust_restored_settings_and_save_the_latest_value() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    app.ephemeral = false;
+    let ctx = egui::Context::default();
+    app.action(&ctx, Action::ZoomUiIn);
+    app.action(&ctx, Action::ZoomUiIn);
+    app.action(&ctx, Action::ZoomUiOut);
+    assert_eq!(app.preference_generation, 0);
+    app.complete_startup(
+        &ctx,
+        loaded(
+            Config {
+                window_zoom: 1.3,
+                font_size: 21.0,
+                accent: config::Accent::Indigo,
+                ..app.config.clone()
+            },
+            Model::default(),
+        ),
+    );
+    ctx.run_ui(egui::RawInput::default(), |_| {})
+        .textures_delta
+        .clear();
+    assert_eq!(ctx.zoom_factor(), 1.4);
+    assert_eq!(app.preference_generation, 3);
+    eframe::App::on_exit(&mut app);
+    let saved = Config::load(&app.config_path).unwrap();
+    assert_eq!(saved.window_zoom, 1.4);
+    assert_eq!(saved.font_size, 21.0);
+    assert_eq!(saved.accent, config::Accent::Indigo);
+}
+
+#[test]
+fn zoom_actions_respect_limits_and_defaults_reset_the_saved_zoom() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    app.startup = None;
+    for (zoom, action) in [(0.2, Action::ZoomUiOut), (5.0, Action::ZoomUiIn)] {
+        app.config.window_zoom = zoom;
+        app.action(&ctx, action);
+        assert_eq!(app.config.window_zoom, zoom);
+        assert_eq!(app.preference_generation, 0);
+    }
+    app.action(&ctx, Action::Preferences(Config::default()));
+    ctx.run_ui(egui::RawInput::default(), |_| {})
+        .textures_delta
+        .clear();
+    assert_eq!(app.config.window_zoom, 1.0);
+    assert_eq!(ctx.zoom_factor(), 1.0);
 }
 
 #[test]
@@ -644,6 +771,7 @@ fn terminal_font_shortcuts_use_primary_shift_in_preferences_and_respect_limits()
             assert!(press(&mut app, &ctx, key(key_code, None, modifiers)));
             assert_eq!(app.config.font_size, size);
         }
+        app.config.window_zoom = 1.4;
         ctx.set_zoom_factor(1.4);
         let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
         output.textures_delta.clear();

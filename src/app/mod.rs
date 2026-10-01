@@ -312,6 +312,7 @@ impl App {
     fn complete_startup(&mut self, ctx: &egui::Context, startup: Startup) {
         self.startup = None;
         self.config = startup.config;
+        ctx.set_zoom_factor(self.config.window_zoom);
         theme::apply(ctx, &self.config);
         self.state_writable = startup.report.can_write;
         let mut errors = startup.report.diagnostics;

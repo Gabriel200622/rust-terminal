@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 pub struct Config {
     pub theme: Theme,
     pub accent: Accent,
+    /// Scale of terminal content and window chrome, independent of font size.
+    pub window_zoom: f32,
     pub font_size: f32,
     pub line_height: f32,
     pub scrollback: usize,
@@ -71,6 +73,7 @@ impl Default for Config {
         Self {
             theme: Theme::Graphite,
             accent: Accent::Blue,
+            window_zoom: 1.0,
             font_size: 14.0,
             line_height: 1.4,
             scrollback: 10_000,
@@ -85,6 +88,9 @@ impl Default for Config {
 }
 
 impl Config {
+    // Match the bounds of the existing app zoom shortcuts.
+    pub const WINDOW_ZOOM_RANGE: std::ops::RangeInclusive<f32> = 0.2..=5.0;
+
     pub fn load(path: &Path) -> Result<Self> {
         if !path.exists() {
             return Ok(Self::default());
@@ -98,6 +104,10 @@ impl Config {
         Ok(config)
     }
     pub fn validate(&mut self) -> Result<()> {
+        anyhow::ensure!(
+            self.window_zoom.is_finite() && Self::WINDOW_ZOOM_RANGE.contains(&self.window_zoom),
+            "window_zoom must be between 0.2 and 5"
+        );
         anyhow::ensure!(
             self.font_size.is_finite() && (9.0..=32.0).contains(&self.font_size),
             "font_size must be between 9 and 32"
@@ -417,6 +427,7 @@ mod tests {
         let parsed: Config = toml::from_str("theme = \"dusk\"\nfont_size = 15.0\n").unwrap();
         assert_eq!(parsed.theme, Theme::Dusk);
         assert_eq!(parsed.accent, Accent::Blue);
+        assert_eq!(parsed.window_zoom, 1.0);
         let accent: Config = toml::from_str("accent = \"indigo\"").unwrap();
         assert_eq!(accent.accent, Accent::Indigo);
     }
@@ -427,17 +438,36 @@ mod tests {
         Config::default().save(&path).unwrap();
         let changed = Config {
             theme: Theme::Dusk,
+            window_zoom: 1.3,
             font_size: 19.0,
             ..Config::default()
         };
         changed.save(&path).unwrap();
         let loaded = Config::load(&path).unwrap();
         assert_eq!(loaded.theme, Theme::Dusk);
+        assert_eq!(loaded.window_zoom, 1.3);
         assert_eq!(loaded.font_size, 19.0);
         assert_eq!(
             std::fs::read_dir(path.parent().unwrap()).unwrap().count(),
             1
         );
+    }
+    #[test]
+    fn window_zoom_rejects_non_finite_and_out_of_range_values() {
+        for zoom in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 0.0, 0.19, 5.01] {
+            let mut config = Config {
+                window_zoom: zoom,
+                ..Config::default()
+            };
+            assert!(config.validate().is_err(), "Accepted zoom {zoom}");
+        }
+        for zoom in [0.2, 1.0, 1.35, 5.0] {
+            let mut config = Config {
+                window_zoom: zoom,
+                ..Config::default()
+            };
+            assert!(config.validate().is_ok(), "Rejected zoom {zoom}");
+        }
     }
     #[test]
     fn failed_preparation_preserves_previous_file() {

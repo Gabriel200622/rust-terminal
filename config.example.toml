@@ -8,6 +8,11 @@ theme = "graphite"
 # blue, indigo, purple, pink, red, orange, yellow, green, or graphite
 accent = "blue"
 
+# Saved scale of terminal text and window chrome: 0.2–5.0 (20%–500%).
+# Adjust Window zoom in Preferences or with Ctrl+Plus/Minus (Command on macOS).
+# Ctrl+0 resets zoom to 100% (Command on macOS). Zoom is restored on launch.
+window_zoom = 1.0
+
 # Saved terminal text size: 9–32; adjust in Preferences or with Ctrl+Shift+Plus/Minus.
 # Ctrl+Shift+0 resets terminal text size to the default (14).
 # App zoom uses Ctrl+Plus/Minus (Command on macOS) without changing this value.
