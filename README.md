@@ -86,6 +86,10 @@ install -Dm644 packaging/pace.desktop ~/.local/share/applications/dev.pace.termi
 install -Dm644 assets/pace.svg ~/.local/share/icons/hicolor/scalable/apps/pace.svg
 ```
 
+## Website
+
+The landing page lives in [`website/`](website/README.md): a static Next.js site that rebuilds the window from the app's theme tokens and layout code. It is separate from the Cargo workspace and uses Bun.
+
 ## Verification
 
 See [the verification record and release checklist](docs/verification.md) for test scope, native screenshots, and platform checks still required for distribution. Local development uses the narrowest meaningful affected crate/target tests; CI owns workspace-wide formatting, lint, tests and builds. Run repo-wide checks locally only when explicitly requested. The owning [agent guides](AGENTS.md) provide scoped commands.
