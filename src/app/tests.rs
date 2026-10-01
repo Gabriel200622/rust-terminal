@@ -1439,6 +1439,16 @@ fn remote_splits_follow_their_source_pane_after_focus_and_directory_changes() {
     for directory in [&local, &first, &next] {
         std::fs::create_dir_all(directory).unwrap();
     }
+    // Exercise runner-like completion paths without letting global compinit
+    // block these test-owned shells with an interactive security prompt.
+    let completions = home.join("insecure-completions");
+    std::fs::create_dir(&completions).unwrap();
+    std::fs::set_permissions(&completions, std::fs::Permissions::from_mode(0o777)).unwrap();
+    std::fs::write(
+        home.join(".zshenv"),
+        "unsetopt GLOBAL_RCS\nfpath=(\"$ZDOTDIR/insecure-completions\" $fpath)\n",
+    )
+    .unwrap();
     std::fs::write(home.join(".zshrc"), "PROMPT='PACE> '\n").unwrap();
     let client = root.path().join("fake-ssh");
     std::fs::write(&client, "#!/bin/sh\nexport HOME=\"$0.home\" SHELL=zsh ZDOTDIR=\"$0.home\" TMPDIR=\"$0.home\"\ncd \"$HOME\"\nexec /bin/sh -c \"$4\"\n").unwrap();

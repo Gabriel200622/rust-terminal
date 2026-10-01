@@ -25,6 +25,7 @@ pub(super) fn arguments(remote: &Remote, cwd: Option<&Path>) -> Vec<String> {
 mod tests {
     use super::*;
     use std::{
+        os::unix::fs::PermissionsExt,
         sync::Arc,
         time::{Duration, Instant},
     };
@@ -52,7 +53,7 @@ mod tests {
                 dotdir.unwrap_or(home).to_str().unwrap().into(),
             ),
         ];
-        // Fixtures keep global zsh startup files but replace the user's files.
+        // Fixtures load test-owned user startup files.
         env.push(("PACE_STARTUP".into(), String::new()));
         TerminalSession::spawn(
             SessionOptions {
@@ -74,17 +75,25 @@ mod tests {
         let project = root.path().join("project space ' % λ $(touch injected)");
         std::fs::create_dir(&dotdir).unwrap();
         std::fs::create_dir(&project).unwrap();
-        for (file, stage) in [
-            (".zshenv", "env"),
-            (".zprofile", "profile"),
-            (".zshrc", "rc"),
-        ] {
+        // Reproduce runner completion paths that would make global compinit
+        // ask an interactive security question before the fixture can start.
+        let completions = dotdir.join("insecure-completions");
+        std::fs::create_dir(&completions).unwrap();
+        std::fs::set_permissions(&completions, std::fs::Permissions::from_mode(0o777)).unwrap();
+        for (file, stage) in [(".zprofile", "profile"), (".zshrc", "rc")] {
             std::fs::write(
                 dotdir.join(file),
                 format!("PACE_STARTUP+=\"{stage} \"\nPROMPT='PACE> '\n"),
             )
             .unwrap();
         }
+        std::fs::write(
+            dotdir.join(".zshenv"),
+            // Keep the real bootstrap and user login ordering while excluding
+            // unrelated system startup such as Ubuntu's interactive compinit.
+            "unsetopt GLOBAL_RCS\nfpath=(\"$ZDOTDIR/insecure-completions\" $fpath)\nPACE_STARTUP+=\"env \"\n",
+        )
+        .unwrap();
         std::fs::write(
             dotdir.join(".zlogin"),
             "printf '%slogin' \"$PACE_STARTUP\" > \"$HOME/startup\"\ncd \"$HOME\"\n",
