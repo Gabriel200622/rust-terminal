@@ -22,8 +22,9 @@ historical evidence, not the current direction.
 - **The terminal owns its keys.** The focused terminal holds keyboard focus, so
   Tab, arrows and Escape reach the shell. Outside sheets and menus the toolkit
   never moves focus with Tab or the arrow keys; chrome is reached by pointer,
-  shortcut, the command palette or assistive technology. Escape leaves a sheet,
-  or a focused search field; otherwise it goes to the shell. A message never
+  shortcut, the command palette or assistive technology. Escape cancels a
+  terminal drag, or leaves a sheet or a focused search field; otherwise it goes
+  to the shell. A message never
   takes a key the shell is waiting for: it is dismissed by its button or the
   "Dismiss message" command, and by Escape only when no terminal is open. A key
   that closes a menu is not also sent to the shell, and Enter confirms a dialog
@@ -81,6 +82,8 @@ icon buttons keep a 28-point target around a 16-point glyph.
   workspace" and Preferences. Each row shows an identity tile, the name, a
   path that keeps its final directory, and either the pane count or, on hover,
   a "more" button with the same menu as a secondary click. Double-click renames.
+  While a terminal is carried, every other workspace's row is a drop
+  destination and takes the accent under the pointer.
   The sidebar yields to terminal content below 820 points of window width.
   Toggling it slides it in or out over 160 ms, from the button, the shortcut
   or the command palette alike. The window controls stay in place, the toggle
@@ -106,6 +109,19 @@ icon buttons keep a 28-point target around a 16-point glyph.
   the program and directory; the focused pane carries an accent ring and the
   others recede slightly. Zooming shows one pane and a "Zoomed" chip in the
   toolbar that restores the layout.
+- **Moving a terminal.** A pane's header title is its handle. Dragging it lifts
+  the terminal: its pane recedes, a chip with its name follows the pointer, and
+  the pane under the pointer shows in the accent the area a drop would take.
+  The nearest edge places the terminal beside that pane; the centre swaps the
+  two, marked by a swap badge. The preview glides between areas and fades where
+  it is released. Dropping on another workspace's sidebar row moves the
+  terminal there, beside that workspace's roomiest pane and across its longer
+  side, so arrivals fill a grid instead of narrowing one pane; the view stays
+  where it was; moving a workspace's last terminal removes the workspace
+  and follows the terminal. The shell keeps running throughout. A drop where
+  the terminal already is changes nothing, and Escape or an opening sheet
+  cancels the drag. A single terminal has no header, so it moves through the
+  command palette's "Move terminal to …" commands.
 - **Pane status.** Starting, exited, failed and resize-error states are shown by
   a centred capsule near the pane's bottom edge with one action. A successful
   exit is stated plainly; only failures use the problem colour. "Back to
