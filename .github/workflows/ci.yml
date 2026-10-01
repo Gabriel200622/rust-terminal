@@ -16,7 +16,7 @@ env:
 jobs:
   preflight:
     name: Fast validation
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       code: ${{ steps.changes.outputs.code }}
@@ -52,7 +52,7 @@ jobs:
           python3 scripts/check-architecture.py --self-test
 
   check:
-    name: Check (${{ matrix.os }})
+    name: Check (${{ matrix.check-name }})
     needs: preflight
     # Instantiate the matrix so documentation PRs emit the required per-OS names.
     # Skip expensive source checks at the step level instead.
@@ -60,7 +60,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15, windows-2025]
+        # Preserve status names required by the main ruleset as runners change.
+        include:
+          - os: ubuntu-latest
+            check-name: ubuntu-24.04
+          # Primary macOS validation runs natively on Apple Silicon.
+          - os: macos-latest
+            check-name: macos-15
+          - os: windows-latest
+            check-name: windows-2025
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -121,7 +129,7 @@ jobs:
     name: Latest stable compatibility (Linux)
     needs: preflight
     if: always() && (needs.preflight.result != 'success' || needs.preflight.outputs.code == 'true')
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Require successful preflight
@@ -148,7 +156,7 @@ jobs:
     name: Isolated native inspection (Linux X11)
     needs: [preflight, check]
     if: always() && (needs.preflight.result != 'success' || needs.preflight.outputs.code == 'true')
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 1
     steps:
       - name: Require successful preflight and native matrix
