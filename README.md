@@ -23,7 +23,7 @@ The executable is `target/release/pace` on Linux/macOS and `target\release\pace.
 
 ## Workspaces and customization
 
-Workspace navigation, independent shell panes, split layouts, scrollback, terminal search, selection/clipboard, a command palette, and settings are integrated in the native interface. Every action is listed in the command palette with its shortcut; secondary-click a terminal or a workspace for its menu, double-click a workspace to rename it, and drag the sidebar's edge to resize it. Terminal text uses bundled JetBrains Mono; interface text uses Geist. Font licenses accompany the assets.
+Workspace navigation, independent shell panes, split layouts, scrollback, terminal search, selection/clipboard, a command palette, and settings are integrated in the native interface. Every action is listed in the command palette with its shortcut; secondary-click a terminal or a workspace for its menu, double-click a workspace to rename it, and drag the sidebar's edge to resize it. With several terminals in a workspace, drag one by its header to rearrange them: drop it on an edge of another terminal to sit beside it, on the centre to swap places, or on a workspace in the sidebar to move it there with its shell still running. Escape cancels the drag, and the command palette lists "Move terminal to …" for each other workspace. Terminal text uses bundled JetBrains Mono; interface text uses Geist. Font licenses accompany the assets.
 
 When no saved workspace can be restored, Pace opens a terminal in your home directory (`~`). Use `--cwd` to choose another starting directory.
 
@@ -40,7 +40,7 @@ pace --help
 
 ## Keyboard shortcuts
 
-Use Ctrl+Shift on Linux/Windows and Command on macOS: T opens a workspace, D splits right, E splits below, W closes the focused pane, F searches, P opens commands, B toggles the sidebar, Enter zooms the focused pane to full size and back, and 1–9 select a workspace by its sidebar position. Ctrl+Tab switches workspaces. Escape leaves a sheet or a focused search field; otherwise it goes to the shell, as do Tab and the arrow keys. Ctrl+comma opens preferences; Ctrl+plus/minus adjusts terminal font size. Use Ctrl+Shift+C/V to copy/paste on Linux/Windows, Command+C/V on macOS. Plain Ctrl+C interrupts the shell; Shift+PageUp/PageDown scrolls history. Hold Shift to select text when a TUI owns the mouse.
+Use Ctrl+Shift on Linux/Windows and Command on macOS: T opens a workspace, D splits right, E splits below, W closes the focused pane, F searches, P opens commands, B toggles the sidebar, Enter zooms the focused pane to full size and back, and 1–9 select a workspace by its sidebar position. Ctrl+Tab switches workspaces. Escape cancels a terminal drag, or leaves a sheet or a focused search field; otherwise it goes to the shell, as do Tab and the arrow keys. Ctrl+comma opens preferences; Ctrl+plus/minus adjusts terminal font size. Use Ctrl+Shift+C/V to copy/paste on Linux/Windows, Command+C/V on macOS. Plain Ctrl+C interrupts the shell; Shift+PageUp/PageDown scrolls history. Hold Shift to select text when a TUI owns the mouse.
 
 The native [desktop icon](assets/pace.svg) and [Linux desktop entry](packaging/pace.desktop) are provided. Install the binary on your PATH and these files in your desktop environment's standard application/icon locations.
 
@@ -74,7 +74,7 @@ These are binary archives, not installers. macOS signing/notarization, Windows s
 
 MIT licensed. Bundled fonts retain their SIL Open Font License notices; third-party dependencies retain their respective licenses.
 
-Developer inspection is opt-in through the `inspection` feature. `pace-inspect` exposes the native accessibility tree and supports `screenshot`, `key`, `text`, `click`, `context` (secondary click), `double-click`, `drag`, and `resize` commands for repeatable native visual review. The normal release binary has no inspection listener. Independent launches must follow [the run-isolation rules](scripts/AGENTS.md).
+Developer inspection is opt-in through the `inspection` feature. `pace-inspect` exposes the native accessibility tree and supports `screenshot`, `key`, `text`, `click`, `context` (secondary click), `double-click`, `drag`, `press`, `release`, and `resize` commands for repeatable native visual review. The normal release binary has no inspection listener. Independent launches must follow [the run-isolation rules](scripts/AGENTS.md).
 
 Native regression runs own their process, temporary data directory, and inspection
 endpoint; they never use your saved workspaces:

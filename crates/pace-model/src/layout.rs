@@ -8,6 +8,30 @@ pub enum Axis {
     Horizontal,
 }
 
+/// The side of a pane that another pane is placed against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Edge {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+impl Edge {
+    /// The split that puts a pane on this side of another.
+    pub fn axis(self) -> Axis {
+        match self {
+            Self::Left | Self::Right => Axis::Vertical,
+            Self::Top | Self::Bottom => Axis::Horizontal,
+        }
+    }
+
+    /// The placed pane comes first in its split.
+    fn leading(self) -> bool {
+        matches!(self, Self::Left | Self::Top)
+    }
+}
+
 /// A read-only view of a workspace's validated split tree. Mutable construction
 /// is accepted only through `WorkspaceSpec` and validated before model adoption.
 #[derive(Debug, Clone, PartialEq)]
@@ -109,21 +133,105 @@ impl Layout {
         }
     }
 
-    pub(crate) fn split(&mut self, target: PaneId, pane: PaneId, id: SplitId, axis: Axis) -> bool {
+    /// Splits `target`, placing `pane` against the given edge of it.
+    pub(crate) fn split(&mut self, target: PaneId, pane: PaneId, id: SplitId, edge: Edge) -> bool {
         match self {
             Self::Leaf(existing) if *existing == target => {
+                let (first, second) = if edge.leading() {
+                    (pane, target)
+                } else {
+                    (target, pane)
+                };
                 *self = Self::Split {
                     id,
-                    axis,
+                    axis: edge.axis(),
                     ratio: 0.5,
-                    first: Box::new(Self::Leaf(target)),
-                    second: Box::new(Self::Leaf(pane)),
+                    first: Box::new(Self::Leaf(first)),
+                    second: Box::new(Self::Leaf(second)),
                 };
                 true
             }
             Self::Split { first, second, .. } => {
-                first.split(target, pane, id, axis) || second.split(target, pane, id, axis)
+                first.split(target, pane, id, edge) || second.split(target, pane, id, edge)
             }
+            _ => false,
+        }
+    }
+
+    /// Where to put a pane that nobody positioned by hand: against the roomiest
+    /// pane, dividing its longer side. Sizes are fractions of the workspace,
+    /// which is taken to be wider than tall; among equals `preferred` wins.
+    pub(crate) fn roomiest(&self, preferred: PaneId) -> (PaneId, Edge) {
+        const ASPECT: f32 = 1.6;
+        let mut best = (preferred, 0.0, 0.0);
+        self.visit_sizes(ASPECT, 1.0, &mut |pane, width, height| {
+            let (_, best_width, best_height) = best;
+            let gain = width * height - best_width * best_height;
+            if gain > 1e-4 || (gain > -1e-4 && pane == preferred) {
+                best = (pane, width, height);
+            }
+        });
+        let (pane, width, height) = best;
+        let edge = if width >= height {
+            Edge::Right
+        } else {
+            Edge::Bottom
+        };
+        (pane, edge)
+    }
+
+    fn visit_sizes(&self, width: f32, height: f32, visit: &mut impl FnMut(PaneId, f32, f32)) {
+        match self {
+            Self::Leaf(pane) => visit(*pane, width, height),
+            Self::Split {
+                axis,
+                ratio,
+                first,
+                second,
+                ..
+            } => {
+                let (a, b) = match axis {
+                    Axis::Vertical => ((width * ratio, height), (width * (1.0 - ratio), height)),
+                    Axis::Horizontal => ((width, height * ratio), (width, height * (1.0 - ratio))),
+                };
+                first.visit_sizes(a.0, a.1, visit);
+                second.visit_sizes(b.0, b.1, visit);
+            }
+        }
+    }
+
+    /// Exchanges the positions of two panes.
+    pub(crate) fn swap(&mut self, a: PaneId, b: PaneId) {
+        match self {
+            Self::Leaf(pane) if *pane == a => *pane = b,
+            Self::Leaf(pane) if *pane == b => *pane = a,
+            Self::Leaf(_) => {}
+            Self::Split { first, second, .. } => {
+                first.swap(a, b);
+                second.swap(a, b);
+            }
+        }
+    }
+
+    /// The same panes in the same places, whatever the split identities and
+    /// ratios are.
+    pub(crate) fn same_arrangement(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Leaf(a), Self::Leaf(b)) => a == b,
+            (
+                Self::Split {
+                    axis: a,
+                    first: a_first,
+                    second: a_second,
+                    ..
+                },
+                Self::Split {
+                    axis: b,
+                    first: b_first,
+                    second: b_second,
+                    ..
+                },
+            ) => a == b && a_first.same_arrangement(b_first) && a_second.same_arrangement(b_second),
             _ => false,
         }
     }
