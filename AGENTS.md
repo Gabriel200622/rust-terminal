@@ -137,7 +137,7 @@ these repository constraints also apply when following a skill.
 
 ### Issue tracker
 
-Issues and specs live in GitHub Issues for `Gabriel200622/rust-terminal`. For ticket operations, read [the issue tracker guide](docs/agents/issue-tracker.md).
+Issues and specs live in GitHub Issues for `zevem/rust-terminal`. For ticket operations, read [the issue tracker guide](docs/agents/issue-tracker.md).
 
 ### Triage labels
 
