@@ -335,6 +335,30 @@ fn find_returns_to_an_open_search_field_before_it_closes() {
 }
 
 #[test]
+fn toggling_the_sidebar_starts_a_slide_from_where_it_is() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    app.startup = None;
+    assert!(app.controller.model().sidebar());
+    assert_eq!(
+        app.ui.sidebar_slide, None,
+        "a sidebar that was not toggled rests in place"
+    );
+
+    app.action(&ctx, Action::ToggleSidebar);
+    assert!(!app.controller.model().sidebar());
+    let hide = app.ui.sidebar_slide.unwrap();
+    assert_eq!(hide.reveal(false, 0.0), Some(1.0));
+    assert_eq!(hide.reveal(false, 1.0), None);
+
+    // Toggled back before the first slide moved: it starts fully shown.
+    app.action(&ctx, Action::ToggleSidebar);
+    assert!(app.controller.model().sidebar());
+    assert_eq!(app.ui.sidebar_slide.unwrap().reveal(true, 0.0), Some(1.0));
+}
+
+#[test]
 fn sidebar_width_is_clamped_and_saved_as_one_preference_change() {
     let root = tempfile::tempdir().unwrap();
     let (mut app, _sender) = fixture(root.path());

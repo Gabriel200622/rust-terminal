@@ -264,7 +264,14 @@ impl App {
                 };
             }
             Action::ToggleSidebar => {
-                self.dispatch(ctx, Command::SetSidebar(!self.controller.model().sidebar()))
+                let shown = self.controller.model().sidebar();
+                self.ui.sidebar_slide = Some(ui::chrome::SidebarSlide::toggled(
+                    self.ui.sidebar_slide,
+                    shown,
+                    ctx.input(|input| input.time),
+                ));
+                self.dispatch(ctx, Command::SetSidebar(!shown));
+                ctx.request_repaint();
             }
             Action::SidebarWidth(width) => {
                 let config = Config {
