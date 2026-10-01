@@ -97,12 +97,21 @@ these repository constraints also apply when following a skill.
   Native test launches use fresh `--data-root` storage; `--config` and
   `--no-restore` do not isolate saved workspace writes. Follow the script guide
   before launching or driving Pace; desktop input focus is shared across tasks.
-- **Do not run repo-wide checks locally unless explicitly requested. CI owns
-  the full suite.** Run the narrowest meaningful proof: focused tests, affected
-  crate/target checks and targeted integration tests where behavior requires
-  them. Cross-boundary work needs proof at each changed seam, not an automatic
-  workspace build/test/lint sweep. Documentation-only changes need reference and
-  consistency review, not Rust builds.
+- **Do not run repo-wide checks locally unless explicitly requested.** This
+  includes `cargo build`, `cargo check`, `cargo clippy` and full test suites.
+  CI owns full workspace validation; a designated validation agent runs only
+  the explicitly requested full checks. During development, run the narrowest
+  meaningful proof: focused tests, affected package/target checks and targeted
+  integration tests where behavior requires them. Cross-boundary work needs
+  proof at each changed seam, not an automatic workspace build/test/lint sweep.
+  Documentation-only changes need reference and consistency review, not Rust
+  builds.
+- Run local Rust compilation sequentially within each agent and honor
+  `.cargo/config.toml`'s job limit. Avoid expensive compilation concurrently with
+  other agents; coordinate one validation owner or wait for existing builds.
+  Increase parallelism through `--jobs`, `CARGO_BUILD_JOBS` or `--config` only
+  when explicitly requested. For shared compiler-cache setup, read
+  [development builds](README.md#development-builds).
 - Use the pinned `rust-toolchain.toml` and `--locked`; do not upgrade the
   toolchain or lockfile merely to get a check running. Local commands belong in
   the owning guide. Report actual checks, host/features and any unverified
