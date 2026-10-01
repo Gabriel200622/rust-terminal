@@ -44,7 +44,7 @@ reuse. [Incremental Rust compilations and binary crates are not cached](https://
 
 ## Workspaces and customization
 
-Workspace navigation, independent shell panes, split layouts, scrollback, terminal search, selection/clipboard, a command palette, and settings are integrated in the native interface. Every action is listed in the command palette with its shortcut; secondary-click a terminal or a workspace for its menu, double-click a workspace to rename it, and drag the sidebar's edge to resize it. With several terminals in a workspace, drag one by its header to rearrange them: drop it on an edge of another terminal to sit beside it, on the centre to swap places, or on a workspace in the sidebar to move it there with its shell still running. Escape cancels the drag, and the command palette lists "Move terminal to …" for each other workspace. Terminal text uses bundled JetBrains Mono; interface text uses Geist. Font licenses accompany the assets.
+Workspace navigation, independent shell panes, split layouts, scrollback, terminal search, selection/clipboard, a command palette, and settings are integrated in the native interface. Every action is listed in the command palette with its shortcut; secondary-click a terminal or a workspace for its menu, double-click a workspace to rename it, drag a workspace to reorder the sidebar, and drag the sidebar's edge to resize it. With several terminals in a workspace, drag one by its header to rearrange them: drop it on an edge of another terminal to sit beside it, on the centre to swap places, or on a workspace in the sidebar to move it there with its shell still running. Escape cancels the drag, and the command palette lists "Move terminal to …" for each other workspace. Terminal text uses bundled JetBrains Mono; interface text uses Geist. Font licenses accompany the assets.
 
 ### SSH workspaces
 
@@ -97,6 +97,8 @@ Ghostty's public `libghostty-vt` is a possible future engine, but it supplies te
 ## CI and artifacts
 
 GitHub Actions runs CI only on pull requests. Fast formatting and architecture checks run before builds; documentation/evidence-only changes skip compilation. Default and inspection configurations are tested on Linux, macOS, and Windows. Linux also runs Clippy and isolated X11 inspection/restoration using the same build, while a separate job checks all targets/features with latest stable Rust. CI uses an unoptimized profile without debug symbols and caches dependencies even after failed runs; performance measurements and releases use optimized builds.
+
+CI and release workflows use the standard GitHub-hosted `ubuntu-latest`, `macos-latest` (Apple Silicon), and `windows-latest` runners. Apple Silicon (`aarch64-apple-darwin`) is the primary macOS target for pull-request CI and release downloads. An additional Intel compatibility archive (`x86_64-apple-darwin`) is built and tested natively on `macos-15-intel` when release tags are pushed, using the same packaging steps.
 
 Pushing a tag matching the package version, such as `v0.1.0`, runs release checks and packages Linux x64, macOS arm64/Intel, and Windows x64 binaries. The archives include configuration, licenses, dependency notices, and SHA-256 checksums, and are staged in a draft GitHub release for review.
 

@@ -21,13 +21,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-24.04
+          - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-          - os: macos-15
+          # Primary macOS archive, built and tested natively on Apple Silicon.
+          - os: macos-latest
             target: aarch64-apple-darwin
+          # Additional Intel compatibility archive; built only on release tags.
+          # Use a native Intel runner because macos-latest is arm64.
           - os: macos-15-intel
             target: x86_64-apple-darwin
-          - os: windows-2025
+          - os: windows-latest
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
@@ -130,7 +133,7 @@ jobs:
   draft-release:
     name: Stage draft release
     needs: build
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:

@@ -37,7 +37,10 @@ cargo build --release --locked --bin pace
 
 Rust 1.97.1 is pinned by `rust-toolchain.toml` and is the declared minimum for all
 packages. CI tests default and inspection configurations on that baseline on
-Linux, macOS and Windows. Latest stable gets an all-target/all-feature compile
+Linux, macOS (Apple Silicon) and Windows. Apple Silicon is the primary macOS
+target; native Intel macOS build/test coverage runs on release tags through
+[release.yml](../.github/workflows/release.yml).
+Latest stable gets an all-target/all-feature compile
 check rather than a second copy of the Linux test suite. Formatting and
 architecture checks precede compilation; documentation/evidence-only PRs skip
 the build matrix while retaining successful required statuses. The `ci` Cargo
@@ -53,9 +56,9 @@ Current coverage includes:
 | Resize and backpressure | Native resize waits for terminal-grid access; a rejected resize preserves existing grid dimensions when the input queue is full |
 | Terminal input | Ctrl combinations, application cursor mode, modified/function keys, Unicode text ownership, Kitty key flags/repeat/release, SGR/legacy mouse coordinates, and motion modes |
 | Renderer cache | A real quiet shell and headless egui frames retain galley identity when cells are unchanged; one changed row rebuilds once; wide/combining Unicode search highlights use terminal columns; a display-scale change rebuilds glyph layouts at unchanged grid dimensions and subsequent frames reuse them |
-| Custom controls | A right-aligned titlebar icon retains its widget identity across hover/press/release and clicks once; hiding a neighboring control preserves the focused action, so Enter cannot activate a different button; switches, segmented choices, sliders and steppers change once per interaction and respect their bounds; a new dialog gives its first field the keyboard once visible; command-palette entries capture their pane and filter by query |
+| Custom controls | A right-aligned titlebar icon retains its widget identity across hover/press/release and clicks once; hiding a neighboring control preserves the focused action, so Enter cannot activate a different button; switches, segmented choices, sliders and steppers change once per interaction and respect their bounds; a new dialog gives its first field the keyboard once visible; command-palette entries capture their pane and filter by query; dragging a sidebar row moves its workspace once on release, scrolls a long list from its edge, leaves a click selecting, and is cancelled by Escape without passing the key on |
 | Configuration and layout | Resource validation, serialization, atomic replacement, failed/concurrent writes, saved split validation, split removal, and Unicode-safe labels |
-| Pure application controller | Targeted commands, workspace order/identity, closing before/at/after focus, stable split identities, pane moves within and between workspaces (rearrange, swap, unchanged drops, roomiest-pane placement, last-pane removal, capacity and atomic rejection), failed/stale startup, restart at capacity, fake-runtime effects and dirty/save acknowledgements |
+| Pure application controller | Targeted commands, workspace order/identity and reordering, closing before/at/after focus, stable split identities, pane moves within and between workspaces (rearrange, swap, unchanged drops, roomiest-pane placement, last-pane removal, capacity and atomic rejection), failed/stale startup, restart at capacity, fake-runtime effects and dirty/save acknowledgements |
 | Persistence compatibility and scheduling | Unversioned fixture migration, independent versioned DTOs, invalid/missing directory recovery, corrupt-file preservation, unsupported/unreadable write protection, coalescing, destination generations, slow/failing storage, bounded flush and ephemeral isolation |
 | Architecture | Forbidden model dependencies (including target tables/aliases), desktop backend/lock leaks and production renderer live-session leaks; checker self-tests verify rejection |
 | Asynchronous bootstrap | Bounded pending actions replay onto restored state; preference changes coalesce; loader failure preserves storage; launch commands retain their original pane/generation and are delivered once to a real PTY despite focus changes |

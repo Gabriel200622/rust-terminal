@@ -85,6 +85,12 @@ icon buttons keep a 28-point target around a 16-point glyph.
   connected over SSH shows a globe and its host in place of the path, and its
   menu offers "Disconnect from SSH" where a local one offers "Connect over
   SSH…". Double-click renames.
+  Dragging a row reorders the workspaces: the row lifts onto the elevated
+  material and follows the pointer, its neighbours ease aside to show where it
+  will land, and it settles into that gap on release. Holding it at the list's
+  edge scrolls a long list, Escape puts it back, and nothing is saved before
+  release. "Move up" and "Move down" in the row menu and the command palette
+  reorder without a pointer and take effect at once.
   While a terminal is carried, every other workspace's row on the same machine
   is a drop destination and takes the accent under the pointer.
   The sidebar yields to terminal content below 820 points of window width.

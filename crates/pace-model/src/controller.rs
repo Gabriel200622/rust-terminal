@@ -44,6 +44,12 @@ pub enum Command {
     },
     ClosePane(PaneId),
     CloseWorkspace(WorkspaceId),
+    /// Moves a workspace to `index` in the ordered list. A position past the
+    /// end means last.
+    MoveWorkspace {
+        workspace: WorkspaceId,
+        index: usize,
+    },
     RenameWorkspace {
         workspace: WorkspaceId,
         name: String,
@@ -357,6 +363,20 @@ impl Controller {
             Command::CloseWorkspace(workspace) => {
                 self.close_workspace(workspace, &mut effects)?;
                 dirty = true;
+            }
+            Command::MoveWorkspace { workspace, index } => {
+                let position = self
+                    .model
+                    .workspaces
+                    .iter()
+                    .position(|item| item.id == workspace)
+                    .ok_or(Error::UnknownWorkspace(workspace))?;
+                let index = index.min(self.model.workspaces.len() - 1);
+                if index != position {
+                    let moved = self.model.workspaces.remove(position);
+                    self.model.workspaces.insert(index, moved);
+                    dirty = true;
+                }
             }
             Command::RenameWorkspace { workspace, name } => {
                 if name.trim().is_empty() {
@@ -803,6 +823,83 @@ mod tests {
     }
 
     #[test]
+    fn moving_a_workspace_reorders_without_changing_identity_or_focus() {
+        let (mut controller, first, _) = setup();
+        let second = create(&mut controller, "second");
+        let third = create(&mut controller, "third");
+        controller
+            .dispatch(Command::SelectWorkspace(second))
+            .unwrap();
+        let pane = controller.model().active_pane();
+        let order = |controller: &Controller| {
+            controller
+                .model()
+                .workspaces()
+                .iter()
+                .map(Workspace::id)
+                .collect::<Vec<_>>()
+        };
+        let generation = controller.generation();
+        let effects = controller
+            .dispatch(Command::MoveWorkspace {
+                workspace: first,
+                index: 2,
+            })
+            .unwrap();
+        assert_eq!(order(&controller), [second, third, first]);
+        assert_eq!(
+            effects,
+            [Effect::Persist {
+                generation: generation + 1
+            }],
+            "sessions, focus and search are untouched"
+        );
+        assert_eq!(controller.model().active_workspace(), Some(second));
+        assert_eq!(controller.model().active_pane(), pane);
+        // A position past the end means last.
+        controller
+            .dispatch(Command::MoveWorkspace {
+                workspace: second,
+                index: usize::MAX,
+            })
+            .unwrap();
+        assert_eq!(order(&controller), [third, first, second]);
+        controller
+            .dispatch(Command::MoveWorkspace {
+                workspace: second,
+                index: 0,
+            })
+            .unwrap();
+        assert_eq!(order(&controller), [second, third, first]);
+    }
+
+    #[test]
+    fn moving_to_the_same_position_or_an_unknown_workspace_changes_nothing() {
+        let (mut controller, first, _) = setup();
+        create(&mut controller, "second");
+        let before = controller.model().clone();
+        let generation = controller.generation();
+        assert!(
+            controller
+                .dispatch(Command::MoveWorkspace {
+                    workspace: first,
+                    index: 0
+                })
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            controller.dispatch(Command::MoveWorkspace {
+                workspace: WorkspaceId::new(99),
+                index: 0
+            }),
+            Err(Error::UnknownWorkspace(WorkspaceId::new(99)))
+        );
+        assert_eq!(controller.model(), &before);
+        assert_eq!(controller.generation(), generation);
+    }
+
+    #[test]
     fn close_pane_collapses_layout_and_keeps_unrelated_split_identity() {
         let (mut controller, workspace, first) = setup();
         controller
@@ -1209,7 +1306,7 @@ mod tests {
             let other = controller.model().workspaces()
                 [(sequence.rotate_right(29) as usize) % controller.model().workspaces().len()]
             .active();
-            let command = match sequence % 11 {
+            let command = match sequence % 12 {
                 0 => Command::AddWorkspace {
                     cwd: PathBuf::from("/fake"),
                     name: format!("workspace {step}"),
@@ -1247,6 +1344,10 @@ mod tests {
                 9 => Command::MovePane {
                     pane: other,
                     destination: Destination::Workspace(workspace),
+                },
+                10 => Command::MoveWorkspace {
+                    workspace,
+                    index: (sequence.rotate_right(29) as usize) % 30,
                 },
                 _ => Command::SelectWorkspace(workspace),
             };
