@@ -226,16 +226,11 @@ impl App {
             Action::CloseWorkspace(id) => self.request_close(ctx, Close::Workspace(id)),
             Action::WindowClose => self.request_close(ctx, Close::App),
             Action::New => {
-                self.ui.new_name.clear();
-                self.ui.new_cwd = self
-                    .controller
-                    .model()
-                    .active_workspace()
-                    .and_then(|id| self.controller.model().workspace(id))
-                    .map(|w| w.cwd().display().to_string())
-                    .unwrap_or_default();
-                self.ui.overlay = OverlayState::NewWorkspace;
-                self.ui.overlay_focus = true;
+                if let Some(dirs) = directories::BaseDirs::new() {
+                    self.action(ctx, Action::Create(dirs.home_dir().into(), None));
+                } else {
+                    self.ui.error = Some("Could not determine your home directory".into());
+                }
             }
             Action::Rename(id) => {
                 if let Some(w) = self.controller.model().workspace(id) {
@@ -264,7 +259,14 @@ impl App {
                 };
             }
             Action::ToggleSidebar => {
-                self.dispatch(ctx, Command::SetSidebar(!self.controller.model().sidebar()))
+                let shown = self.controller.model().sidebar();
+                self.ui.sidebar_slide = Some(ui::chrome::SidebarSlide::toggled(
+                    self.ui.sidebar_slide,
+                    shown,
+                    ctx.input(|input| input.time),
+                ));
+                self.dispatch(ctx, Command::SetSidebar(!shown));
+                ctx.request_repaint();
             }
             Action::SidebarWidth(width) => {
                 let config = Config {
@@ -274,6 +276,9 @@ impl App {
                 self.action(ctx, Action::Preferences(config));
             }
             Action::Zoom => self.ui.zoomed = !self.ui.zoomed,
+            Action::ZoomUiIn => egui::gui_zoom::zoom_in(ctx),
+            Action::ZoomUiOut => egui::gui_zoom::zoom_out(ctx),
+            Action::ResetUiZoom => ctx.set_zoom_factor(1.0),
             Action::Find => {
                 let editing = ctx.memory(|memory| memory.has_focus(ui::search::input_id()));
                 if self.ui.search_open && !editing {

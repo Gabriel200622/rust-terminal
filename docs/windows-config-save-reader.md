@@ -13,6 +13,11 @@ These are two failures in two recorded attempts, not a measured failure rate
 from a repeated focused invocation. PR #13's writer-conflict handling is already
 merged; it cannot retry a failed reader open.
 
+`main` subsequently added a reader workaround in commit `4666306`: retry these
+Windows conflicts with `yield_now()` while writers run. This change retains the
+same error filter, adds a per-read deadline, and requires successful reader
+progress plus explicit recovery/error/timeout regressions.
+
 `tempfile` 3.27.0 replaces the Windows destination with
 `MoveFileExW(MOVEFILE_REPLACE_EXISTING)`. Atomic contents do not establish that
 every concurrent open succeeds. Microsoft's
@@ -44,17 +49,24 @@ test; it does not establish the mechanism behind the original error 5.
 
 ## Verification status
 
-The available host is Linux with the pinned Rust 1.97.1 toolchain. Injected-error
+The local host is Linux with the pinned Rust 1.97.1 toolchain. Injected-error
 regressions first failed with the single-read behavior. Focused Linux results
-cannot establish Windows correctness. No actual Windows machine is available
-for this task, and CI currently runs only on pull requests.
+cannot establish Windows correctness; Windows evidence comes from PR CI.
 
 With Rust 1.97.1, the `ci` profile and locked dependencies, the focused
 `config::tests` filter passed all 10 applicable tests in both ordinary and
 `inspection` configurations. The original concurrent-save test also passed
-30/30 separate focused Linux invocations. Windows-only tests were not run.
+30/30 separate focused Linux invocations.
 
-Windows acceptance remains pending: repeat the exact focused invocation from
-issue #22, record attempts/failures, run the Windows-only handle regression,
-and require ordinary and inspection CI configurations plus the final native
-inspection gate to pass. This note does not claim those gates have passed.
+[CI run 36827946358](https://github.com/Gabriel200622/rust-terminal/actions/runs/36827946358)
+passed all six checks on PR #23's initial head `cf0bb6c`, including the complete
+matrix and final native-inspection gate. The
+[Windows job](https://github.com/Gabriel200622/rust-terminal/actions/runs/36827946358/job/110257844454)
+passed the original stress test, all injected-error regressions and the real
+handle regression in both ordinary and inspection configurations on
+`windows-2025` with Rust 1.97.1.
+
+Those are two successful Windows CI stress invocations, not a measured repeated
+standalone focused run. The precise mechanism behind the original error 5
+remains unconfirmed. Updating the PR head to resolve the overlap with `main`
+requires fresh CI; the initial run does not establish acceptance for that head.
