@@ -158,7 +158,18 @@ fn commands(view: &PaletteView) -> Vec<Command> {
         shortcut("T"),
         [Action::New],
     ));
+    list.push(command(
+        "Workspace",
+        Icon::Globe,
+        "New SSH workspace",
+        "",
+        [Action::Ssh(None)],
+    ));
     if let Some(active) = view.active {
+        let remote = view
+            .workspaces
+            .iter()
+            .any(|workspace| workspace.id == active && workspace.remote.is_some());
         list.extend([
             command(
                 "Workspace",
@@ -167,6 +178,23 @@ fn commands(view: &PaletteView) -> Vec<Command> {
                 "",
                 [Action::Rename(active)],
             ),
+            if remote {
+                command(
+                    "Workspace",
+                    Icon::Globe,
+                    "Disconnect workspace from SSH",
+                    "",
+                    [Action::Disconnect(active)],
+                )
+            } else {
+                command(
+                    "Workspace",
+                    Icon::Globe,
+                    "Connect workspace over SSH",
+                    "",
+                    [Action::Ssh(Some(active))],
+                )
+            },
             command(
                 "Workspace",
                 Icon::Close,
@@ -196,8 +224,15 @@ fn commands(view: &PaletteView) -> Vec<Command> {
         });
     }
     if let Some(pane) = view.pane {
+        // A terminal keeps its session, so only workspaces on the same
+        // machine as its own can take it.
+        let machine = view
+            .workspaces
+            .iter()
+            .find(|workspace| Some(workspace.id) == view.active)
+            .map(|workspace| &workspace.remote);
         for workspace in view.workspaces {
-            if Some(workspace.id) == view.active {
+            if Some(workspace.id) == view.active || Some(&workspace.remote) != machine {
                 continue;
             }
             list.push(Command {
@@ -512,6 +547,7 @@ mod tests {
                 id: WorkspaceId::new(id),
                 name: "app".into(),
                 cwd: "/srv/app".into(),
+                remote: None,
                 panes: 1,
                 running: true,
             })
@@ -538,18 +574,64 @@ mod tests {
     }
 
     #[test]
-    fn a_focused_terminal_can_be_sent_to_each_other_workspace() {
+    fn ssh_commands_target_the_active_workspace_and_offer_the_reverse_when_connected() {
         let config = Config::default();
-        let workspaces: Vec<WorkspaceView> = [1, 2, 3]
+        let workspaces: Vec<WorkspaceView> = [(1, None), (2, Some("me@devbox"))]
             .into_iter()
-            .map(|id| WorkspaceView {
+            .map(|(id, remote): (u64, Option<&str>)| WorkspaceView {
                 id: WorkspaceId::new(id),
                 name: "app".into(),
                 cwd: "/srv/app".into(),
+                remote: remote.map(str::to_owned),
                 panes: 1,
                 running: true,
             })
             .collect();
+        let titles = |active: Option<u64>| -> Vec<(String, Vec<Action>)> {
+            commands(&PaletteView {
+                active: active.map(WorkspaceId::new),
+                ..view(&config, &workspaces)
+            })
+            .into_iter()
+            .filter(|command| command.title.contains("SSH"))
+            .map(|command| (command.title, command.actions))
+            .collect()
+        };
+        let none = titles(None);
+        assert!(matches!(
+            &none[..],
+            [(title, actions)] if title == "New SSH workspace"
+                && matches!(actions[..], [Action::Ssh(None)])
+        ));
+        let local = titles(Some(1));
+        assert!(matches!(
+            &local[..],
+            [_, (title, actions)] if title == "Connect workspace over SSH"
+                && matches!(actions[..], [Action::Ssh(Some(id))] if id == WorkspaceId::new(1))
+        ));
+        let remote = titles(Some(2));
+        assert!(matches!(
+            &remote[..],
+            [_, (title, actions)] if title == "Disconnect workspace from SSH"
+                && matches!(actions[..], [Action::Disconnect(id)] if id == WorkspaceId::new(2))
+        ));
+    }
+
+    #[test]
+    fn a_focused_terminal_can_be_sent_to_each_other_workspace() {
+        let config = Config::default();
+        let workspaces: Vec<WorkspaceView> =
+            [(1, None), (2, None), (3, None), (4, Some("me@devbox"))]
+                .into_iter()
+                .map(|(id, remote): (u64, Option<&str>)| WorkspaceView {
+                    id: WorkspaceId::new(id),
+                    name: "app".into(),
+                    cwd: "/srv/app".into(),
+                    remote: remote.map(str::to_owned),
+                    panes: 1,
+                    running: true,
+                })
+                .collect();
         let moves = |pane| -> Vec<(u64, Vec<Action>)> {
             commands(&PaletteView {
                 pane,
@@ -563,8 +645,8 @@ mod tests {
         };
         assert!(moves(None).is_empty());
         let list = moves(Some(PaneId::new(7)));
-        // Same-named destinations stay distinct, and the terminal's own
-        // workspace is not offered.
+        // Same-named destinations stay distinct. The terminal's own workspace
+        // is not offered, nor is one on another machine.
         assert_eq!(
             list.iter().map(|(target, _)| *target).collect::<Vec<_>>(),
             [1, 3]

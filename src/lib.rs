@@ -17,6 +17,8 @@ use std::path::PathBuf;
 #[derive(Default)]
 pub struct Launch {
     pub cwd: Option<PathBuf>,
+    /// Open a workspace connected to this SSH destination.
+    pub ssh: Option<String>,
     pub config: Option<PathBuf>,
     pub data_root: Option<PathBuf>,
     pub command: Option<String>,

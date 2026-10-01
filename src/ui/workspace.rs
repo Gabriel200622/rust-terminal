@@ -19,6 +19,18 @@ pub struct PanePresentation {
     pub snapshot: ViewportSnapshot,
     /// The shell has been requested but has not started yet.
     pub starting: bool,
+    /// SSH destination when the terminal runs on another machine.
+    pub remote: Option<String>,
+}
+
+impl PanePresentation {
+    /// Where the terminal is: its host when remote, otherwise its directory.
+    pub fn location(&self) -> String {
+        match &self.remote {
+            Some(destination) => destination.clone(),
+            None => helpers::compact_path(&self.metadata.cwd),
+        }
+    }
 }
 
 /// Per-frame inputs shared by every pane of the visible layout.
@@ -285,12 +297,13 @@ fn pane_header(
     ui: &mut Ui,
     id: PaneId,
     header: Rect,
-    metadata: &SessionMetadata,
+    presentation: &PanePresentation,
     reveal: f32,
     stage: &Stage,
     actions: &mut Vec<Action>,
 ) -> bool {
     let p = stage.p;
+    let metadata = &presentation.metadata;
     let selected = id == stage.active;
     let show_close = header.width() >= 72.0;
     let show_all = header.width() >= 260.0;
@@ -324,11 +337,14 @@ fn pane_header(
     );
     let remaining = text_rect.width() - title_width - 9.0;
     if remaining > 36.0 {
-        let folder = metadata
-            .cwd
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| helpers::compact_path(&metadata.cwd));
+        let folder = match &presentation.remote {
+            Some(destination) => destination.clone(),
+            None => metadata
+                .cwd
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| helpers::compact_path(&metadata.cwd)),
+        };
         galley_at(
             &painter,
             Pos2::new(
@@ -360,7 +376,10 @@ fn pane_header(
         } else {
             metadata.title.clone()
         },
-        metadata.cwd.display()
+        match &presentation.remote {
+            Some(destination) => destination.clone(),
+            None => metadata.cwd.display().to_string(),
+        }
     ));
     if !show_close {
         return carried;
@@ -420,6 +439,7 @@ fn draw_pane(
         return;
     };
     let metadata = &presentation.metadata;
+    let remote = presentation.remote.is_some();
     let selected = id == stage.active;
     let header_height = if stage.multiple {
         metrics::PANE_HEADER
@@ -456,7 +476,7 @@ fn draw_pane(
             ui,
             id,
             Rect::from_min_size(card.min, vec2(card.width(), header_height)),
-            metadata,
+            presentation,
             reveal,
             stage,
             actions,
@@ -585,15 +605,22 @@ fn draw_pane(
         painter.text(
             center - vec2(38.0, 0.0),
             Align2::LEFT_CENTER,
-            "Starting shell…",
+            if remote {
+                "Connecting…"
+            } else {
+                "Starting shell…"
+            },
             theme::regular(12.5),
             p.muted,
         );
-    } else if let Some((message, problem)) = status_text(&metadata.status) {
+    } else if let Some((mut message, problem)) = status_text(&metadata.status) {
         let detail = match &metadata.status {
             SessionStatus::Error(error) => Some(error.as_str()),
             _ => None,
         };
+        if remote && detail.is_some() {
+            message = "Could not start the SSH client".into();
+        }
         if status_capsule(
             ui,
             card,
@@ -603,8 +630,12 @@ fn draw_pane(
                 message: &message,
                 problem,
                 detail,
-                action: "Restart",
-                action_hint: "Start a new shell   Enter",
+                action: if remote { "Reconnect" } else { "Restart" },
+                action_hint: if remote {
+                    "Connect again   Enter"
+                } else {
+                    "Start a new shell   Enter"
+                },
             },
         ) {
             actions.extend([Action::Focus(id), Action::Restart(id)]);
@@ -1010,6 +1041,7 @@ mod tests {
                                 metadata: metadata(""),
                                 snapshot: ViewportSnapshot::blank(80, 24),
                                 starting: false,
+                                remote: None,
                             },
                         )
                     })
@@ -1208,6 +1240,7 @@ mod tests {
                     metadata: metadata("zsh"),
                     snapshot: ViewportSnapshot::blank(80, 24),
                     starting: false,
+                    remote: None,
                 };
                 (id, presentation)
             })
