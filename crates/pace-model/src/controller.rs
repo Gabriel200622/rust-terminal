@@ -1,9 +1,11 @@
 use crate::{
-    Axis, Edge, Error, Layout, Lifecycle, Model, Pane, PaneId, SplitId, Workspace, WorkspaceId,
+    Axis, Edge, Error, Layout, Lifecycle, Model, Pane, PaneId, Remote, SplitId, Workspace,
+    WorkspaceId,
 };
 use std::path::PathBuf;
 
-/// Where a moved pane lands. The pane keeps its session and identity.
+/// Where a moved pane lands. The pane keeps its session and identity, so it
+/// can only enter a workspace on the same machine as its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Destination {
     /// Against one edge of another pane, in that pane's workspace.
@@ -21,6 +23,8 @@ pub enum Command {
     AddWorkspace {
         cwd: PathBuf,
         name: String,
+        /// An SSH destination: every terminal of the workspace opens there.
+        remote: Option<String>,
     },
     SelectWorkspace(WorkspaceId),
     SplitPane {
@@ -43,6 +47,13 @@ pub enum Command {
     RenameWorkspace {
         workspace: WorkspaceId,
         name: String,
+    },
+    /// Connect a workspace to an SSH destination, or return it to local
+    /// shells with `None`. Every terminal it holds is replaced, because a
+    /// running session cannot move to another machine.
+    SetWorkspaceRemote {
+        workspace: WorkspaceId,
+        remote: Option<String>,
     },
     SetSplitRatio {
         split: SplitId,
@@ -82,6 +93,8 @@ pub enum Effect {
         pane: PaneId,
         generation: u64,
         cwd: PathBuf,
+        /// Where the session runs; `None` is a local shell.
+        remote: Option<Remote>,
         replacement: bool,
     },
     StopSession {
@@ -153,12 +166,14 @@ impl Controller {
         self.model
             .workspaces
             .iter()
-            .flat_map(|workspace| workspace.panes.iter())
-            .map(|pane| Effect::StartSession {
-                pane: pane.id,
-                generation: pane.generation,
-                cwd: pane.cwd.clone(),
-                replacement: false,
+            .flat_map(|workspace| {
+                workspace.panes.iter().map(|pane| Effect::StartSession {
+                    pane: pane.id,
+                    generation: pane.generation,
+                    cwd: pane.cwd.clone(),
+                    remote: workspace.remote.clone(),
+                    replacement: false,
+                })
             })
             .collect()
     }
@@ -187,10 +202,11 @@ impl Controller {
         let mut effects = Vec::new();
         let mut dirty = false;
         match command {
-            Command::AddWorkspace { cwd, name } => {
+            Command::AddWorkspace { cwd, name, remote } => {
                 if name.trim().is_empty() {
                     return Err(Error::InvalidName);
                 }
+                let remote = remote.as_deref().map(Remote::parse).transpose()?;
                 if self.model.workspaces.len() >= self.model.limits.workspaces {
                     return Err(Error::WorkspaceLimit);
                 }
@@ -213,6 +229,7 @@ impl Controller {
                     id,
                     name,
                     cwd: cwd.clone(),
+                    remote: remote.clone(),
                     panes: vec![Pane {
                         id: pane_id,
                         cwd: cwd.clone(),
@@ -227,6 +244,7 @@ impl Controller {
                     pane: pane_id,
                     generation: 1,
                     cwd,
+                    remote,
                     replacement: false,
                 });
                 dirty = true;
@@ -281,6 +299,7 @@ impl Controller {
                     lifecycle: Lifecycle::Starting,
                 });
                 ws.active = id;
+                let remote = ws.remote.clone();
                 self.model.active = Some(workspace);
                 self.model.next_pane = next_pane;
                 self.model.next_split = next_split;
@@ -288,6 +307,7 @@ impl Controller {
                     pane: id,
                     generation: 1,
                     cwd,
+                    remote,
                     replacement: false,
                 });
                 dirty = true;
@@ -348,6 +368,40 @@ impl Controller {
                     dirty = true;
                 }
             }
+            Command::SetWorkspaceRemote { workspace, remote } => {
+                let remote = remote.as_deref().map(Remote::parse).transpose()?;
+                let ws = self.model.workspace_mut(workspace)?;
+                if ws.remote != remote {
+                    if ws
+                        .panes
+                        .iter()
+                        .any(|pane| pane.generation.checked_add(1).is_none())
+                    {
+                        return Err(Error::IdentityExhausted);
+                    }
+                    ws.remote.clone_from(&remote);
+                    for pane in &mut ws.panes {
+                        let previous = pane.generation;
+                        pane.generation += 1;
+                        pane.lifecycle = Lifecycle::Starting;
+                        effects.push(Effect::StopSession {
+                            pane: pane.id,
+                            generation: previous,
+                        });
+                        effects.push(Effect::StartSession {
+                            pane: pane.id,
+                            generation: pane.generation,
+                            cwd: pane.cwd.clone(),
+                            remote: remote.clone(),
+                            replacement: true,
+                        });
+                    }
+                    if old_focus.is_some_and(|pane| ws.pane(pane).is_some()) {
+                        effects.push(Effect::ResetSearch);
+                    }
+                    dirty = true;
+                }
+            }
             Command::SetSplitRatio { split, ratio } => {
                 if !ratio.is_finite() || !(0.1..=0.9).contains(&ratio) {
                     return Err(Error::InvalidRatio);
@@ -360,6 +414,11 @@ impl Controller {
                     .ok_or(Error::UnknownSplit(split))?;
             }
             Command::RestartPane(pane) => {
+                let remote = self
+                    .model
+                    .workspace_for_pane(pane)
+                    .and_then(|id| self.model.workspace(id))
+                    .and_then(|workspace| workspace.remote.clone());
                 let item = self.model.pane_mut(pane)?;
                 let previous = item.generation;
                 item.generation = item
@@ -375,6 +434,7 @@ impl Controller {
                     pane,
                     generation: item.generation,
                     cwd: item.cwd.clone(),
+                    remote,
                     replacement: true,
                 });
                 if old_focus == Some(pane) {
@@ -507,6 +567,13 @@ impl Controller {
             ws.layout = layout;
             ws.active = pane;
         } else {
+            // A local shell would be shown as running on the host, and a
+            // connection as a local shell, until the next restart.
+            if self.model.workspace(source).map(|ws| &ws.remote)
+                != self.model.workspace(destination).map(|ws| &ws.remote)
+            {
+                return Err(Error::RemoteMismatch);
+            }
             let limit = self.model.limits.panes_per_workspace;
             if self
                 .model
@@ -622,6 +689,7 @@ mod tests {
             .dispatch(Command::AddWorkspace {
                 cwd: PathBuf::from("/fake"),
                 name: name.into(),
+                remote: None,
             })
             .unwrap();
         controller.model().active_workspace().unwrap()
@@ -1141,10 +1209,11 @@ mod tests {
             let other = controller.model().workspaces()
                 [(sequence.rotate_right(29) as usize) % controller.model().workspaces().len()]
             .active();
-            let command = match sequence % 10 {
+            let command = match sequence % 11 {
                 0 => Command::AddWorkspace {
                     cwd: PathBuf::from("/fake"),
                     name: format!("workspace {step}"),
+                    remote: (step % 3 == 0).then(|| "me@devbox".to_owned()),
                 },
                 1 => Command::SplitPane {
                     workspace,
@@ -1159,7 +1228,11 @@ mod tests {
                     workspace,
                     name: format!("renamed {step}"),
                 },
-                6 => Command::MovePane {
+                6 => Command::SetWorkspaceRemote {
+                    workspace,
+                    remote: (step % 2 == 0).then(|| format!("host{step}")),
+                },
+                7 => Command::MovePane {
                     pane,
                     destination: Destination::Beside {
                         pane: other,
@@ -1167,11 +1240,11 @@ mod tests {
                             [(sequence.rotate_right(41) as usize) % 4],
                     },
                 },
-                7 => Command::MovePane {
+                8 => Command::MovePane {
                     pane,
                     destination: Destination::Swap(other),
                 },
-                8 => Command::MovePane {
+                9 => Command::MovePane {
                     pane: other,
                     destination: Destination::Workspace(workspace),
                 },
@@ -1206,6 +1279,7 @@ mod tests {
             pane,
             generation: 2,
             cwd: PathBuf::from("/fake"),
+            remote: None,
             replacement: true
         }));
         controller
@@ -1279,6 +1353,7 @@ mod tests {
             Command::AddWorkspace {
                 cwd: PathBuf::from("/fake"),
                 name: "fixture".into(),
+                remote: None,
             },
         );
         let pane = controller.model().active_pane().unwrap();
@@ -1292,12 +1367,270 @@ mod tests {
         assert_eq!(controller.model().pane_count(), 0);
     }
 
+    fn remote(destination: &str) -> Option<Remote> {
+        Some(Remote::parse(destination).unwrap())
+    }
+    fn starts(effects: &[Effect]) -> Vec<(PaneId, u64, Option<Remote>, bool)> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::StartSession {
+                    pane,
+                    generation,
+                    remote,
+                    replacement,
+                    ..
+                } => Some((*pane, *generation, remote.clone(), *replacement)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_terminal_of_a_remote_workspace_starts_on_its_host() {
+        let mut controller = Controller::new(Model::default());
+        let created = controller
+            .dispatch(Command::AddWorkspace {
+                cwd: PathBuf::from("/fake"),
+                name: "devbox".into(),
+                remote: Some(" me@devbox ".into()),
+            })
+            .unwrap();
+        let workspace = controller.model().active_workspace().unwrap();
+        let first = controller.model().active_pane().unwrap();
+        assert_eq!(
+            controller.model().workspace(workspace).unwrap().remote(),
+            remote("me@devbox").as_ref()
+        );
+        assert_eq!(starts(&created), [(first, 1, remote("me@devbox"), false)]);
+
+        let split = controller
+            .dispatch(Command::SplitPane {
+                workspace,
+                pane: first,
+                axis: Axis::Vertical,
+                cwd: PathBuf::from("/fake"),
+            })
+            .unwrap();
+        let second = controller.model().active_pane().unwrap();
+        assert_eq!(starts(&split), [(second, 1, remote("me@devbox"), false)]);
+
+        let restarted = controller.dispatch(Command::RestartPane(first)).unwrap();
+        assert_eq!(starts(&restarted), [(first, 2, remote("me@devbox"), true)]);
+
+        // A local neighbour is unaffected, and restoration reconnects.
+        create(&mut controller, "local");
+        let restored = Controller::new(
+            Model::restore(
+                controller.model().specs(),
+                None,
+                true,
+                controller.model().limits(),
+            )
+            .unwrap(),
+        );
+        let remotes: Vec<_> = starts(&restored.start_effects())
+            .into_iter()
+            .map(|(_, _, remote, _)| remote)
+            .collect();
+        assert_eq!(remotes, [remote("me@devbox"), remote("me@devbox"), None]);
+    }
+
+    #[test]
+    fn connecting_a_workspace_replaces_all_of_its_terminals_and_only_those() {
+        let (mut controller, workspace, first) = setup();
+        controller
+            .dispatch(Command::SplitPane {
+                workspace,
+                pane: first,
+                axis: Axis::Horizontal,
+                cwd: PathBuf::from("/fake"),
+            })
+            .unwrap();
+        let second = controller.model().active_pane().unwrap();
+        let other = create(&mut controller, "other");
+        let other_pane = controller.model().active_pane().unwrap();
+        for pane in [first, second, other_pane] {
+            controller
+                .complete(Completion::Started {
+                    pane,
+                    generation: 1,
+                })
+                .unwrap();
+        }
+        let saved = controller.generation();
+
+        let effects = controller
+            .dispatch(Command::SetWorkspaceRemote {
+                workspace,
+                remote: Some("me@devbox".into()),
+            })
+            .unwrap();
+        assert_eq!(
+            starts(&effects),
+            [
+                (first, 2, remote("me@devbox"), true),
+                (second, 2, remote("me@devbox"), true)
+            ]
+        );
+        for pane in [first, second] {
+            assert!(effects.contains(&Effect::StopSession {
+                pane,
+                generation: 1
+            }));
+            assert_eq!(
+                controller.model().pane(pane).unwrap().lifecycle(),
+                &Lifecycle::Starting
+            );
+        }
+        assert!(effects.contains(&Effect::Persist {
+            generation: saved + 1
+        }));
+        // The focused pane is elsewhere: its search and session are untouched.
+        assert!(!effects.contains(&Effect::ResetSearch));
+        assert_eq!(controller.model().pane(other_pane).unwrap().generation(), 1);
+        assert_eq!(controller.model().workspace(other).unwrap().remote(), None);
+        // The local shell's exit cannot reach its replacement.
+        controller
+            .complete(Completion::Exited {
+                pane: first,
+                generation: 1,
+            })
+            .unwrap();
+        assert_eq!(
+            controller.model().pane(first).unwrap().lifecycle(),
+            &Lifecycle::Starting
+        );
+
+        // The same host again is not a reason to drop the connections.
+        assert!(
+            controller
+                .dispatch(Command::SetWorkspaceRemote {
+                    workspace,
+                    remote: Some("me@devbox".into()),
+                })
+                .unwrap()
+                .is_empty()
+        );
+
+        // Disconnecting is the reverse action.
+        controller
+            .dispatch(Command::SelectWorkspace(workspace))
+            .unwrap();
+        let effects = controller
+            .dispatch(Command::SetWorkspaceRemote {
+                workspace,
+                remote: None,
+            })
+            .unwrap();
+        assert_eq!(
+            starts(&effects),
+            [(first, 3, None, true), (second, 3, None, true)]
+        );
+        assert!(effects.contains(&Effect::ResetSearch));
+        assert_eq!(
+            controller.model().workspace(workspace).unwrap().remote(),
+            None
+        );
+    }
+
+    #[test]
+    fn a_terminal_moves_only_between_workspaces_on_the_same_machine() {
+        let mut controller = Controller::new(Model::default());
+        let add = |controller: &mut Controller, remote: Option<&str>| {
+            controller
+                .dispatch(Command::AddWorkspace {
+                    cwd: PathBuf::from("/fake"),
+                    name: "workspace".into(),
+                    remote: remote.map(str::to_owned),
+                })
+                .unwrap();
+            (
+                controller.model().active_workspace().unwrap(),
+                controller.model().active_pane().unwrap(),
+            )
+        };
+        let (local, local_pane) = add(&mut controller, None);
+        let (devbox, devbox_pane) = add(&mut controller, Some("me@devbox"));
+        let (same_host, same_host_pane) = add(&mut controller, Some("me@devbox"));
+        let (_, other_host_pane) = add(&mut controller, Some("me@buildbox"));
+        let before = controller.model().clone();
+        for (pane, destination) in [
+            (local_pane, Destination::Workspace(devbox)),
+            (devbox_pane, Destination::Workspace(local)),
+            (
+                other_host_pane,
+                Destination::Beside {
+                    pane: devbox_pane,
+                    edge: Edge::Right,
+                },
+            ),
+        ] {
+            assert_eq!(
+                controller.dispatch(Command::MovePane { pane, destination }),
+                Err(Error::RemoteMismatch)
+            );
+        }
+        assert_eq!(controller.model(), &before);
+
+        // The same host is the same machine: the session moves untouched.
+        let effects = controller
+            .dispatch(Command::MovePane {
+                pane: same_host_pane,
+                destination: Destination::Workspace(devbox),
+            })
+            .unwrap();
+        assert!(starts(&effects).is_empty());
+        assert!(controller.model().workspace(same_host).is_none());
+        assert_eq!(
+            controller.model().workspace(devbox).unwrap().panes().len(),
+            2
+        );
+    }
+
+    #[test]
+    fn an_unusable_ssh_destination_is_refused_without_changing_anything() {
+        let (mut controller, workspace, _) = setup();
+        let before = controller.model().clone();
+        let generation = controller.generation();
+        for command in [
+            Command::AddWorkspace {
+                cwd: PathBuf::from("/fake"),
+                name: "bad".into(),
+                remote: Some("-oProxyCommand=id".into()),
+            },
+            Command::SetWorkspaceRemote {
+                workspace,
+                remote: Some("two words".into()),
+            },
+        ] {
+            assert_eq!(controller.dispatch(command), Err(Error::InvalidRemote));
+        }
+        assert_eq!(
+            controller.dispatch(Command::SetWorkspaceRemote {
+                workspace: WorkspaceId::new(99),
+                remote: None,
+            }),
+            Err(Error::UnknownWorkspace(WorkspaceId::new(99)))
+        );
+        assert_eq!(controller.model(), &before);
+        assert_eq!(controller.generation(), generation);
+
+        let mut specs = before.specs();
+        specs[0].remote = Some("-oProxyCommand=id".into());
+        assert_eq!(
+            Model::restore(specs, None, true, Limits::default()),
+            Err(Error::InvalidRemote)
+        );
+    }
+
     #[test]
     fn restoration_rejects_duplicate_missing_leaves_and_invalid_ratios() {
         let mut spec = WorkspaceSpec {
             id: WorkspaceId::new(1),
             name: "fixture".into(),
             cwd: PathBuf::new(),
+            remote: None,
             panes: vec![
                 PaneSpec {
                     id: PaneId::new(1),
