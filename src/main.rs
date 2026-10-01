@@ -13,6 +13,14 @@ fn main() -> anyhow::Result<()> {
                         .into(),
                 )
             }
+            "--ssh" => {
+                let destination = args.next().ok_or_else(|| {
+                    anyhow::anyhow!("--ssh needs a destination such as user@host")
+                })?;
+                pace_model::Remote::parse(&destination)
+                    .map_err(|error| anyhow::anyhow!("--ssh {destination:?}: {error}"))?;
+                launch.ssh = Some(destination);
+            }
             "--config" => {
                 launch.config = Some(
                     args.next()
@@ -63,7 +71,7 @@ fn main() -> anyhow::Result<()> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Pace — a native GPU terminal\n\nUsage: pace [OPTIONS]\n  --cwd PATH         Open a workspace at PATH\n  --config PATH      Use a TOML configuration\n  --data-root PATH   Isolate settings and saved workspace/window state\n  --command COMMAND  Run a command in the first terminal\n  --no-restore       Start without saved workspaces\n  --size WIDTHxHEIGHT Override saved window size and maximized state\n  --screenshot PATH  Capture the native window after 3 seconds and exit\n  --diagnostics      Print renderer and display details\n  --version\n  --help"
+                    "Pace — a native GPU terminal\n\nUsage: pace [OPTIONS]\n  --cwd PATH         Open a workspace at PATH\n  --ssh DESTINATION  Open a workspace whose terminals run on an SSH host\n  --config PATH      Use a TOML configuration\n  --data-root PATH   Isolate settings and saved workspace/window state\n  --command COMMAND  Run a command in the first terminal\n  --no-restore       Start without saved workspaces\n  --size WIDTHxHEIGHT Override saved window size and maximized state\n  --screenshot PATH  Capture the native window after 3 seconds and exit\n  --diagnostics      Print renderer and display details\n  --version\n  --help"
                 );
                 return Ok(());
             }
@@ -73,6 +81,12 @@ fn main() -> anyhow::Result<()> {
     if let Some(cwd) = &launch.cwd {
         anyhow::ensure!(cwd.is_dir(), "Directory does not exist: {}", cwd.display());
     }
+    // A command is typed into the first terminal shortly after it starts. Over
+    // SSH that could be a password or host-key prompt rather than a shell.
+    anyhow::ensure!(
+        launch.ssh.is_none() || launch.command.is_none(),
+        "--command cannot be combined with --ssh"
+    );
     let window_path = launch
         .data_root
         .clone()

@@ -1,4 +1,5 @@
 use super::*;
+use pace_model::WorkspaceId;
 
 fn fixture(root: &std::path::Path) -> (App, mpsc::SyncSender<Startup>) {
     let (sender, receiver) = mpsc::sync_channel(1);
@@ -23,6 +24,8 @@ fn fixture(root: &std::path::Path) -> (App, mpsc::SyncSender<Startup>) {
         startup: Some(receiver),
         deferred_actions: Vec::new(),
         initial_cwd: Some(root.into()),
+        initial_remote: None,
+        ssh_client: "/nonexistent/pace-startup-test-ssh".into(),
         ui: UiState::default(),
         search_point: None,
         search_query: None,
@@ -156,6 +159,7 @@ fn startup_actions_wait_then_replay_on_restored_state_without_retargeting_the_cl
         .dispatch(Command::AddWorkspace {
             cwd: root.path().into(),
             name: "Restored".into(),
+            remote: None,
         })
         .unwrap();
     let original = restored.model().active_pane().unwrap();
@@ -203,6 +207,7 @@ fn cancelling_close_preserves_state_and_confirmation_keeps_the_original_target()
             .dispatch(Command::AddWorkspace {
                 cwd: root.path().into(),
                 name: name.into(),
+                remote: None,
             })
             .unwrap();
     }
@@ -543,6 +548,7 @@ fn escape_leaves_one_surface_at_a_time_and_otherwise_belongs_to_the_shell() {
         .dispatch(Command::AddWorkspace {
             cwd: root.path().into(),
             name: "Shell".into(),
+            remote: None,
         })
         .unwrap();
     assert!(app.controller.model().active_pane().is_some());
@@ -569,6 +575,7 @@ fn escape_cancels_a_terminal_drag_instead_of_reaching_the_shell() {
         .dispatch(Command::AddWorkspace {
             cwd: root.path().into(),
             name: "Shell".into(),
+            remote: None,
         })
         .unwrap();
     let generation = app.controller.generation();
@@ -595,6 +602,7 @@ fn a_terminal_moved_to_another_workspace_keeps_its_running_shell() {
             Command::AddWorkspace {
                 cwd: root.path().into(),
                 name: name.into(),
+                remote: None,
             },
         );
         app.controller.model().active_workspace().unwrap()
@@ -717,6 +725,7 @@ fn rename_requests_field_focus_and_cancels_without_touching_workspaces() {
         .dispatch(Command::AddWorkspace {
             cwd: root.path().into(),
             name: "Only".into(),
+            remote: None,
         })
         .unwrap();
     let workspace = app.controller.model().active_workspace().unwrap();
@@ -746,6 +755,7 @@ fn new_workspace_opens_at_home_without_a_dialog_and_can_be_renamed() {
         .dispatch(Command::AddWorkspace {
             cwd: root.path().into(),
             name: "Existing".into(),
+            remote: None,
         })
         .unwrap();
     let existing = app.controller.model().active_workspace().unwrap();
@@ -822,6 +832,7 @@ fn command_digits_select_workspaces_by_position_even_when_shift_changes_the_symb
             .dispatch(Command::AddWorkspace {
                 cwd: root.path().into(),
                 name: name.into(),
+                remote: None,
             })
             .unwrap();
     }
@@ -857,4 +868,299 @@ fn command_digits_select_workspaces_by_position_even_when_shift_changes_the_symb
         key(egui::Key::Num1, None, egui::Modifiers::NONE)
     ));
     assert_eq!(app.controller.model().active_workspace(), Some(ids[1]));
+}
+
+fn add_workspace(app: &mut App, root: &std::path::Path, remote: Option<&str>) -> WorkspaceId {
+    // Dispatched on the controller alone, so no session is started.
+    app.controller
+        .dispatch(Command::AddWorkspace {
+            cwd: root.into(),
+            name: "Workspace".into(),
+            remote: remote.map(str::to_owned),
+        })
+        .unwrap();
+    app.controller.model().active_workspace().unwrap()
+}
+
+fn remote_of(app: &App, workspace: WorkspaceId) -> Option<&str> {
+    app.controller
+        .model()
+        .workspace(workspace)
+        .unwrap()
+        .remote()
+        .map(|remote| remote.destination())
+}
+
+#[test]
+fn a_remote_terminal_runs_the_ssh_client_with_the_destination_as_its_only_operand() {
+    let config = Config {
+        shell: Some("/bin/zsh".into()),
+        scrollback: 500,
+        ..Config::default()
+    };
+    let remote = Remote::parse("me@devbox").unwrap();
+    let options = coordinator::session_options(&config, "ssh", "/srv/app".into(), Some(&remote));
+    assert_eq!(options.shell.as_deref(), Some("ssh"));
+    // `--` ends option parsing, so the destination can only be a host.
+    assert_eq!(options.args, ["--", "me@devbox"]);
+    assert_eq!(options.cwd, std::path::Path::new("/srv/app"));
+    assert_eq!(options.scrollback, 500);
+
+    let local = coordinator::session_options(&config, "ssh", "/srv/app".into(), None);
+    assert_eq!(local.shell.as_deref(), Some("/bin/zsh"));
+    assert!(local.args.is_empty());
+}
+
+#[test]
+fn the_ssh_sheet_opens_for_local_workspaces_and_connecting_replaces_their_terminals() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    app.startup = None;
+    app.action(&ctx, Action::Create(root.path().into(), None));
+    let workspace = app.controller.model().active_workspace().unwrap();
+    let pane = app.controller.model().active_pane().unwrap();
+    app.ui.ssh_host = "stale".into();
+
+    app.action(&ctx, Action::Ssh(Some(workspace)));
+    assert_eq!(app.ui.overlay, OverlayState::Ssh(Some(workspace)));
+    assert!(app.ui.overlay_focus);
+    assert!(app.ui.ssh_host.is_empty());
+
+    app.action(
+        &ctx,
+        Action::Connect {
+            workspace: Some(workspace),
+            destination: "me@devbox".into(),
+        },
+    );
+    assert_eq!(app.ui.overlay, OverlayState::None);
+    assert_eq!(remote_of(&app, workspace), Some("me@devbox"));
+    assert_eq!(app.controller.model().pane(pane).unwrap().generation(), 2);
+    assert_eq!(app.sessions.generation(pane), Some(2));
+    assert_eq!(app.controller.model().workspaces().len(), 1);
+
+    // A connected workspace is disconnected before it can be pointed elsewhere.
+    app.action(&ctx, Action::Ssh(Some(workspace)));
+    assert_eq!(app.ui.overlay, OverlayState::None);
+    // A workspace that no longer exists has nothing to connect.
+    app.action(&ctx, Action::Ssh(Some(WorkspaceId::new(99))));
+    assert_eq!(app.ui.overlay, OverlayState::None);
+
+    app.action(&ctx, Action::Ssh(None));
+    assert_eq!(app.ui.overlay, OverlayState::Ssh(None));
+    app.action(
+        &ctx,
+        Action::Connect {
+            workspace: None,
+            destination: "ssh://me@buildbox".into(),
+        },
+    );
+    assert_eq!(app.ui.overlay, OverlayState::None);
+    let created = app.controller.model().workspaces().last().unwrap();
+    assert_eq!(created.name(), "buildbox");
+    assert_eq!(
+        created.remote().map(|remote| remote.destination()),
+        Some("ssh://me@buildbox")
+    );
+    assert_eq!(
+        app.controller.model().active_workspace(),
+        Some(created.id())
+    );
+}
+
+#[test]
+fn disconnecting_asks_first_and_cancelling_keeps_the_connection() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    app.startup = None;
+    let connect = |app: &mut App| {
+        app.action(
+            &ctx,
+            Action::Connect {
+                workspace: None,
+                destination: "me@devbox".into(),
+            },
+        );
+        app.controller.model().active_workspace().unwrap()
+    };
+    let workspace = connect(&mut app);
+    let pane = app.controller.model().active_pane().unwrap();
+    let generation = app.controller.generation();
+
+    app.action(&ctx, Action::Disconnect(workspace));
+    assert_eq!(
+        app.ui.overlay,
+        OverlayState::ConfirmClose(Close::Connection(workspace))
+    );
+    app.action(&ctx, Action::CancelClose);
+    assert_eq!(app.ui.overlay, OverlayState::None);
+    assert_eq!(remote_of(&app, workspace), Some("me@devbox"));
+    assert_eq!(app.controller.generation(), generation);
+    assert_eq!(app.controller.model().pane(pane).unwrap().generation(), 1);
+
+    app.action(&ctx, Action::Disconnect(workspace));
+    app.action(&ctx, Action::Confirm(Close::Connection(workspace)));
+    assert_eq!(app.ui.overlay, OverlayState::None);
+    assert_eq!(remote_of(&app, workspace), None);
+    assert_eq!(app.controller.model().pane(pane).unwrap().generation(), 2);
+    assert_eq!(app.sessions.generation(pane), Some(2));
+    assert_eq!(app.controller.model().workspaces().len(), 1);
+
+    // Without confirmation the same action applies at once.
+    let workspace = connect(&mut app);
+    app.config.confirm_close = false;
+    app.action(&ctx, Action::Disconnect(workspace));
+    assert_eq!(app.ui.overlay, OverlayState::None);
+    assert_eq!(remote_of(&app, workspace), None);
+}
+
+#[test]
+fn a_connection_requested_during_restoration_waits_and_the_cli_host_opens_first() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    app.command = None;
+    app.initial_remote = Some("me@devbox".into());
+    app.ui.overlay = OverlayState::Ssh(None);
+    app.action(
+        &ctx,
+        Action::Connect {
+            workspace: None,
+            destination: "buildbox".into(),
+        },
+    );
+    assert_eq!(app.ui.overlay, OverlayState::None);
+    assert!(app.controller.model().workspaces().is_empty());
+    assert_eq!(app.sessions.usage().starting, 0);
+
+    app.complete_startup(&ctx, loaded(app.config.clone(), Model::default()));
+    let workspaces = app.controller.model().workspaces();
+    assert_eq!(workspaces.len(), 2);
+    assert_eq!(workspaces[0].name(), "devbox");
+    assert_eq!(workspaces[0].cwd(), root.path());
+    assert_eq!(remote_of(&app, workspaces[0].id()), Some("me@devbox"));
+    assert_eq!(workspaces[1].name(), "buildbox");
+    assert_eq!(remote_of(&app, workspaces[1].id()), Some("buildbox"));
+    assert!(app.initial_remote.is_none() && app.deferred_actions.is_empty());
+}
+
+#[test]
+fn a_startup_command_is_never_typed_into_an_ssh_connection() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    app.startup = None;
+    add_workspace(&mut app, root.path(), Some("me@devbox"));
+    let pane = app.controller.model().active_pane().unwrap();
+    app.command_target = Some((pane, 1));
+    app.send_startup_command();
+    assert!(app.command.is_none());
+    assert!(
+        app.ui
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("connected over SSH")
+    );
+}
+
+#[test]
+fn remote_workspaces_are_presented_by_host_instead_of_a_local_folder() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    app.startup = None;
+    add_workspace(&mut app, root.path(), None);
+    add_workspace(&mut app, root.path(), Some("me@devbox"));
+    let pane = app.controller.model().active_pane().unwrap();
+    let views = app.views();
+    assert_eq!(views[0].remote, None);
+    assert_eq!(views[1].remote.as_deref(), Some("me@devbox"));
+    let presentation = &app.presentations()[&pane];
+    assert_eq!(presentation.location(), "me@devbox");
+    assert_eq!(
+        presentation.metadata.shell,
+        "/nonexistent/pace-startup-test-ssh"
+    );
+    assert!(presentation.starting);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_remote_terminal_keeps_its_local_directory_whatever_the_host_reports() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let cwd = root.path().join("local");
+    std::fs::create_dir(&cwd).unwrap();
+    // Stands in for the SSH client: records how it was started, then reports
+    // a directory on the "host" the way a remote shell does.
+    let client = root.path().join("fake-ssh");
+    std::fs::write(
+        &client,
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$0.args\"\npwd >> \"$0.cwd\"\n\
+         printf '\\033]7;file://devbox/srv/on-the-host\\007'\nexec sleep 30\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&client, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let lines = |suffix: &str| {
+        std::fs::read_to_string(format!("{}.{suffix}", client.display())).unwrap_or_default()
+    };
+
+    let (mut app, _sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    app.command = None;
+    app.ssh_client = client.to_string_lossy().into_owned();
+    app.initial_cwd = Some(cwd.clone());
+    app.initial_remote = Some("me@devbox".into());
+    app.complete_startup(&ctx, loaded(app.config.clone(), Model::default()));
+    let pane = app.controller.model().active_pane().unwrap();
+    let generation = app.controller.generation();
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let reported = std::path::Path::new("/srv/on-the-host");
+    let mut seen = false;
+    // The host's directory reaches the session; the model must not adopt it.
+    while !seen {
+        app.poll(&ctx);
+        seen = app
+            .sessions
+            .get(pane)
+            .is_some_and(|session| session.metadata().cwd == reported);
+        assert!(
+            Instant::now() < deadline,
+            "the client never reported its directory: {:?}",
+            app.ui.error
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    app.poll(&ctx);
+    assert_eq!(lines("args"), "--\nme@devbox\n");
+    assert_eq!(
+        std::path::Path::new(lines("cwd").trim_end())
+            .canonicalize()
+            .unwrap(),
+        cwd.canonicalize().unwrap()
+    );
+    assert_eq!(app.controller.model().pane(pane).unwrap().cwd(), cwd);
+    assert_eq!(
+        app.controller.generation(),
+        generation,
+        "a remote directory was saved as a local one"
+    );
+
+    // A split opens another connection from the same local directory.
+    app.action(&ctx, Action::Split(pane, pace_model::Axis::Vertical));
+    let second = app.controller.model().active_pane().unwrap();
+    assert_ne!(second, pane);
+    assert_eq!(app.controller.model().pane(second).unwrap().cwd(), cwd);
+    while app.sessions.usage().running != 2 || lines("args").lines().count() != 4 {
+        app.poll(&ctx);
+        assert!(
+            Instant::now() < deadline,
+            "the split did not connect: {:?}",
+            app.ui.error
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(lines("args"), "--\nme@devbox\n--\nme@devbox\n");
 }

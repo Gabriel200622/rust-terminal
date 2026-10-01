@@ -19,9 +19,11 @@ The initial engine is `alacritty_terminal`, with PTYs provided by `portable-pty`
 
 ## Component boundaries
 
-`pace-model` owns ordered workspaces, pane membership, stable pane/workspace/split identities, validated layouts, lifecycle and targeted commands. It depends only on `serde`. Model fields are private, and the pure controller returns effects; it opens no windows, shells or files.
+`pace-model` owns ordered workspaces, pane membership, stable pane/workspace/split identities, validated layouts, lifecycle, targeted commands and the optional SSH destination of a remote workspace. It depends only on `serde`. Model fields are private, and the pure controller returns effects; it opens no windows, shells or files.
 
 `terminal-core` owns PTY sessions and terminal state. Each pane is an independent session. Its public contract contains project-owned input modes, coordinates, colors, selection, events, owned viewport snapshots and budgeted search. Alacritty types and mutable grid locks remain internal.
+
+A remote workspace is still made of ordinary PTY sessions: the desktop starts the system OpenSSH client as each pane's process, with the validated destination as its only operand after `--`. Pace implements no SSH protocol, stores no credentials and adds no dependency for it; `terminal-core` is unchanged. A remote pane keeps its local directory in the model, because the directory its host reports is not a local path.
 
 The desktop library connects the controller to `runtime/sessions.rs`, the background persistence writer, platform services and `ui/` widgets. The session manager bounds startup concurrency and retains resource reservations for starting/closing sessions. `terminal_view/` prepares/caches/paints snapshots and returns interactions; painting receives no live session. `input.rs` normalizes egui events and delegates protocol encoding to terminal-core. `platform/` owns clipboard, fonts and window operations.
 
@@ -65,7 +67,7 @@ Record the host OS, GPU/backend, display scale, window size, font size, build pr
 | Desktop quality | DPI changes, IME, clipboard, keyboard layouts, screen-reader navigation, window controls, packaging, signing, and update strategy |
 | Visual quality | Screenshots of the running native application at several sizes and states, followed by design critique and corrections |
 
-Kitty keyboard mode negotiation and press/release/repeat encoding are implemented and covered by protocol tests. Native keypad identity, lock-state modifiers, and some platform-specific key combinations still need dedicated verification. Kitty graphics, full text shaping/font fallback, and platform integrations should only be advertised when implemented and verified. Sessions restore workspace organization; they do not preserve live processes across application restarts unless a separate persistence/multiplexing service is implemented.
+Kitty keyboard mode negotiation and press/release/repeat encoding are implemented and covered by protocol tests. Native keypad identity, lock-state modifiers, and some platform-specific key combinations still need dedicated verification. Kitty graphics, full text shaping/font fallback, and platform integrations should only be advertised when implemented and verified. Sessions restore workspace organization; they do not preserve live processes across application restarts unless a separate persistence/multiplexing service is implemented. Restoring a remote workspace opens new SSH connections; it does not resume the previous remote shells.
 
 ## Reconsidering libghostty-vt
 
