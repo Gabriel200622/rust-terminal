@@ -1,14 +1,14 @@
 # Windows concurrent configuration-save reader
 
-Investigation for [issue #22](https://github.com/Gabriel200622/rust-terminal/issues/22),
+Investigation for [issue #22](https://github.com/zevem/rust-terminal/issues/22),
 2026-10-01.
 
 ## Observed failure and scope
 
 The Windows `windows-2025` matrix failed twice at the stress test's
 `std::fs::read(&path).unwrap()`, with error 5 (`ERROR_ACCESS_DENIED`): the
-[original run](https://github.com/Gabriel200622/rust-terminal/actions/runs/36825282335/job/110249579247)
-and [failed-job rerun](https://github.com/Gabriel200622/rust-terminal/actions/runs/36825282335/job/110251876724).
+[original run](https://github.com/zevem/rust-terminal/actions/runs/36825282335/job/110249579247)
+and [failed-job rerun](https://github.com/zevem/rust-terminal/actions/runs/36825282335/job/110251876724).
 These are two failures in two recorded attempts, not a measured failure rate
 from a repeated focused invocation. PR #13's writer-conflict handling is already
 merged; it cannot retry a failed reader open.
@@ -58,10 +58,10 @@ With Rust 1.97.1, the `ci` profile and locked dependencies, the focused
 `inspection` configurations. The original concurrent-save test also passed
 30/30 separate focused Linux invocations.
 
-[CI run 36827946358](https://github.com/Gabriel200622/rust-terminal/actions/runs/36827946358)
+[CI run 36827946358](https://github.com/zevem/rust-terminal/actions/runs/36827946358)
 passed all six checks on PR #23's initial head `cf0bb6c`, including the complete
 matrix and final native-inspection gate. The
-[Windows job](https://github.com/Gabriel200622/rust-terminal/actions/runs/36827946358/job/110257844454)
+[Windows job](https://github.com/zevem/rust-terminal/actions/runs/36827946358/job/110257844454)
 passed the original stress test, all injected-error regressions and the real
 handle regression in both ordinary and inspection configurations on
 `windows-2025` with Rust 1.97.1.
