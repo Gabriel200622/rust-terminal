@@ -246,6 +246,38 @@ mod tests {
         assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn sharing_timeout_preserves_previous_file_and_cleans_tempfile() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        std::fs::write(&path, b"previous complete file").unwrap();
+        // Keep the destination open without FILE_SHARE_DELETE past the retry limit.
+        let reader = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1 | 2)
+            .open(&path)
+            .unwrap();
+
+        let error = atomic_write(&path, b"replacement complete file").unwrap_err();
+        assert!(matches!(
+            error
+                .downcast_ref::<std::io::Error>()
+                .unwrap()
+                .raw_os_error(),
+            Some(5 | 32 | 33)
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), b"previous complete file");
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+
+        drop(reader);
+        atomic_write(&path, b"replacement complete file").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"replacement complete file");
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
+
     #[test]
     fn rejects_invalid_resources() {
         let mut c = Config {
@@ -327,13 +359,14 @@ mod tests {
     fn concurrent_saves_never_expose_partial_files_or_collide() {
         use std::sync::{
             Arc, Barrier,
-            atomic::{AtomicBool, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         };
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("config.toml");
         const LENGTH: usize = 32 * 1024;
         atomic_write(&path, &vec![b'A'; LENGTH]).unwrap();
         let complete = AtomicBool::new(false);
+        let committed = AtomicUsize::new(0);
         let start = Arc::new(Barrier::new(8));
         std::thread::scope(|scope| {
             let reader = scope.spawn(|| {
@@ -347,10 +380,31 @@ mod tests {
                 .map(|index| {
                     let path = &path;
                     let start = start.clone();
+                    let committed = &committed;
                     scope.spawn(move || {
                         start.wait();
                         for _ in 0..8 {
-                            atomic_write(path, &vec![b'A' + index; LENGTH]).unwrap();
+                            match atomic_write(path, &vec![b'A' + index; LENGTH]) {
+                                Ok(()) => {
+                                    committed.fetch_add(1, Ordering::Relaxed);
+                                }
+                                Err(error) => {
+                                    // Continuous readers/writers can exhaust the bounded
+                                    // Windows sharing retries. Every other failure is a bug.
+                                    #[cfg(windows)]
+                                    let sharing_conflict = error
+                                        .to_string()
+                                        .starts_with("Cannot replace configuration ")
+                                        && error.downcast_ref::<std::io::Error>().is_some_and(
+                                            |error| {
+                                                matches!(error.raw_os_error(), Some(5 | 32 | 33))
+                                            },
+                                        );
+                                    #[cfg(not(windows))]
+                                    let sharing_conflict = false;
+                                    assert!(sharing_conflict, "Concurrent save failed: {error:#}");
+                                }
+                            }
                         }
                     })
                 })
@@ -362,6 +416,7 @@ mod tests {
                 result.unwrap();
             }
         });
+        assert!(committed.load(Ordering::Relaxed) > 0);
         let bytes = std::fs::read(&path).unwrap();
         assert_eq!(bytes.len(), LENGTH);
         assert!(bytes.iter().all(|byte| *byte == bytes[0]));
