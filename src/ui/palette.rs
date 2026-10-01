@@ -13,10 +13,11 @@ use eframe::egui::{
     self, Align, Align2, Id, Key, Layout, Modifiers, Pos2, Rect, Sense, Vec2, WidgetInfo,
     WidgetType, vec2,
 };
-use pace_model::{Axis, PaneId, WorkspaceId};
+use pace_model::{Axis, FocusDirection, PaneId, WorkspaceId};
 
 pub struct PaletteView<'a> {
     pub pane: Option<PaneId>,
+    pub layout: Option<&'a pace_model::Layout>,
     pub workspaces: &'a [WorkspaceView],
     pub active: Option<WorkspaceId>,
     pub config: &'a Config,
@@ -131,6 +132,24 @@ fn commands(view: &PaletteView) -> Vec<Command> {
                 [Action::ClosePane(pane)],
             ),
         ]);
+        if let Some(layout) = view.layout {
+            for (direction, title, arrow) in [
+                (FocusDirection::Left, "Focus pane to the left", "←"),
+                (FocusDirection::Right, "Focus pane to the right", "→"),
+                (FocusDirection::Up, "Focus pane above", "↑"),
+                (FocusDirection::Down, "Focus pane below", "↓"),
+            ] {
+                if let Some(target) = layout.adjacent(pane, direction) {
+                    list.push(command(
+                        "Terminal",
+                        Icon::Grid,
+                        title,
+                        format!("Ctrl+Shift+{arrow}"),
+                        [Action::Focus(target)],
+                    ));
+                }
+            }
+        }
     }
     list.push(command(
         "Workspace",
@@ -469,6 +488,7 @@ mod tests {
     fn view<'a>(config: &'a Config, workspaces: &'a [WorkspaceView]) -> PaletteView<'a> {
         PaletteView {
             pane: None,
+            layout: None,
             workspaces,
             active: None,
             config,
@@ -533,6 +553,34 @@ mod tests {
             split.actions[..],
             [Action::Split(pane, Axis::Vertical)] if pane == PaneId::new(7)
         ));
+    }
+
+    #[test]
+    fn pane_navigation_commands_capture_available_neighbours() {
+        let config = Config::default();
+        let layout = pace_model::Layout::Split {
+            id: pace_model::SplitId::new(1),
+            axis: Axis::Vertical,
+            ratio: 0.5,
+            first: Box::new(pace_model::Layout::Leaf(PaneId::new(1))),
+            second: Box::new(pace_model::Layout::Leaf(PaneId::new(2))),
+        };
+        let list = commands(&PaletteView {
+            pane: Some(PaneId::new(1)),
+            layout: Some(&layout),
+            zoomed: true,
+            ..view(&config, &[])
+        });
+        let navigation: Vec<_> = list
+            .iter()
+            .filter(|command| command.title.starts_with("Focus pane"))
+            .collect();
+        assert_eq!(navigation.len(), 1);
+        assert_eq!(navigation[0].title, "Focus pane to the right");
+        assert_eq!(navigation[0].shortcut, "Ctrl+Shift+→");
+        assert!(
+            matches!(navigation[0].actions[..], [Action::Focus(target)] if target == PaneId::new(2))
+        );
     }
 
     #[test]

@@ -275,6 +275,206 @@ fn key(key: egui::Key, physical_key: Option<egui::Key>, modifiers: egui::Modifie
     }
 }
 
+fn navigation_fixture(root: &std::path::Path) -> (App, [PaneId; 4]) {
+    let (mut app, _sender) = fixture(root);
+    app.startup = None;
+    app.controller
+        .dispatch(Command::AddWorkspace {
+            cwd: root.into(),
+            name: "Navigation".into(),
+        })
+        .unwrap();
+    let workspace = app.controller.model().active_workspace().unwrap();
+    let top_left = app.controller.model().active_pane().unwrap();
+    app.controller
+        .dispatch(Command::SplitPane {
+            workspace,
+            pane: top_left,
+            axis: pace_model::Axis::Vertical,
+            cwd: root.into(),
+        })
+        .unwrap();
+    let top_right = app.controller.model().active_pane().unwrap();
+    let mut bottoms = Vec::new();
+    for pane in [top_left, top_right] {
+        app.controller
+            .dispatch(Command::SplitPane {
+                workspace,
+                pane,
+                axis: pace_model::Axis::Horizontal,
+                cwd: root.into(),
+            })
+            .unwrap();
+        bottoms.push(app.controller.model().active_pane().unwrap());
+    }
+    app.controller
+        .dispatch(Command::FocusPane {
+            workspace,
+            pane: top_left,
+        })
+        .unwrap();
+    (app, [top_left, top_right, bottoms[0], bottoms[1]])
+}
+
+#[test]
+fn pane_navigation_shortcuts_move_focus_in_all_directions_and_while_zoomed() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, [top_left, top_right, bottom_left, bottom_right]) =
+        navigation_fixture(root.path());
+    let ctx = egui::Context::default();
+    app.ui.zoomed = true;
+    app.ui.search_error = Some("No matches".into());
+    // Navigation also reaches panes whose shell failed or exited, and ones
+    // still starting. Focus does not depend on having a live session handle.
+    app.controller
+        .dispatch(Command::SessionFailed {
+            pane: top_right,
+            generation: 1,
+            error: "Shell unavailable".into(),
+        })
+        .unwrap();
+    app.controller
+        .dispatch(Command::SessionExited {
+            pane: bottom_right,
+            generation: 1,
+        })
+        .unwrap();
+    for (arrow, target) in [
+        (egui::Key::ArrowRight, top_right),
+        (egui::Key::ArrowDown, bottom_right),
+        (egui::Key::ArrowLeft, bottom_left),
+        (egui::Key::ArrowUp, top_left),
+    ] {
+        assert!(press(
+            &mut app,
+            &ctx,
+            key(arrow, None, egui::Modifiers::CTRL | egui::Modifiers::SHIFT)
+        ));
+        assert_eq!(app.controller.model().active_pane(), Some(target));
+    }
+    assert!(app.ui.zoomed);
+    assert!(app.ui.search_error.is_none());
+}
+
+#[test]
+fn pane_navigation_consumes_press_and_release_at_an_outer_edge_without_mutating_state() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, [top_left, ..]) = navigation_fixture(root.path());
+    let ctx = egui::Context::default();
+    let generation = app.controller.generation();
+    let down = key(
+        egui::Key::ArrowLeft,
+        None,
+        egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+    );
+    let mut up = down.clone();
+    if let egui::Event::Key { pressed, .. } = &mut up {
+        *pressed = false;
+    }
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            events: vec![down, up],
+            ..Default::default()
+        },
+        |ui| {
+            app.shortcuts(ui.ctx());
+            assert!(
+                ui.input(|input| input.events.is_empty()),
+                "neither event reaches the shell"
+            );
+        },
+    );
+    output.textures_delta.clear();
+    assert_eq!(app.controller.model().active_pane(), Some(top_left));
+    assert_eq!(app.controller.generation(), generation);
+}
+
+#[test]
+fn pane_navigation_preserves_overlay_and_editable_field_ownership() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, [top_left, ..]) = navigation_fixture(root.path());
+    let ctx = egui::Context::default();
+    for overlay in [
+        OverlayState::Palette,
+        OverlayState::Settings,
+        OverlayState::NewWorkspace,
+    ] {
+        app.ui.overlay = overlay;
+        assert!(!press(
+            &mut app,
+            &ctx,
+            key(
+                egui::Key::ArrowRight,
+                None,
+                egui::Modifiers::CTRL | egui::Modifiers::SHIFT
+            )
+        ));
+        assert_eq!(app.controller.model().active_pane(), Some(top_left));
+    }
+    app.ui.overlay = OverlayState::None;
+    for field in [ui::search::input_id(), egui::Id::new("editable-field")] {
+        ctx.memory_mut(|memory| memory.request_focus(field));
+        assert!(!press(
+            &mut app,
+            &ctx,
+            key(
+                egui::Key::ArrowRight,
+                None,
+                egui::Modifiers::CTRL | egui::Modifiers::SHIFT
+            )
+        ));
+        assert_eq!(app.controller.model().active_pane(), Some(top_left));
+    }
+}
+
+#[test]
+fn pane_navigation_leaves_other_arrow_chords_for_the_shell() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, [top_left, ..]) = navigation_fixture(root.path());
+    let ctx = egui::Context::default();
+    for modifiers in [
+        egui::Modifiers::NONE,
+        egui::Modifiers::CTRL,
+        egui::Modifiers::SHIFT,
+        egui::Modifiers::CTRL | egui::Modifiers::SHIFT | egui::Modifiers::ALT,
+    ] {
+        assert!(!press(
+            &mut app,
+            &ctx,
+            key(egui::Key::ArrowRight, None, modifiers)
+        ));
+        assert_eq!(app.controller.model().active_pane(), Some(top_left));
+    }
+}
+
+#[test]
+fn pane_navigation_repeated_keys_in_one_frame_advance_from_the_new_focus() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, [top_left, _, _, bottom_right]) = navigation_fixture(root.path());
+    let ctx = egui::Context::default();
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            events: vec![
+                key(
+                    egui::Key::ArrowRight,
+                    None,
+                    egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+                ),
+                key(
+                    egui::Key::ArrowDown,
+                    None,
+                    egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+                ),
+            ],
+            ..Default::default()
+        },
+        |ui| app.shortcuts(ui.ctx()),
+    );
+    output.textures_delta.clear();
+    assert_ne!(app.controller.model().active_pane(), Some(top_left));
+    assert_eq!(app.controller.model().active_pane(), Some(bottom_right));
+}
+
 #[test]
 fn escape_leaves_one_surface_at_a_time_and_otherwise_belongs_to_the_shell() {
     let root = tempfile::tempdir().unwrap();

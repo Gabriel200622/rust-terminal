@@ -8,6 +8,15 @@ pub enum Axis {
     Horizontal,
 }
 
+/// A spatial direction within a workspace's split layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusDirection {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
 /// A read-only view of a workspace's validated split tree. Mutable construction
 /// is accepted only through `WorkspaceSpec` and validated before model adoption.
 #[derive(Debug, Clone, PartialEq)]
@@ -33,6 +42,98 @@ impl Layout {
         match self {
             Self::Leaf(id) => *id == pane,
             Self::Split { first, second, .. } => first.contains(pane) || second.contains(pane),
+        }
+    }
+
+    /// Finds a pane sharing the requested edge, without wrapping. When several
+    /// panes share that edge, prefer the closest perpendicular centre; ties use
+    /// layout order. Split ratios determine positions independently of pixels.
+    pub fn adjacent(&self, pane: PaneId, direction: FocusDirection) -> Option<PaneId> {
+        let mut regions = Vec::new();
+        self.visit_regions(
+            Bounds {
+                left: 0.0,
+                top: 0.0,
+                right: 1.0,
+                bottom: 1.0,
+            },
+            &mut regions,
+        );
+        let (_, origin) = regions.iter().find(|(id, _)| *id == pane)?;
+        let mut nearest = None;
+        let mut distance = f64::INFINITY;
+        for (id, bounds) in &regions {
+            if *id == pane {
+                continue;
+            }
+            let (touches, start, end, origin_start, origin_end) = match direction {
+                FocusDirection::Left => (
+                    bounds.right == origin.left,
+                    bounds.top,
+                    bounds.bottom,
+                    origin.top,
+                    origin.bottom,
+                ),
+                FocusDirection::Right => (
+                    bounds.left == origin.right,
+                    bounds.top,
+                    bounds.bottom,
+                    origin.top,
+                    origin.bottom,
+                ),
+                FocusDirection::Up => (
+                    bounds.bottom == origin.top,
+                    bounds.left,
+                    bounds.right,
+                    origin.left,
+                    origin.right,
+                ),
+                FocusDirection::Down => (
+                    bounds.top == origin.bottom,
+                    bounds.left,
+                    bounds.right,
+                    origin.left,
+                    origin.right,
+                ),
+            };
+            if touches && start < origin_end && end > origin_start {
+                let offset = ((start + end) - (origin_start + origin_end)).abs();
+                if offset < distance {
+                    nearest = Some(*id);
+                    distance = offset;
+                }
+            }
+        }
+        nearest
+    }
+
+    fn visit_regions(&self, bounds: Bounds, regions: &mut Vec<(PaneId, Bounds)>) {
+        match self {
+            Self::Leaf(pane) => regions.push((*pane, bounds)),
+            Self::Split {
+                axis,
+                ratio,
+                first,
+                second,
+                ..
+            } => {
+                let mut a = bounds;
+                let mut b = bounds;
+                match axis {
+                    Axis::Vertical => {
+                        let cut = bounds.left + (bounds.right - bounds.left) * f64::from(*ratio);
+                        a.right = cut;
+                        b.left = cut;
+                    }
+                    Axis::Horizontal => {
+                        let cut = bounds.top + (bounds.bottom - bounds.top) * f64::from(*ratio);
+                        a.bottom = cut;
+                        b.top = cut;
+                    }
+                }
+                first.visit_regions(a, regions);
+                second.visit_regions(b, regions);
+            }
         }
     }
 
@@ -172,5 +273,116 @@ impl Layout {
             }
             Self::Leaf(_) => None,
         }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Bounds {
+    left: f64,
+    top: f64,
+    right: f64,
+    bottom: f64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn leaf(id: u64) -> Layout {
+        Layout::Leaf(PaneId::new(id))
+    }
+
+    fn split(axis: Axis, ratio: f32, first: Layout, second: Layout) -> Layout {
+        Layout::Split {
+            id: SplitId::new(1),
+            axis,
+            ratio,
+            first: Box::new(first),
+            second: Box::new(second),
+        }
+    }
+
+    #[test]
+    fn adjacent_follows_all_four_directions_in_a_grid() {
+        let layout = split(
+            Axis::Vertical,
+            0.5,
+            split(Axis::Horizontal, 0.5, leaf(1), leaf(2)),
+            split(Axis::Horizontal, 0.5, leaf(3), leaf(4)),
+        );
+        for (from, direction, to) in [
+            (1, FocusDirection::Right, 3),
+            (3, FocusDirection::Left, 1),
+            (1, FocusDirection::Down, 2),
+            (2, FocusDirection::Up, 1),
+            (2, FocusDirection::Right, 4),
+            (4, FocusDirection::Up, 3),
+        ] {
+            assert_eq!(
+                layout.adjacent(PaneId::new(from), direction),
+                Some(PaneId::new(to))
+            );
+        }
+    }
+
+    #[test]
+    fn adjacent_does_not_wrap_or_choose_diagonal_panes() {
+        let layout = split(
+            Axis::Vertical,
+            0.5,
+            split(Axis::Horizontal, 0.5, leaf(1), leaf(2)),
+            leaf(3),
+        );
+        assert_eq!(layout.adjacent(PaneId::new(1), FocusDirection::Up), None);
+        assert_eq!(layout.adjacent(PaneId::new(2), FocusDirection::Down), None);
+        assert_eq!(layout.adjacent(PaneId::new(3), FocusDirection::Down), None);
+        assert_eq!(layout.adjacent(PaneId::new(99), FocusDirection::Left), None);
+        assert_eq!(
+            leaf(1).adjacent(PaneId::new(1), FocusDirection::Right),
+            None
+        );
+    }
+
+    #[test]
+    fn adjacent_uses_ratios_and_layout_order_for_shared_edges() {
+        let layout = split(
+            Axis::Vertical,
+            0.5,
+            leaf(1),
+            split(Axis::Horizontal, 0.3, leaf(2), leaf(3)),
+        );
+        assert_eq!(
+            layout.adjacent(PaneId::new(1), FocusDirection::Right),
+            Some(PaneId::new(3))
+        );
+        let even = split(
+            Axis::Vertical,
+            0.5,
+            leaf(1),
+            split(Axis::Horizontal, 0.5, leaf(2), leaf(3)),
+        );
+        assert_eq!(
+            even.adjacent(PaneId::new(1), FocusDirection::Right),
+            Some(PaneId::new(2))
+        );
+    }
+
+    #[test]
+    fn adjacent_skips_nearer_diagonals_and_panes_beyond_a_neighbour() {
+        let layout = split(
+            Axis::Vertical,
+            0.4,
+            split(Axis::Horizontal, 0.2, leaf(1), leaf(2)),
+            split(
+                Axis::Horizontal,
+                0.2,
+                split(Axis::Vertical, 0.1, leaf(3), leaf(4)),
+                leaf(5),
+            ),
+        );
+        assert_eq!(
+            layout.adjacent(PaneId::new(1), FocusDirection::Right),
+            Some(PaneId::new(3))
+        );
     }
 }
