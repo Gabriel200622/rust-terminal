@@ -1,5 +1,10 @@
 # Chapter 2 - Clippy and Linting Discipline
 
+> Adapted from [Apollo GraphQL's Rust Best Practices Handbook](https://github.com/apollographql/rust-best-practices/blob/eb485a5ddb68e0ded3d79549e994f63ec0a6f6c0/book/chapter_02.md),
+> licensed under [Apache-2.0](../../../../licenses/skills/apollographql-rust-best-practices-Apache-2.0.txt).
+> This copy includes skill adaptations and local edits, including this source
+> and license notice.
+
 Use the repository's pinned toolchain and Clippy component. If Clippy is missing,
 install the component for that toolchain; do not run an unrelated toolchain
 upgrade to make a check available.

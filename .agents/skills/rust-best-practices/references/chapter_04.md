@@ -1,5 +1,10 @@
 # Chapter 4 - Errors Handling
 
+> Adapted from [Apollo GraphQL's Rust Best Practices Handbook](https://github.com/apollographql/rust-best-practices/blob/eb485a5ddb68e0ded3d79549e994f63ec0a6f6c0/book/chapter_04.md),
+> licensed under [Apache-2.0](../../../../licenses/skills/apollographql-rust-best-practices-Apache-2.0.txt).
+> This copy includes skill adaptations and local edits, including this source
+> and license notice.
+
 Rust enforces a strict error handling approach, but *how* you handle them defines where your code feels ergonomic, consistent and safe - as opposed to cryptic and painful. This chapter dives into best practices for modeling and managing fallible operations across libraries and binaries.
 
 > Even if you decide to crash your application with `unwrap` or `expect`, Rust forces you to declare that intentionally.
