@@ -38,6 +38,15 @@ pub struct Stage<'a> {
     pub search: &'a str,
 }
 
+/// Where part of the layout is drawn, and where it rests once the chrome stops
+/// moving. Terminals are measured at rest, so a sliding sidebar resizes each
+/// shell once instead of on every frame.
+#[derive(Clone, Copy)]
+pub struct Placement {
+    pub drawn: Rect,
+    pub settled: Rect,
+}
+
 #[derive(Default)]
 pub struct StageOutput {
     /// Terminal grid of the focused pane, for input and pointer routing.
@@ -353,13 +362,14 @@ fn pane_header(
 fn draw_pane(
     ui: &mut Ui,
     id: PaneId,
-    card: Rect,
+    place: Placement,
     pane: &mut PaneRender,
     stage: &Stage,
     actions: &mut Vec<Action>,
     output: &mut StageOutput,
 ) {
     let p = stage.p;
+    let card = place.drawn;
     let Some(presentation) = stage.presentations.get(&id) else {
         ui.painter().rect_filled(card, metrics::PANE_RADIUS, p.bg);
         return;
@@ -371,12 +381,15 @@ fn draw_pane(
     } else {
         0.0
     };
-    let body_min = card.min + vec2(12.0, if stage.multiple { header_height } else { 10.0 });
-    let body = Rect::from_min_max(body_min, (card.max - vec2(12.0, 10.0)).max(body_min));
+    let inset = |card: Rect| {
+        let min = card.min + vec2(12.0, if stage.multiple { header_height } else { 10.0 });
+        Rect::from_min_max(min, (card.max - vec2(12.0, 10.0)).max(min))
+    };
+    let body = inset(card);
 
     // Measure and prepare first, so the surface matches a background the
     // running program may have set.
-    if let Some(geometry) = pane.cache.geometry(ui, body, stage.config) {
+    if let Some(geometry) = pane.cache.geometry(ui, inset(place.settled), stage.config) {
         actions.push(Action::Resize(id, geometry));
     }
     pane.cache
@@ -583,10 +596,42 @@ fn draw_pane(
     }
 }
 
+/// The two sides of a split and the gutter between them.
+fn divide(rect: Rect, vertical: bool, ratio: f32) -> (Rect, Rect, Rect) {
+    let length = if vertical {
+        rect.width()
+    } else {
+        rect.height()
+    };
+    let min = if vertical { 200.0 } else { 130.0 };
+    let low = (min / length).min(0.45);
+    let cut = length * ratio.clamp(low, 1.0 - low);
+    let half = metrics::GUTTER * 0.5;
+    if vertical {
+        (
+            Rect::from_min_max(rect.min, Pos2::new(rect.left() + cut - half, rect.bottom())),
+            Rect::from_min_max(Pos2::new(rect.left() + cut + half, rect.top()), rect.max),
+            Rect::from_min_max(
+                Pos2::new(rect.left() + cut - half, rect.top()),
+                Pos2::new(rect.left() + cut + half, rect.bottom()),
+            ),
+        )
+    } else {
+        (
+            Rect::from_min_max(rect.min, Pos2::new(rect.right(), rect.top() + cut - half)),
+            Rect::from_min_max(Pos2::new(rect.left(), rect.top() + cut + half), rect.max),
+            Rect::from_min_max(
+                Pos2::new(rect.left(), rect.top() + cut - half),
+                Pos2::new(rect.right(), rect.top() + cut + half),
+            ),
+        )
+    }
+}
+
 pub fn draw_node(
     ui: &mut Ui,
     node: &pace_model::Layout,
-    rect: Rect,
+    place: Placement,
     panes: &mut BTreeMap<PaneId, PaneRender>,
     stage: &Stage,
     actions: &mut Vec<Action>,
@@ -595,7 +640,7 @@ pub fn draw_node(
     match node {
         pace_model::Layout::Leaf(id) => {
             if let Some(pane) = panes.get_mut(id) {
-                draw_pane(ui, *id, rect, pane, stage, actions, output);
+                draw_pane(ui, *id, place, pane, stage, actions, output);
             }
         }
         pace_model::Layout::Split {
@@ -606,37 +651,14 @@ pub fn draw_node(
             second,
         } => {
             let vertical = *axis == Axis::Vertical;
+            let rect = place.drawn;
             let length = if vertical {
                 rect.width()
             } else {
                 rect.height()
             };
-            let min = if vertical { 200.0 } else { 130.0 };
-            let low = (min / length).min(0.45);
-            let cut = length * ratio.clamp(low, 1.0 - low);
-            let half = metrics::GUTTER * 0.5;
-            let (a, b, gap) = if vertical {
-                (
-                    Rect::from_min_max(
-                        rect.min,
-                        Pos2::new(rect.left() + cut - half, rect.bottom()),
-                    ),
-                    Rect::from_min_max(Pos2::new(rect.left() + cut + half, rect.top()), rect.max),
-                    Rect::from_min_max(
-                        Pos2::new(rect.left() + cut - half, rect.top()),
-                        Pos2::new(rect.left() + cut + half, rect.bottom()),
-                    ),
-                )
-            } else {
-                (
-                    Rect::from_min_max(rect.min, Pos2::new(rect.right(), rect.top() + cut - half)),
-                    Rect::from_min_max(Pos2::new(rect.left(), rect.top() + cut + half), rect.max),
-                    Rect::from_min_max(
-                        Pos2::new(rect.left(), rect.top() + cut - half),
-                        Pos2::new(rect.right(), rect.top() + cut + half),
-                    ),
-                )
-            };
+            let (a, b, gap) = divide(rect, vertical, *ratio);
+            let (settled_a, settled_b, _) = divide(place.settled, vertical, *ratio);
             // A slightly wider grab area than the visible gutter.
             let grab = if vertical {
                 gap.expand2(vec2(2.0, 0.0))
@@ -693,8 +715,10 @@ pub fn draw_node(
                     ),
                 );
             }
-            draw_node(ui, first, a, panes, stage, actions, output);
-            draw_node(ui, second, b, panes, stage, actions, output);
+            for (node, drawn, settled) in [(first, a, settled_a), (second, b, settled_b)] {
+                let place = Placement { drawn, settled };
+                draw_node(ui, node, place, panes, stage, actions, output);
+            }
         }
     }
 }
@@ -776,6 +800,85 @@ mod tests {
             process_id: None,
             status: SessionStatus::Running,
             bell_count: 0,
+        }
+    }
+
+    #[test]
+    fn a_sliding_stage_resizes_each_terminal_once_to_where_it_rests() {
+        let ctx = egui::Context::default();
+        theme::fonts(&ctx);
+        let (left, right) = (PaneId::new(1), PaneId::new(2));
+        let layout = pace_model::Layout::Split {
+            id: pace_model::SplitId::new(1),
+            axis: Axis::Vertical,
+            ratio: 0.5,
+            first: Box::new(pace_model::Layout::Leaf(left)),
+            second: Box::new(pace_model::Layout::Leaf(right)),
+        };
+        let presentations: BTreeMap<_, _> = [left, right]
+            .map(|id| {
+                let presentation = PanePresentation {
+                    metadata: metadata("zsh"),
+                    snapshot: ViewportSnapshot::blank(80, 24),
+                    starting: false,
+                };
+                (id, presentation)
+            })
+            .into();
+        let mut panes: BTreeMap<_, _> = [left, right].map(|id| (id, PaneRender::new(id))).into();
+        let config = Config::default();
+        let settled = Rect::from_min_max(Pos2::new(216.0, 44.0), Pos2::new(1174.0, 754.0));
+        let mut resizes = Vec::new();
+        // The sidebar slides in: the stage's leading edge moves every frame.
+        for edge in [6.0, 60.0, 140.0, 200.0, 216.0, 216.0] {
+            let mut actions = Vec::new();
+            let mut frame = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1180.0, 760.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    draw_node(
+                        ui,
+                        &layout,
+                        Placement {
+                            drawn: Rect::from_min_max(Pos2::new(edge, 44.0), settled.max),
+                            settled,
+                        },
+                        &mut panes,
+                        &Stage {
+                            presentations: &presentations,
+                            active: left,
+                            multiple: true,
+                            zoomed: false,
+                            keyboard: true,
+                            previous_terminal: None,
+                            config: &config,
+                            p: Palette::for_config(&config),
+                            search: "",
+                        },
+                        &mut actions,
+                        &mut StageOutput::default(),
+                    );
+                },
+            );
+            frame.textures_delta.clear();
+            resizes.extend(actions.into_iter().filter_map(|action| match action {
+                Action::Resize(id, geometry) => Some((id, geometry)),
+                _ => None,
+            }));
+        }
+        let (_, _, gap) = divide(settled, true, 0.5);
+        assert_eq!(
+            resizes.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            [left, right]
+        );
+        for (width, (_, geometry)) in [gap.left() - settled.left(), settled.right() - gap.right()]
+            .into_iter()
+            .zip(&resizes)
+        {
+            // Each body is inset 12 points from its card on both sides.
+            assert_eq!(geometry.pixel_width, (width - 24.0) as u16);
         }
     }
 

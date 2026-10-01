@@ -23,14 +23,60 @@ pub struct ChromeView<'a> {
     /// The focused terminal's label and directory.
     pub subtitle: &'a str,
     pub zoomed: bool,
-    /// The sidebar is drawn this frame and hosts the window controls.
-    pub sidebar: bool,
+    /// The whole window. The window controls keep their place in it.
+    pub window: Rect,
+    /// How much of the sidebar is shown: 0 hidden, 1 shown, and between the
+    /// two while a toggle slides it.
+    pub sidebar: f32,
+    /// The sidebar is shown once it has settled.
+    pub sidebar_open: bool,
+    /// The sidebar's full width.
+    pub sidebar_width: f32,
     /// The window is wide enough to show a sidebar at all.
     pub sidebar_available: bool,
 }
 
 const SIDEBAR_WIDTH: std::ops::RangeInclusive<f32> = 170.0..=360.0;
 const DEFAULT_SIDEBAR_WIDTH: f32 = 216.0;
+/// Seconds a toggled sidebar takes to slide in or out.
+const SIDEBAR_SLIDE: f64 = 0.16;
+
+/// A sidebar toggle in motion. It starts from however much of the sidebar was
+/// showing, so a toggle reversed midway turns around without a jump.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SidebarSlide {
+    from: f32,
+    started: f64,
+}
+
+impl SidebarSlide {
+    /// Begins the slide that follows a toggle. `shown` is the state being left.
+    pub fn toggled(previous: Option<Self>, shown: bool, now: f64) -> Self {
+        Self {
+            from: previous
+                .and_then(|slide| slide.reveal(shown, now))
+                .unwrap_or(if shown { 1.0 } else { 0.0 }),
+            started: now,
+        }
+    }
+
+    /// How much of the sidebar is shown at `now`, or `None` once it has settled.
+    pub fn reveal(self, shown: bool, now: f64) -> Option<f32> {
+        let progress = ((now - self.started) / SIDEBAR_SLIDE) as f32;
+        (progress < 1.0).then(|| {
+            egui::lerp(
+                self.from..=if shown { 1.0 } else { 0.0 },
+                egui::emath::easing::cubic_out(progress.max(0.0)),
+            )
+        })
+    }
+}
+
+/// Centre of the sidebar toggle from the window's leading edge: beside the
+/// window controls while the sidebar is hidden, at its trailing edge while shown.
+fn toggle_offset(view: &ChromeView) -> f32 {
+    egui::lerp(94.0..=view.sidebar_width - 22.0, view.sidebar)
+}
 
 fn drag_region(ui: &mut Ui, rect: Rect, name: &str) {
     let drag = ui.interact(rect, ui.id().with(name), Sense::click_and_drag());
@@ -156,50 +202,58 @@ pub fn toolbar(
 ) {
     drag_region(ui, rect, "title-drag");
     let middle = rect.center().y;
-    let mut left = rect.left() + 8.0;
-    if !view.sidebar {
-        window_controls(ui, Pos2::new(rect.left() + 16.0, middle), p, actions);
-        left = rect.left() + 78.0;
-        if view.sidebar_available {
-            if icon_at(
-                ui,
-                Pos2::new(rect.left() + 94.0, middle),
-                Icon::Sidebar,
-                "Toggle sidebar",
-                &shortcut("B"),
-                "toolbar-sidebar",
-            )
-            .clicked()
-            {
-                actions.push(Action::ToggleSidebar);
-            }
-            left = rect.left() + 118.0;
-        }
-    }
+    // The title starts clear of the leading controls wherever they overlap the
+    // toolbar: always while the sidebar is hidden, and in passing as it slides.
+    let leading = if view.sidebar_available {
+        toggle_offset(view) + 24.0
+    } else {
+        78.0
+    };
+    let left = (rect.left() + 8.0).max(view.window.left() + leading);
 
     // The command field stays centred on the content; narrow windows fall back
-    // to an icon so the title keeps its room.
+    // to an icon so the title keeps its room. A sliding sidebar decides this
+    // from the width it is heading for, so the field does not swap midway.
     let field_width = (rect.width() * 0.32).clamp(210.0, 320.0);
-    let show_field = rect.width() >= 760.0;
+    let settled_width = view.window.width()
+        - if view.sidebar_open {
+            view.sidebar_width
+        } else {
+            0.0
+        };
+    let show_field = settled_width >= 760.0;
     let field = Rect::from_center_size(rect.center(), vec2(field_width, 28.0));
 
     let mut right = rect.right() - 8.0;
+    // "New workspace" moves here while the sidebar is away. It fades in from
+    // the trailing edge so its neighbours make room gradually.
     let cluster = ui
         .scope_builder(
             UiBuilder::new()
                 .id_salt("toolbar-actions")
                 .max_rect(Rect::from_min_max(
                     Pos2::new(left, rect.top() + 8.0),
-                    Pos2::new(right, rect.bottom() - 8.0),
+                    Pos2::new(
+                        right
+                            + if view.sidebar < 1.0 {
+                                30.0 * view.sidebar
+                            } else {
+                                0.0
+                            },
+                        rect.bottom() - 8.0,
+                    ),
                 ))
                 .layout(Layout::right_to_left(Align::Center)),
             |ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
-                if !view.sidebar
-                    && icons::button_with_hint(ui, Icon::Plus, "New workspace", &shortcut("T"))
-                        .clicked()
-                {
-                    actions.push(Action::New);
+                if view.sidebar < 1.0 {
+                    ui.set_opacity(1.0 - view.sidebar);
+                    let create =
+                        icons::button_with_hint(ui, Icon::Plus, "New workspace", &shortcut("T"));
+                    ui.set_opacity(1.0);
+                    if create.clicked() {
+                        actions.push(Action::New);
+                    }
                 }
                 if let Some(pane) = view.pane {
                     if icons::button_with_hint(
@@ -546,8 +600,31 @@ fn workspace_row(
     egui::Popup::menu(&more_response).show(|ui| workspace_menu(ui, p, workspace, actions));
 }
 
+/// The window controls and the sidebar toggle, drawn over the sidebar and the
+/// toolbar. The lights never move; the toggle travels with the sidebar's edge
+/// between its place there and its place beside the lights.
+pub fn leading_controls(ui: &mut Ui, p: Palette, view: &ChromeView, actions: &mut Vec<Action>) {
+    let origin = view.window.min;
+    let middle = origin.y + metrics::TOOLBAR_HEIGHT * 0.5;
+    window_controls(ui, Pos2::new(origin.x + 16.0, middle), p, actions);
+    if view.sidebar_available
+        && icon_at(
+            ui,
+            Pos2::new(origin.x + toggle_offset(view).round(), middle),
+            Icon::Sidebar,
+            "Toggle sidebar",
+            &shortcut("B"),
+            "sidebar-toggle",
+        )
+        .clicked()
+    {
+        actions.push(Action::ToggleSidebar);
+    }
+}
+
 /// The sidebar spans the full window height, like a native source list.
-/// `drag` holds the width while its edge is being dragged.
+/// `drag` holds the width while its edge is being dragged. While a toggle
+/// slides it, `rect` moves past the window's leading edge.
 pub fn sidebar(
     ui: &mut Ui,
     rect: Rect,
@@ -558,24 +635,6 @@ pub fn sidebar(
 ) {
     let strip = Rect::from_min_size(rect.min, vec2(rect.width(), metrics::TOOLBAR_HEIGHT));
     drag_region(ui, strip, "sidebar-drag");
-    window_controls(
-        ui,
-        Pos2::new(rect.left() + 16.0, strip.center().y),
-        p,
-        actions,
-    );
-    if icon_at(
-        ui,
-        Pos2::new(rect.right() - 22.0, strip.center().y),
-        Icon::Sidebar,
-        "Toggle sidebar",
-        &shortcut("B"),
-        "sidebar-toggle",
-    )
-    .clicked()
-    {
-        actions.push(Action::ToggleSidebar);
-    }
 
     ui.painter().text(
         Pos2::new(rect.left() + 18.0, strip.bottom() + 14.0),
@@ -672,7 +731,11 @@ pub fn sidebar(
         actions.push(Action::Settings);
     }
 
-    // The trailing edge resizes the sidebar; the width is saved on release.
+    // The trailing edge resizes the sidebar once it rests there; the width is
+    // saved on release.
+    if view.sidebar < 1.0 {
+        return;
+    }
     let handle = Rect::from_min_max(
         Pos2::new(rect.right() - 3.0, strip.bottom()),
         Pos2::new(rect.right() + 3.0, rect.bottom() - 12.0),
@@ -726,6 +789,30 @@ pub fn sidebar(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_toggled_sidebar_eases_to_rest_and_reverses_from_where_it_is() {
+        let hide = SidebarSlide::toggled(None, true, 10.0);
+        assert_eq!(hide.reveal(false, 10.0), Some(1.0));
+        let midway = hide.reveal(false, 10.08).unwrap();
+        assert!(
+            midway > 0.0 && midway < 0.5,
+            "ease-out covers most of the way early: {midway}"
+        );
+        assert_eq!(hide.reveal(false, 10.0 + SIDEBAR_SLIDE), None);
+
+        // Toggled back midway: the slide continues from where the sidebar is.
+        let show = SidebarSlide::toggled(Some(hide), false, 10.08);
+        assert_eq!(show.reveal(true, 10.08), Some(midway));
+        assert!(show.reveal(true, 10.12).unwrap() > midway);
+        assert_eq!(show.reveal(true, 10.08 + SIDEBAR_SLIDE), None);
+
+        // A finished slide leaves nothing to continue from.
+        assert_eq!(
+            SidebarSlide::toggled(Some(hide), false, 11.0).reveal(true, 11.0),
+            Some(0.0)
+        );
+    }
 
     #[test]
     fn workspace_tiles_use_a_visible_initial() {
