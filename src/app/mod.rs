@@ -575,6 +575,10 @@ impl eframe::App for App {
         if !sheet_open && !menu_open {
             ctx.memory_mut(|memory| memory.move_focus(egui::FocusDirection::None));
         }
+        // A sheet or the palette opening ends a terminal drag without a move.
+        if self.ui.pane_drag.is_some() && self.ui.overlay != OverlayState::None {
+            self.cancel_pane_drag(&ctx);
+        }
         let p = Palette::for_config(&self.config);
         let bounds = ui.max_rect();
         let radius = if cfg!(target_os = "linux")
@@ -642,6 +646,7 @@ impl eframe::App for App {
             sidebar_open,
             sidebar_width,
             sidebar_available,
+            pane_drag: self.ui.pane_drag,
         };
         if edge > 0.0 {
             let side = Rect::from_min_size(
@@ -715,32 +720,38 @@ impl eframe::App for App {
             } else {
                 workspace.layout().clone()
             };
+            let stage_view = ui::workspace::Stage {
+                presentations: &presentations,
+                active: workspace.active(),
+                multiple: layout.leaves().len() > 1,
+                zoomed: self.ui.zoomed,
+                keyboard: !overlay,
+                previous_terminal: self.terminal_focus,
+                config: &self.config,
+                p,
+                search: if self.ui.search_open {
+                    &self.ui.search
+                } else {
+                    ""
+                },
+                drag: self.ui.pane_drag,
+            };
             ui::workspace::draw_node(
                 ui,
                 &layout,
                 stage,
                 &mut self.renders,
-                &ui::workspace::Stage {
-                    presentations: &presentations,
-                    active: workspace.active(),
-                    multiple: layout.leaves().len() > 1,
-                    zoomed: self.ui.zoomed,
-                    keyboard: !overlay,
-                    previous_terminal: self.terminal_focus,
-                    config: &self.config,
-                    p,
-                    search: if self.ui.search_open {
-                        &self.ui.search
-                    } else {
-                        ""
-                    },
-                },
+                &stage_view,
                 &mut actions,
                 &mut output,
             );
+            ui::workspace::pane_drag(ui, &stage_view, &output, &mut actions);
         } else {
             ui::workspace::empty_state(ui, stage.drawn, p, self.startup.is_some(), &mut actions);
         }
+        // A drag lasts only while its header reports it, so it cannot outlive a
+        // release, a workspace switch or the pane itself.
+        self.ui.pane_drag = output.dragging;
         for action in actions.drain(..) {
             self.action(&ctx, action);
         }

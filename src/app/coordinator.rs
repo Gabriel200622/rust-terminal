@@ -268,6 +268,9 @@ impl App {
             Action::Ratio(split, ratio) => {
                 self.dispatch(ctx, Command::SetSplitRatio { split, ratio })
             }
+            Action::MovePane(pane, destination) => {
+                self.dispatch(ctx, Command::MovePane { pane, destination })
+            }
             Action::ClosePane(pane) => self.request_close(ctx, Close::Pane(pane)),
             Action::CloseWorkspace(id) => self.request_close(ctx, Close::Workspace(id)),
             Action::WindowClose => self.request_close(ctx, Close::App),
@@ -475,6 +478,11 @@ impl App {
             );
             self.ui.error = Some(error.to_string());
         }
+    }
+    /// Ends a terminal drag without moving anything.
+    pub(super) fn cancel_pane_drag(&mut self, ctx: &egui::Context) {
+        self.ui.pane_drag = None;
+        ctx.stop_dragging();
     }
     fn request_close(&mut self, ctx: &egui::Context, close: Close) {
         if self.config.confirm_close {

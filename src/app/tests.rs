@@ -559,6 +559,93 @@ fn escape_leaves_one_surface_at_a_time_and_otherwise_belongs_to_the_shell() {
 }
 
 #[test]
+fn escape_cancels_a_terminal_drag_instead_of_reaching_the_shell() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    let escape = || key(egui::Key::Escape, None, egui::Modifiers::NONE);
+    app.startup = None;
+    app.controller
+        .dispatch(Command::AddWorkspace {
+            cwd: root.path().into(),
+            name: "Shell".into(),
+        })
+        .unwrap();
+    let generation = app.controller.generation();
+    app.ui.pane_drag = app.controller.model().active_pane();
+
+    assert!(press(&mut app, &ctx, escape()));
+    assert!(app.ui.pane_drag.is_none());
+    assert_eq!(app.controller.generation(), generation);
+    // With nothing left to cancel, the key is the shell's again.
+    assert!(!press(&mut app, &ctx, escape()));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_terminal_moved_to_another_workspace_keeps_its_running_shell() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    app.startup = None;
+    app.config.shell = Some("/bin/sh".into());
+    let add = |app: &mut App, name: &str| {
+        app.dispatch(
+            &ctx,
+            Command::AddWorkspace {
+                cwd: root.path().into(),
+                name: name.into(),
+            },
+        );
+        app.controller.model().active_workspace().unwrap()
+    };
+    let home = add(&mut app, "Home");
+    let stays = app.controller.model().active_pane().unwrap();
+    app.action(&ctx, Action::Split(stays, pace_model::Axis::Vertical));
+    let moved = app.controller.model().active_pane().unwrap();
+    let other = add(&mut app, "Other");
+    app.action(&ctx, Action::SelectWorkspace(home));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while app.sessions.usage().running != 3 {
+        app.poll(&ctx);
+        assert!(
+            Instant::now() < deadline,
+            "sessions failed to start: {:?}",
+            app.ui.error
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let process = app.sessions.get(moved).unwrap().metadata().process_id;
+    assert!(process.is_some());
+
+    app.action(
+        &ctx,
+        Action::MovePane(moved, pace_model::Destination::Workspace(other)),
+    );
+    let model = app.controller.model();
+    assert_eq!(model.workspace_for_pane(moved), Some(other));
+    assert_eq!(model.active_workspace(), Some(home));
+    assert_eq!(model.active_pane(), Some(stays));
+    assert_eq!(model.pane(moved).unwrap().generation(), 1);
+    assert!(app.ui.error.is_none(), "{:?}", app.ui.error);
+
+    // The same process, still accepting input while its workspace is hidden.
+    let usage = app.sessions.usage();
+    assert_eq!((usage.running, usage.starting, usage.closing), (3, 0, 0));
+    assert!(app.renders.contains_key(&moved));
+    let session = app.sessions.get(moved).unwrap();
+    assert_eq!(session.metadata().process_id, process);
+    session.write(b": > moved-marker\r").unwrap();
+    while !root.path().join("moved-marker").exists() {
+        assert!(
+            Instant::now() < deadline,
+            "the moved shell stopped accepting input"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
 fn find_returns_to_an_open_search_field_before_it_closes() {
     let root = tempfile::tempdir().unwrap();
     let (mut app, _sender) = fixture(root.path());
