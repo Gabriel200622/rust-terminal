@@ -238,19 +238,16 @@ impl App {
                     return;
                 }
                 self.ui.ssh_host.clear();
-                self.ui.ssh_name.clear();
                 self.ui.overlay = OverlayState::Ssh(workspace);
                 self.ui.overlay_focus = true;
             }
             Action::Connect {
                 workspace: None,
                 destination,
-                name,
-            } => self.create_workspace(ctx, default_cwd(), name, Some(destination)),
+            } => self.create_workspace(ctx, default_cwd(), None, Some(destination)),
             Action::Connect {
                 workspace: Some(workspace),
                 destination,
-                ..
             } => {
                 self.dispatch(
                     ctx,
@@ -298,16 +295,11 @@ impl App {
             Action::CloseWorkspace(id) => self.request_close(ctx, Close::Workspace(id)),
             Action::WindowClose => self.request_close(ctx, Close::App),
             Action::New => {
-                self.ui.new_name.clear();
-                self.ui.new_cwd = self
-                    .controller
-                    .model()
-                    .active_workspace()
-                    .and_then(|id| self.controller.model().workspace(id))
-                    .map(|w| w.cwd().display().to_string())
-                    .unwrap_or_default();
-                self.ui.overlay = OverlayState::NewWorkspace;
-                self.ui.overlay_focus = true;
+                if let Some(dirs) = directories::BaseDirs::new() {
+                    self.action(ctx, Action::Create(dirs.home_dir().into(), None));
+                } else {
+                    self.ui.error = Some("Could not determine your home directory".into());
+                }
             }
             Action::Rename(id) => {
                 if let Some(w) = self.controller.model().workspace(id) {

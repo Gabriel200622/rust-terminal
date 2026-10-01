@@ -26,7 +26,6 @@ pub enum OverlayState {
     None,
     Settings,
     Palette,
-    NewWorkspace,
     Rename(WorkspaceId),
     /// Connect the workspace over SSH, or create a connected one with `None`.
     Ssh(Option<WorkspaceId>),
@@ -38,11 +37,8 @@ pub struct UiState {
     pub palette_query: String,
     /// Highlighted command; reset whenever the query changes.
     pub palette_selected: usize,
-    pub new_name: String,
-    pub new_cwd: String,
     pub rename_name: String,
     pub ssh_host: String,
-    pub ssh_name: String,
     /// A dialog field should take keyboard focus on its first frame.
     pub overlay_focus: bool,
     pub error: Option<String>,
@@ -71,7 +67,6 @@ pub enum Action {
     Connect {
         workspace: Option<WorkspaceId>,
         destination: String,
-        name: Option<String>,
     },
     Disconnect(WorkspaceId),
     Settings,

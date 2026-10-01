@@ -69,17 +69,18 @@ fn startup_actions_wait_then_replay_on_restored_state_without_retargeting_the_cl
         .unwrap();
     let original = restored.model().active_pane().unwrap();
     let sidebar = restored.model().sidebar();
-    app.action(
-        &ctx,
-        Action::Create(root.path().into(), Some("Queued".into())),
-    );
+    app.action(&ctx, Action::New);
     app.action(&ctx, Action::ToggleSidebar);
     assert!(app.controller.model().workspaces().is_empty());
     assert_eq!(app.sessions.usage().starting, 0);
     app.complete_startup(&ctx, loaded(app.config.clone(), restored.model().clone()));
     assert_eq!(app.controller.model().workspaces().len(), 2);
     assert_eq!(app.controller.model().workspaces()[0].name(), "Restored");
-    assert_eq!(app.controller.model().workspaces()[1].name(), "Queued");
+    assert_eq!(
+        app.controller.model().workspaces()[1].cwd(),
+        directories::BaseDirs::new().unwrap().home_dir()
+    );
+    assert_eq!(app.ui.overlay, OverlayState::None);
     assert_eq!(app.controller.model().sidebar(), !sidebar);
     assert_eq!(app.command_target, Some((original, 1)));
     assert_ne!(app.controller.model().active_pane(), Some(original));
@@ -92,10 +93,7 @@ fn startup_queue_is_bounded_and_does_not_start_sessions_early() {
     let (mut app, _sender) = fixture(root.path());
     let ctx = egui::Context::default();
     for _ in 0..25 {
-        app.action(
-            &ctx,
-            Action::Create(root.path().into(), Some("Queued".into())),
-        );
+        app.action(&ctx, Action::New);
     }
     assert_eq!(app.deferred_actions.len(), 24);
     assert!(app.controller.model().workspaces().is_empty());
@@ -534,7 +532,7 @@ fn sidebar_width_is_clamped_and_saved_as_one_preference_change() {
 }
 
 #[test]
-fn dialogs_request_field_focus_and_close_without_touching_workspaces() {
+fn rename_requests_field_focus_and_cancels_without_touching_workspaces() {
     let root = tempfile::tempdir().unwrap();
     let (mut app, _sender) = fixture(root.path());
     let ctx = egui::Context::default();
@@ -549,25 +547,94 @@ fn dialogs_request_field_focus_and_close_without_touching_workspaces() {
     let workspace = app.controller.model().active_workspace().unwrap();
     let generation = app.controller.generation();
 
-    app.action(&ctx, Action::New);
-    assert_eq!(app.ui.overlay, OverlayState::NewWorkspace);
-    assert!(app.ui.overlay_focus);
-    assert_eq!(app.ui.new_cwd, root.path().display().to_string());
-    app.action(&ctx, Action::CloseOverlay);
-    assert_eq!(app.ui.overlay, OverlayState::None);
-
-    app.ui.overlay_focus = false;
     app.action(&ctx, Action::Rename(workspace));
     assert_eq!(app.ui.overlay, OverlayState::Rename(workspace));
     assert!(app.ui.overlay_focus);
     assert_eq!(app.ui.rename_name, "Only");
     app.action(&ctx, Action::CloseOverlay);
+    assert_eq!(app.ui.overlay, OverlayState::None);
 
     app.ui.error = Some("Could not save".into());
     app.action(&ctx, Action::DismissError);
     assert!(app.ui.error.is_none());
     assert_eq!(app.controller.generation(), generation);
     assert_eq!(app.controller.model().workspaces().len(), 1);
+}
+
+#[test]
+fn new_workspace_opens_at_home_without_a_dialog_and_can_be_renamed() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    app.startup = None;
+    app.controller
+        .dispatch(Command::AddWorkspace {
+            cwd: root.path().into(),
+            name: "Existing".into(),
+            remote: None,
+        })
+        .unwrap();
+    let existing = app.controller.model().active_workspace().unwrap();
+    app.ui.overlay = OverlayState::Palette;
+
+    app.action(&ctx, Action::New);
+
+    let workspace = app.controller.model().active_workspace().unwrap();
+    let pane = app.controller.model().active_pane().unwrap();
+    let home = directories::BaseDirs::new().unwrap();
+    assert_ne!(workspace, existing);
+    assert_eq!(app.controller.model().workspaces().len(), 2);
+    assert_eq!(
+        app.controller.model().workspace(workspace).unwrap().cwd(),
+        home.home_dir()
+    );
+    assert_eq!(
+        app.controller.model().pane(pane).unwrap().cwd(),
+        home.home_dir()
+    );
+    assert_eq!(app.ui.overlay, OverlayState::None);
+    assert_eq!(app.sessions.usage().starting, 1);
+
+    app.action(&ctx, Action::Rename(workspace));
+    assert_eq!(app.ui.overlay, OverlayState::Rename(workspace));
+    assert!(app.ui.overlay_focus);
+    // A later focus change cannot retarget the rename.
+    app.action(&ctx, Action::SelectWorkspace(existing));
+    app.action(&ctx, Action::SetName(workspace, "Renamed".into()));
+    app.action(&ctx, Action::CloseOverlay);
+    let renamed = app.controller.model().workspace(workspace).unwrap();
+    assert_eq!(renamed.name(), "Renamed");
+    assert_eq!(renamed.cwd(), home.home_dir());
+    assert_eq!(renamed.active(), pane);
+    assert_eq!(
+        app.controller.model().workspace(existing).unwrap().name(),
+        "Existing"
+    );
+}
+
+#[test]
+fn new_workspace_shortcut_works_with_no_existing_workspace() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    app.startup = None;
+    let command = if cfg!(target_os = "macos") {
+        egui::Modifiers::MAC_CMD | egui::Modifiers::COMMAND
+    } else {
+        egui::Modifiers::CTRL | egui::Modifiers::SHIFT
+    };
+
+    assert!(press(&mut app, &ctx, key(egui::Key::T, None, command)));
+    let workspace = app.controller.model().workspaces().first().unwrap();
+    assert_eq!(
+        workspace.cwd(),
+        directories::BaseDirs::new().unwrap().home_dir()
+    );
+    assert_eq!(
+        app.controller.model().active_workspace(),
+        Some(workspace.id())
+    );
+    assert_eq!(app.ui.overlay, OverlayState::None);
 }
 
 #[test]
@@ -670,19 +737,17 @@ fn the_ssh_sheet_opens_for_local_workspaces_and_connecting_replaces_their_termin
     let workspace = app.controller.model().active_workspace().unwrap();
     let pane = app.controller.model().active_pane().unwrap();
     app.ui.ssh_host = "stale".into();
-    app.ui.ssh_name = "stale".into();
 
     app.action(&ctx, Action::Ssh(Some(workspace)));
     assert_eq!(app.ui.overlay, OverlayState::Ssh(Some(workspace)));
     assert!(app.ui.overlay_focus);
-    assert!(app.ui.ssh_host.is_empty() && app.ui.ssh_name.is_empty());
+    assert!(app.ui.ssh_host.is_empty());
 
     app.action(
         &ctx,
         Action::Connect {
             workspace: Some(workspace),
             destination: "me@devbox".into(),
-            name: None,
         },
     );
     assert_eq!(app.ui.overlay, OverlayState::None);
@@ -705,7 +770,6 @@ fn the_ssh_sheet_opens_for_local_workspaces_and_connecting_replaces_their_termin
         Action::Connect {
             workspace: None,
             destination: "ssh://me@buildbox".into(),
-            name: None,
         },
     );
     assert_eq!(app.ui.overlay, OverlayState::None);
@@ -733,7 +797,6 @@ fn disconnecting_asks_first_and_cancelling_keeps_the_connection() {
             Action::Connect {
                 workspace: None,
                 destination: "me@devbox".into(),
-                name: None,
             },
         );
         app.controller.model().active_workspace().unwrap()
@@ -782,7 +845,6 @@ fn a_connection_requested_during_restoration_waits_and_the_cli_host_opens_first(
         Action::Connect {
             workspace: None,
             destination: "buildbox".into(),
-            name: Some("Queued".into()),
         },
     );
     assert_eq!(app.ui.overlay, OverlayState::None);
@@ -795,7 +857,7 @@ fn a_connection_requested_during_restoration_waits_and_the_cli_host_opens_first(
     assert_eq!(workspaces[0].name(), "devbox");
     assert_eq!(workspaces[0].cwd(), root.path());
     assert_eq!(remote_of(&app, workspaces[0].id()), Some("me@devbox"));
-    assert_eq!(workspaces[1].name(), "Queued");
+    assert_eq!(workspaces[1].name(), "buildbox");
     assert_eq!(remote_of(&app, workspaces[1].id()), Some("buildbox"));
     assert!(app.initial_remote.is_none() && app.deferred_actions.is_empty());
 }

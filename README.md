@@ -54,6 +54,8 @@ The host is an OpenSSH destination: `host`, `user@host`, an alias from `~/.ssh/c
 
 When no saved workspace can be restored, Pace opens a terminal in your home directory (`~`). Use `--cwd` to choose another starting directory, or `--ssh` to open a workspace on a host. `--command` cannot be combined with `--ssh`, and a startup command is never typed into a terminal that is connecting over SSH.
 
+New workspace opens and selects a fresh shell at `~` immediately. Rename it later by double-clicking its sidebar row or choosing Rename workspace from its menu or the command palette.
+
 ```sh
 pace --cwd /path/to/project
 pace --ssh user@host
