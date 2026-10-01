@@ -283,6 +283,9 @@ impl App {
                 }
             }
             Action::SelectWorkspace(id) => self.dispatch(ctx, Command::SelectWorkspace(id)),
+            Action::MoveWorkspace(workspace, index) => {
+                self.dispatch(ctx, Command::MoveWorkspace { workspace, index })
+            }
             Action::Focus(pane) => {
                 if let Some(workspace) = self.controller.model().workspace_for_pane(pane) {
                     self.dispatch(ctx, Command::FocusPane { workspace, pane });
