@@ -8,19 +8,17 @@ use crate::runtime::persistence::SaveKind;
 pub(super) const SSH_CLIENT: &str = "ssh";
 
 /// A local pane runs the configured shell. A remote pane runs the SSH client
-/// in the same local directory and gets the login shell of its host. `--` ends
-/// the client's options, so the destination is always read as a host.
+/// in the same local directory and gets the login shell of its host. A remote
+/// starting directory is passed as data in the remote bootstrap command.
 pub(super) fn session_options(
     config: &Config,
     client: &str,
     cwd: PathBuf,
     remote: Option<&Remote>,
+    remote_cwd: Option<&std::path::Path>,
 ) -> SessionOptions {
     let (shell, args) = match remote {
-        Some(remote) => (
-            Some(client.into()),
-            vec!["--".into(), remote.destination().into()],
-        ),
+        Some(remote) => (Some(client.into()), ssh::arguments(remote, remote_cwd)),
         None => (config.shell.clone(), Vec::new()),
     };
     SessionOptions {
@@ -48,12 +46,28 @@ fn remote_label(destination: &str) -> String {
 
 impl App {
     pub(super) fn dispatch(&mut self, ctx: &egui::Context, command: Command) {
+        self.dispatch_in_remote_dir(ctx, command, None);
+    }
+    fn dispatch_in_remote_dir(
+        &mut self,
+        ctx: &egui::Context,
+        command: Command,
+        remote_cwd: Option<&std::path::Path>,
+    ) {
         match self.controller.dispatch(command) {
-            Ok(effects) => self.execute(ctx, effects),
+            Ok(effects) => self.execute_in_remote_dir(ctx, effects, remote_cwd),
             Err(error) => self.ui.error = Some(error.to_string()),
         }
     }
     pub(super) fn execute(&mut self, ctx: &egui::Context, effects: Vec<Effect>) {
+        self.execute_in_remote_dir(ctx, effects, None);
+    }
+    fn execute_in_remote_dir(
+        &mut self,
+        ctx: &egui::Context,
+        effects: Vec<Effect>,
+        remote_cwd: Option<&std::path::Path>,
+    ) {
         let replacements: std::collections::HashSet<_> = effects
             .iter()
             .filter_map(|effect| match effect {
@@ -76,8 +90,13 @@ impl App {
                 } => {
                     self.renders.insert(pane, PaneRender::new(pane));
                     let wake = ctx.clone();
-                    let options =
-                        session_options(&self.config, &self.ssh_client, cwd, remote.as_ref());
+                    let options = session_options(
+                        &self.config,
+                        &self.ssh_client,
+                        cwd,
+                        remote.as_ref(),
+                        remote_cwd,
+                    );
                     if let Err(error) = self.sessions.start(
                         pane,
                         generation,
@@ -307,17 +326,25 @@ impl App {
             Action::Disconnect(workspace) => self.request_close(ctx, Close::Connection(workspace)),
             Action::Split(pane, axis) => {
                 if let Some(workspace) = self.controller.model().workspace_for_pane(pane) {
-                    // A remote session's directory is on its host; the new
-                    // SSH client starts where this pane's client did.
                     let local = self.remote_of(pane).is_none();
+                    let metadata = self.sessions.get(pane).map(|session| session.metadata());
+                    let remote_cwd = (!local)
+                        .then(|| metadata.as_ref().and_then(|m| m.reported_cwd.as_deref()))
+                        .flatten();
+                    // The local client directory remains durable; the remote
+                    // path belongs only to this generation's startup request.
                     let cwd = self
-                        .sessions
-                        .get(pane)
+                        .controller
+                        .model()
+                        .pane(pane)
+                        .map(|p| p.cwd().to_path_buf());
+                    let cwd = metadata
+                        .as_ref()
                         .filter(|_| local)
-                        .map(|session| session.metadata().cwd)
-                        .or_else(|| self.controller.model().pane(pane).map(|p| p.cwd().into()))
+                        .map(|metadata| metadata.cwd.clone())
+                        .or(cwd)
                         .unwrap_or_default();
-                    self.dispatch(
+                    self.dispatch_in_remote_dir(
                         ctx,
                         Command::SplitPane {
                             workspace,
@@ -325,6 +352,7 @@ impl App {
                             axis,
                             cwd,
                         },
+                        remote_cwd,
                     );
                 }
             }

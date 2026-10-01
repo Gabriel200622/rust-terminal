@@ -352,6 +352,27 @@ and any behaviour on macOS or Windows, where the system client and ConPTY path
 are unexercised. The standard isolated regression harness passed with the
 version 2 state file.
 
+## SSH split directory regression: 2026-10-01
+
+Focused desktop regressions now cover splitting from the source pane's OSC 7
+directory, both split axes, a directory change while that source is unfocused,
+and keeping remote paths out of local saved directories. A real Zsh bootstrap
+fixture checks login-file ordering, custom `ZDOTDIR`, temporary-file cleanup,
+quoted paths with spaces/apostrophes/percent signs/Unicode, and a missing remote
+directory. A terminal-core PTY regression checks that local process polling
+cannot overwrite the separate shell directory report. The affected desktop and
+terminal-core library Clippy checks passed with warnings denied.
+
+The final debug build with `inspection` was exercised on this Linux Dell through
+X11 with a task-owned loopback OpenSSH server and the host's actual Zsh startup
+configuration. Right and below splits both returned
+`/home/biggabo/Documents/Projects/leyfind/leyfind` from `pwd`. Another split
+inherited a subsequent directory containing spaces, an apostrophe, `%`, and
+Unicode. Five fresh native captures were visually reviewed, including the
+900×640 window; saved pane directories remained local, and the application
+closed gracefully. This establishes the Linux/OpenSSH/Zsh behavior, not remote
+shell integration on other shells or native macOS/Windows behavior.
+
 ## Historical visual acceptance
 
 The following acceptance record predates the architecture refactor. It is useful

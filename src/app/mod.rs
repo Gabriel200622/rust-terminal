@@ -3,6 +3,7 @@
 mod coordinator;
 mod diagnostics;
 mod input;
+mod ssh;
 #[cfg(test)]
 mod tests;
 use crate::{
@@ -419,6 +420,7 @@ impl App {
                                 self.config.shell.clone().unwrap_or_else(|| "shell".into())
                             },
                             cwd: pane.cwd().into(),
+                            reported_cwd: None,
                             process_id: None,
                             status: match pane.lifecycle() {
                                 Lifecycle::Failed(error) => SessionStatus::Error(error.clone()),

@@ -100,6 +100,9 @@ pub struct SessionMetadata {
     pub title: String,
     pub shell: String,
     pub cwd: PathBuf,
+    /// Last directory explicitly reported by the shell with OSC 7. Unlike
+    /// `cwd`, this never comes from polling the local child process.
+    pub reported_cwd: Option<PathBuf>,
     pub process_id: Option<u32>,
     pub status: SessionStatus,
     pub bell_count: u64,
@@ -225,6 +228,7 @@ impl TerminalSession {
                 title: String::new(),
                 shell,
                 cwd: options.cwd,
+                reported_cwd: None,
                 process_id: child.process_id(),
                 status: SessionStatus::Running,
                 bell_count: 0,

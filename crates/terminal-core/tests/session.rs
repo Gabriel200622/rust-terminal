@@ -35,6 +35,26 @@ fn screen(session: &TerminalSession) -> String {
 }
 
 #[test]
+fn a_shell_reported_directory_survives_local_process_directory_polling() {
+    let session = shell(
+        "printf '\\033]7;file://remote/srv/remote%%20project\\007'; \
+         while IFS= read -r line; do printf '\\033]7;file://remote/srv/next\\007'; done",
+    );
+    wait_for(|| session.metadata().reported_cwd.is_some());
+    std::thread::sleep(Duration::from_millis(1200));
+    assert_eq!(
+        session.metadata().reported_cwd.as_deref(),
+        Some(std::path::Path::new("/srv/remote project"))
+    );
+    session.write(b"next\r").unwrap();
+    wait_for(|| {
+        session.metadata().reported_cwd.as_deref() == Some(std::path::Path::new("/srv/next"))
+    });
+    session.shutdown();
+    wait_for(|| session.metrics().active_workers == 0);
+}
+
+#[test]
 fn real_pty_accepts_input_propagates_resize_and_reports_exit() {
     let session = shell(
         "printf '\\033]0;pty-smoke\\007\\033[38;2;91;166;201mREADY\\033[0m\\r\\n'; \

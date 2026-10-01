@@ -394,6 +394,7 @@ fn fixture(cols: u16, rows: u16, history: usize) -> TerminalSession {
             title: String::new(),
             shell: "fake".into(),
             cwd: PathBuf::from("."),
+            reported_cwd: None,
             process_id: None,
             status: SessionStatus::Running,
             bell_count: 0,

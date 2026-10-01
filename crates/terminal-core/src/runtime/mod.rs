@@ -243,7 +243,8 @@ pub(super) fn engine_loop(
                 }
                 if let Some(cwd) = cwd_tracker.advance(&buffer[..len]) {
                     let mut metadata = shared.metadata.lock();
-                    if metadata.cwd != cwd {
+                    if metadata.reported_cwd.as_ref() != Some(&cwd) || metadata.cwd != cwd {
+                        metadata.reported_cwd = Some(cwd.clone());
                         metadata.cwd = cwd;
                         drop(metadata);
                         shared.force_repaint();
