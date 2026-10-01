@@ -150,8 +150,9 @@ icon buttons keep a 28-point target around a 16-point glyph.
   names the problem in place of that note while the host is unusable.
 - **Preferences.** Grouped rows that apply immediately: theme previews drawn
   from each theme's own palette, accent dots, a font size stepper with its
-  Ctrl+Shift+Plus/Minus and Ctrl+Shift+0 shortcuts, a slider
-  for line spacing, a segmented cursor style, and switches for boolean settings.
+  Ctrl+Shift+Plus/Minus and Ctrl+Shift+0 shortcuts (Command+Shift on macOS), a
+  slider for line spacing, a segmented cursor style, and switches for boolean
+  settings.
 - **Command palette.** Every action with its shortcut, grouped when browsing and
   flat when filtered. Arrow keys move the highlight, Enter runs, and the pointer
   only takes the highlight when it moves. Commands that need a terminal are
@@ -169,8 +170,9 @@ Interface text is Geist in three weights: regular for body and values, medium
 for names, labels and buttons, semibold for sheet titles and tiles. Sizes are
 13 for body and names, 12–12.5 for secondary and control text, 11–11.5 for
 section labels and paths, and 15 for sheet titles and the palette field.
-Terminal text is JetBrains Mono; Preferences or Ctrl+Shift+Plus/Minus changes
-its size, and Ctrl+Shift+0 resets it to the default. App zoom
+Terminal text is JetBrains Mono. Preferences or Ctrl+Shift+Plus/Minus
+(Command+Shift on macOS) changes its size; Ctrl+Shift+0 (Command+Shift+0 on
+macOS) resets it to the default. App zoom
 uses Ctrl+Plus/Minus (Command on macOS), with Ctrl+Equals as an unshifted Plus
 alternative and Ctrl+0 to reset (Command on macOS). App zoom scales terminal
 text and chrome together without changing the saved terminal font size. Labels
