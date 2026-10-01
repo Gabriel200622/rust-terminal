@@ -23,7 +23,7 @@ The executable is `target/release/pace` on Linux/macOS and `target\release\pace.
 
 ## Workspaces and customization
 
-Workspace navigation, independent shell panes, split layouts, scrollback, terminal search, selection/clipboard, a command palette, and settings are integrated in the native interface. Every action is listed in the command palette with its shortcut; secondary-click a terminal or a workspace for its menu, double-click a workspace to rename it, and drag the sidebar's edge to resize it. Terminal text uses bundled JetBrains Mono; interface text uses Geist. Font licenses accompany the assets.
+Workspace navigation, independent shell panes, split layouts, scrollback, terminal search, selection/clipboard, a command palette, and settings are integrated in the native interface. Every action is listed in the command palette with its shortcut; secondary-click a terminal or a workspace for its menu, double-click a workspace to rename it, drag a workspace to reorder the sidebar, and drag the sidebar's edge to resize it. Terminal text uses bundled JetBrains Mono; interface text uses Geist. Font licenses accompany the assets.
 
 When no saved workspace can be restored, Pace opens a terminal in your home directory (`~`). Use `--cwd` to choose another starting directory.
 
@@ -74,7 +74,7 @@ These are binary archives, not installers. macOS signing/notarization, Windows s
 
 MIT licensed. Bundled fonts retain their SIL Open Font License notices; third-party dependencies retain their respective licenses.
 
-Developer inspection is opt-in through the `inspection` feature. `pace-inspect` exposes the native accessibility tree and supports `screenshot`, `key`, `text`, `click`, `context` (secondary click), `double-click`, `drag`, and `resize` commands for repeatable native visual review. The normal release binary has no inspection listener. Independent launches must follow [the run-isolation rules](scripts/AGENTS.md).
+Developer inspection is opt-in through the `inspection` feature. `pace-inspect` exposes the native accessibility tree and supports `screenshot`, `key`, `text`, `click`, `context` (secondary click), `double-click`, `drag`, `press`, `release`, and `resize` commands for repeatable native visual review. The normal release binary has no inspection listener. Independent launches must follow [the run-isolation rules](scripts/AGENTS.md).
 
 Native regression runs own their process, temporary data directory, and inspection
 endpoint; they never use your saved workspaces:

@@ -47,6 +47,8 @@ pub struct UiState {
     pub zoomed: bool,
     /// Width shown while the sidebar edge is dragged; saved on release.
     pub sidebar_drag: Option<f32>,
+    /// A workspace row being dragged to a new place in the sidebar.
+    pub workspace_drag: chrome::WorkspaceDrag,
 }
 #[derive(Clone)]
 pub enum Action {
@@ -54,6 +56,7 @@ pub enum Action {
     ClosePane(PaneId),
     CloseWorkspace(WorkspaceId),
     SelectWorkspace(WorkspaceId),
+    MoveWorkspace(WorkspaceId, usize),
     Focus(PaneId),
     Ratio(SplitId, f32),
     Rename(WorkspaceId),

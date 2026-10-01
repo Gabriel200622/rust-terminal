@@ -588,8 +588,10 @@ impl eframe::App for App {
             sidebar_available: bounds.width() >= metrics::SIDEBAR_MIN_WINDOW,
         };
         if !sidebar {
-            // An edge drag cannot finish once the sidebar is gone.
+            // Neither an edge drag nor a row drag can finish once the sidebar
+            // is gone.
             self.ui.sidebar_drag = None;
+            self.ui.workspace_drag = Default::default();
         }
         let content = if sidebar {
             let width = self
@@ -598,14 +600,7 @@ impl eframe::App for App {
                 .unwrap_or(self.config.sidebar_width)
                 .min(bounds.width() - 420.0);
             let side = Rect::from_min_size(bounds.min, Vec2::new(width, bounds.height()));
-            ui::chrome::sidebar(
-                ui,
-                side,
-                p,
-                &chrome,
-                &mut self.ui.sidebar_drag,
-                &mut actions,
-            );
+            ui::chrome::sidebar(ui, side, p, &chrome, &mut self.ui, &mut actions);
             Rect::from_min_max(Pos2::new(side.right(), bounds.top()), bounds.max)
         } else {
             bounds

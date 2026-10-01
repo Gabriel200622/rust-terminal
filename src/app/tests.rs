@@ -435,3 +435,50 @@ fn command_digits_select_workspaces_by_position_even_when_shift_changes_the_symb
     ));
     assert_eq!(app.controller.model().active_workspace(), Some(ids[1]));
 }
+
+#[test]
+fn moving_a_workspace_keeps_focus_and_renumbers_the_position_shortcuts() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    app.startup = None;
+    for name in ["First", "Second", "Third"] {
+        app.controller
+            .dispatch(Command::AddWorkspace {
+                cwd: root.path().into(),
+                name: name.into(),
+            })
+            .unwrap();
+    }
+    let names = |app: &App| -> Vec<String> {
+        let workspaces = app.controller.model().workspaces();
+        workspaces.iter().map(|w| w.name().to_owned()).collect()
+    };
+    let third = app.controller.model().active_workspace().unwrap();
+    let pane = app.controller.model().active_pane();
+    app.action(&ctx, Action::MoveWorkspace(third, 0));
+    assert_eq!(names(&app), ["Third", "First", "Second"]);
+    assert_eq!(app.controller.model().active_workspace(), Some(third));
+    assert_eq!(app.controller.model().active_pane(), pane);
+    assert!(app.ui.error.is_none());
+
+    let command = if cfg!(target_os = "macos") {
+        egui::Modifiers::MAC_CMD | egui::Modifiers::COMMAND
+    } else {
+        egui::Modifiers::CTRL | egui::Modifiers::SHIFT
+    };
+    assert!(press(&mut app, &ctx, key(egui::Key::Num2, None, command)));
+    let active = app.controller.model().active_workspace().unwrap();
+    assert_eq!(
+        app.controller.model().workspace(active).unwrap().name(),
+        "First"
+    );
+
+    // A workspace closed before its queued move arrives is reported, not moved.
+    app.controller
+        .dispatch(Command::CloseWorkspace(third))
+        .unwrap();
+    app.action(&ctx, Action::MoveWorkspace(third, 1));
+    assert_eq!(names(&app), ["First", "Second"]);
+    assert!(app.ui.error.is_some());
+}

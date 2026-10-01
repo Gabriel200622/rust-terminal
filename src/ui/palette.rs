@@ -156,6 +156,27 @@ fn commands(view: &PaletteView) -> Vec<Command> {
                 [Action::CloseWorkspace(active)],
             ),
         ]);
+        // Reordering by keyboard; the sidebar offers the same by dragging.
+        if let Some(index) = view.workspaces.iter().position(|w| w.id == active) {
+            if index > 0 {
+                list.push(command(
+                    "Workspace",
+                    Icon::ArrowUp,
+                    "Move workspace up",
+                    "",
+                    [Action::MoveWorkspace(active, index - 1)],
+                ));
+            }
+            if index + 1 < view.workspaces.len() {
+                list.push(command(
+                    "Workspace",
+                    Icon::ArrowDown,
+                    "Move workspace down",
+                    "",
+                    [Action::MoveWorkspace(active, index + 1)],
+                ));
+            }
+        }
     }
     for (index, workspace) in view.workspaces.iter().enumerate() {
         if Some(workspace.id) == view.active {
@@ -509,6 +530,44 @@ mod tests {
                 .iter()
                 .any(|command| command.title == "Dismiss message")
         );
+    }
+
+    #[test]
+    fn the_active_workspace_can_move_only_where_there_is_room() {
+        let config = Config::default();
+        let workspaces: Vec<WorkspaceView> = [4, 7, 9]
+            .into_iter()
+            .map(|id| WorkspaceView {
+                id: WorkspaceId::new(id),
+                name: "app".into(),
+                cwd: "/srv/app".into(),
+                panes: 1,
+                running: true,
+            })
+            .collect();
+        let moves = |active: u64| -> Vec<(String, usize)> {
+            commands(&PaletteView {
+                active: Some(WorkspaceId::new(active)),
+                ..view(&config, &workspaces)
+            })
+            .into_iter()
+            .filter_map(|command| match command.actions[..] {
+                [Action::MoveWorkspace(id, index)] if id == WorkspaceId::new(active) => {
+                    Some((command.title, index))
+                }
+                _ => None,
+            })
+            .collect()
+        };
+        assert_eq!(moves(4), [("Move workspace down".to_owned(), 1)]);
+        assert_eq!(
+            moves(7),
+            [
+                ("Move workspace up".to_owned(), 0),
+                ("Move workspace down".to_owned(), 2)
+            ]
+        );
+        assert_eq!(moves(9), [("Move workspace up".to_owned(), 1)]);
     }
 
     #[test]

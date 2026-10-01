@@ -81,6 +81,12 @@ icon buttons keep a 28-point target around a 16-point glyph.
   workspace" and Preferences. Each row shows an identity tile, the name, a
   path that keeps its final directory, and either the pane count or, on hover,
   a "more" button with the same menu as a secondary click. Double-click renames.
+  Dragging a row reorders the workspaces: the row lifts onto the elevated
+  material and follows the pointer, its neighbours ease aside to show where it
+  will land, and it settles into that gap on release. Holding it at the list's
+  edge scrolls a long list, Escape puts it back, and nothing is saved before
+  release. "Move up" and "Move down" in the row menu and the command palette
+  reorder without a pointer and take effect at once.
   The sidebar yields to terminal content below 820 points of window width.
 - **Toolbar.** Belongs to the content area and drags the window. Leading: the
   workspace name and the focused terminal's program and directory. Centre: a

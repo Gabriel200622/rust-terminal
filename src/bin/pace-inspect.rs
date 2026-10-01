@@ -18,6 +18,8 @@ const HELP: &str = "pace-inspect [--addr HOST:PORT] COMMAND\n\
   context X Y                  Secondary-click, e.g. to open a context menu\n\
   double-click X Y             Two primary clicks within one frame\n\
   drag X1 Y1 X2 Y2             Press at the first point, move, release at the second\n\
+  press X Y                    Press and hold the primary button, e.g. to inspect a drag\n\
+  release X Y                  Release the primary button\n\
   resize WIDTH HEIGHT          Resize using logical dimensions\n\
   settle [MAX_STEPS]            Wait for an idle frame (default: 60)\n\
 \n\
@@ -290,6 +292,29 @@ fn main() -> Result<()> {
                 pos: to,
                 button: PointerButton::Primary,
                 pressed: false,
+                modifiers: Modifiers::NONE,
+            }])?;
+            print_json(&Response::Done)?;
+        }
+        "press" | "release" => {
+            ensure!(
+                arguments.len() == 2,
+                "{command} requires X Y logical coordinates"
+            );
+            let pos = pos2(number(&arguments[0], "X")?, number(&arguments[1], "Y")?);
+            ensure!(
+                pos.x.is_finite() && pos.y.is_finite(),
+                "coordinates must be finite"
+            );
+            // The pointer arrives a frame before the button, as in a real gesture.
+            client.events(vec![
+                Event::ModifiersChanged(Modifiers::NONE),
+                Event::PointerMoved(pos),
+            ])?;
+            client.events(vec![Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed: command == "press",
                 modifiers: Modifiers::NONE,
             }])?;
             print_json(&Response::Done)?;
