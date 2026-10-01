@@ -13,7 +13,7 @@ use eframe::egui::{
     self, Align, Align2, Id, Key, Layout, Modifiers, Pos2, Rect, Sense, Vec2, WidgetInfo,
     WidgetType, vec2,
 };
-use pace_model::{Axis, PaneId, Placement, WorkspaceId};
+use pace_model::{Axis, Destination, PaneId, WorkspaceId};
 
 pub struct PaletteView<'a> {
     pub pane: Option<PaneId>,
@@ -188,7 +188,7 @@ fn commands(view: &PaletteView) -> Vec<Command> {
                     Icon::ArrowUpRight,
                     format!("Move terminal to {}", workspace.name),
                     "",
-                    [Action::MovePane(pane, Placement::Workspace(workspace.id))],
+                    [Action::MovePane(pane, Destination::Workspace(workspace.id))],
                 )
             });
         }
@@ -562,7 +562,7 @@ mod tests {
         );
         assert!(matches!(
             list[1].1[..],
-            [Action::MovePane(pane, Placement::Workspace(workspace))]
+            [Action::MovePane(pane, Destination::Workspace(workspace))]
                 if pane == PaneId::new(7) && workspace == WorkspaceId::new(3)
         ));
     }

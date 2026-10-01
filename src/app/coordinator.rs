@@ -222,8 +222,8 @@ impl App {
             Action::Ratio(split, ratio) => {
                 self.dispatch(ctx, Command::SetSplitRatio { split, ratio })
             }
-            Action::MovePane(pane, placement) => {
-                self.dispatch(ctx, Command::MovePane { pane, placement })
+            Action::MovePane(pane, destination) => {
+                self.dispatch(ctx, Command::MovePane { pane, destination })
             }
             Action::ClosePane(pane) => self.request_close(ctx, Close::Pane(pane)),
             Action::CloseWorkspace(id) => self.request_close(ctx, Close::Workspace(id)),
@@ -267,7 +267,14 @@ impl App {
                 };
             }
             Action::ToggleSidebar => {
-                self.dispatch(ctx, Command::SetSidebar(!self.controller.model().sidebar()))
+                let shown = self.controller.model().sidebar();
+                self.ui.sidebar_slide = Some(ui::chrome::SidebarSlide::toggled(
+                    self.ui.sidebar_slide,
+                    shown,
+                    ctx.input(|input| input.time),
+                ));
+                self.dispatch(ctx, Command::SetSidebar(!shown));
+                ctx.request_repaint();
             }
             Action::SidebarWidth(width) => {
                 let config = Config {

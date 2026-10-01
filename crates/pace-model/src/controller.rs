@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 /// Where a moved pane lands. The pane keeps its session and identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Placement {
+pub enum Destination {
     /// Against one edge of another pane, in that pane's workspace.
     Beside { pane: PaneId, edge: Edge },
     /// In the place of another pane of the same workspace, which takes its place.
@@ -36,7 +36,7 @@ pub enum Command {
     /// Moving the last pane out of a workspace removes that workspace.
     MovePane {
         pane: PaneId,
-        placement: Placement,
+        destination: Destination,
     },
     ClosePane(PaneId),
     CloseWorkspace(WorkspaceId),
@@ -302,7 +302,7 @@ impl Controller {
                 ws.active = pane;
                 self.model.active = Some(workspace);
             }
-            Command::MovePane { pane, placement } => dirty = self.move_pane(pane, placement)?,
+            Command::MovePane { pane, destination } => dirty = self.move_pane(pane, destination)?,
             Command::ClosePane(pane) => {
                 let workspace = self
                     .model
@@ -447,14 +447,14 @@ impl Controller {
 
     /// Reports whether anything changed. Sessions are untouched: a pane's
     /// identity and generation do not depend on where it is shown.
-    fn move_pane(&mut self, pane: PaneId, placement: Placement) -> Result<bool, Error> {
+    fn move_pane(&mut self, pane: PaneId, destination: Destination) -> Result<bool, Error> {
         let source = self
             .model
             .workspace_for_pane(pane)
             .ok_or(Error::UnknownPane(pane))?;
-        let (target, edge) = match placement {
-            Placement::Beside { pane: target, edge } => (target, edge),
-            Placement::Swap(other) => {
+        let (target, edge) = match destination {
+            Destination::Beside { pane: target, edge } => (target, edge),
+            Destination::Swap(other) => {
                 let ws = self.model.workspace_mut(source)?;
                 if ws.pane(other).is_none() {
                     return Err(Error::UnknownPane(other));
@@ -464,7 +464,7 @@ impl Controller {
                 ws.active = pane;
                 return Ok(changed);
             }
-            Placement::Workspace(workspace) => {
+            Destination::Workspace(workspace) => {
                 let ws = self
                     .model
                     .workspace(workspace)
@@ -810,7 +810,7 @@ mod tests {
         let effects = controller
             .dispatch(Command::MovePane {
                 pane: first,
-                placement: Placement::Beside {
+                destination: Destination::Beside {
                     pane: third,
                     edge: Edge::Bottom,
                 },
@@ -855,25 +855,25 @@ mod tests {
             .unwrap();
         let before = controller.model().clone();
         let generation = controller.generation();
-        for placement in [
-            Placement::Beside {
+        for destination in [
+            Destination::Beside {
                 pane: first,
                 edge: Edge::Right,
             },
-            Placement::Beside {
+            Destination::Beside {
                 pane: second,
                 edge: Edge::Left,
             },
-            Placement::Swap(second),
-            Placement::Workspace(workspace),
+            Destination::Swap(second),
+            Destination::Workspace(workspace),
         ] {
             let effects = controller
                 .dispatch(Command::MovePane {
                     pane: second,
-                    placement,
+                    destination,
                 })
                 .unwrap();
-            assert!(effects.is_empty(), "{placement:?}");
+            assert!(effects.is_empty(), "{destination:?}");
         }
         assert_eq!(controller.model(), &before);
         assert_eq!(controller.generation(), generation);
@@ -888,7 +888,7 @@ mod tests {
         controller
             .dispatch(Command::MovePane {
                 pane: third,
-                placement: Placement::Swap(first),
+                destination: Destination::Swap(first),
             })
             .unwrap();
         let ws = controller.model().workspace(workspace).unwrap();
@@ -908,7 +908,7 @@ mod tests {
         let effects = controller
             .dispatch(Command::MovePane {
                 pane: second,
-                placement: Placement::Workspace(other),
+                destination: Destination::Workspace(other),
             })
             .unwrap();
         // The view stays on the source workspace, whose neighbour takes focus.
@@ -956,7 +956,7 @@ mod tests {
             controller
                 .dispatch(Command::MovePane {
                     pane: *arrivals.last().unwrap(),
-                    placement: Placement::Workspace(home),
+                    destination: Destination::Workspace(home),
                 })
                 .unwrap();
         }
@@ -987,7 +987,7 @@ mod tests {
         let effects = controller
             .dispatch(Command::MovePane {
                 pane: alone,
-                placement: Placement::Beside {
+                destination: Destination::Beside {
                     pane: first,
                     edge: Edge::Left,
                 },
@@ -1022,31 +1022,31 @@ mod tests {
         let third = controller.model().active_pane().unwrap();
         let before = controller.model().clone();
         let generation = controller.generation();
-        for (pane, placement, error) in [
-            (third, Placement::Workspace(home), Error::PaneLimit),
+        for (pane, destination, error) in [
+            (third, Destination::Workspace(home), Error::PaneLimit),
             (
                 third,
-                Placement::Beside {
+                Destination::Beside {
                     pane: second,
                     edge: Edge::Top,
                 },
                 Error::PaneLimit,
             ),
             // Positions are exchanged only inside one workspace.
-            (third, Placement::Swap(first), Error::UnknownPane(first)),
+            (third, Destination::Swap(first), Error::UnknownPane(first)),
             (
                 third,
-                Placement::Workspace(WorkspaceId::new(99)),
+                Destination::Workspace(WorkspaceId::new(99)),
                 Error::UnknownWorkspace(WorkspaceId::new(99)),
             ),
             (
                 PaneId::new(99),
-                Placement::Workspace(other),
+                Destination::Workspace(other),
                 Error::UnknownPane(PaneId::new(99)),
             ),
         ] {
             assert_eq!(
-                controller.dispatch(Command::MovePane { pane, placement }),
+                controller.dispatch(Command::MovePane { pane, destination }),
                 Err(error)
             );
         }
@@ -1056,7 +1056,7 @@ mod tests {
         controller
             .dispatch(Command::MovePane {
                 pane: first,
-                placement: Placement::Beside {
+                destination: Destination::Beside {
                     pane: second,
                     edge: Edge::Bottom,
                 },
@@ -1161,7 +1161,7 @@ mod tests {
                 },
                 6 => Command::MovePane {
                     pane,
-                    placement: Placement::Beside {
+                    destination: Destination::Beside {
                         pane: other,
                         edge: [Edge::Left, Edge::Right, Edge::Top, Edge::Bottom]
                             [(sequence.rotate_right(41) as usize) % 4],
@@ -1169,11 +1169,11 @@ mod tests {
                 },
                 7 => Command::MovePane {
                     pane,
-                    placement: Placement::Swap(other),
+                    destination: Destination::Swap(other),
                 },
                 8 => Command::MovePane {
                     pane: other,
-                    placement: Placement::Workspace(workspace),
+                    destination: Destination::Workspace(workspace),
                 },
                 _ => Command::SelectWorkspace(workspace),
             };

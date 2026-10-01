@@ -10,7 +10,7 @@ use eframe::egui::{
     self, Align, Align2, CursorIcon, Id, LayerId, Layout, Order, Pos2, Rect, Sense, Stroke,
     StrokeKind, Ui, UiBuilder, Vec2, WidgetInfo, WidgetType, vec2,
 };
-use pace_model::{Axis, Edge, PaneId, Placement};
+use pace_model::{Axis, Destination, Edge, PaneId};
 use std::collections::BTreeMap;
 use terminal_core::{Mode as TermMode, SessionMetadata, SessionStatus, ViewportSnapshot};
 
@@ -40,6 +40,15 @@ pub struct Stage<'a> {
     pub drag: Option<PaneId>,
 }
 
+/// Where part of the layout is drawn, and where it rests once the chrome stops
+/// moving. Terminals are measured at rest, so a sliding sidebar resizes each
+/// shell once instead of on every frame.
+#[derive(Clone, Copy)]
+pub struct Placement {
+    pub drawn: Rect,
+    pub settled: Rect,
+}
+
 #[derive(Default)]
 pub struct StageOutput {
     /// Terminal grid of the focused pane, for input and pointer routing.
@@ -49,13 +58,13 @@ pub struct StageOutput {
     /// The terminal whose header is being dragged this frame.
     pub dragging: Option<PaneId>,
     /// Where a carried terminal would land, and the area it would take.
-    pub drop: Option<(Placement, Rect)>,
+    pub drop: Option<(Destination, Rect)>,
 }
 
 /// Where a terminal dropped at `pointer` lands on the pane it is over: against
 /// the nearest edge, or in the pane's own place when dropped near its centre.
 /// The rectangle is the area the terminal would take.
-fn drop_placement(card: Rect, pointer: Pos2, pane: PaneId) -> (Placement, Rect) {
+fn drop_destination(card: Rect, pointer: Pos2, pane: PaneId) -> (Destination, Rect) {
     let x = (pointer.x - card.left()) / card.width().max(1.0);
     let y = (pointer.y - card.top()) / card.height().max(1.0);
     let (distance, edge) = [
@@ -68,7 +77,7 @@ fn drop_placement(card: Rect, pointer: Pos2, pane: PaneId) -> (Placement, Rect) 
     .min_by(|a, b| a.0.total_cmp(&b.0))
     .unwrap_or((0.0, Edge::Right));
     if distance > 0.3 {
-        return (Placement::Swap(pane), card);
+        return (Destination::Swap(pane), card);
     }
     let half = metrics::GUTTER * 0.5;
     let centre = card.center();
@@ -78,7 +87,7 @@ fn drop_placement(card: Rect, pointer: Pos2, pane: PaneId) -> (Placement, Rect) 
         Edge::Top => Rect::from_min_max(card.min, Pos2::new(card.right(), centre.y - half)),
         Edge::Bottom => Rect::from_min_max(Pos2::new(card.left(), centre.y + half), card.max),
     };
-    (Placement::Beside { pane, edge }, area)
+    (Destination::Beside { pane, edge }, area)
 }
 
 /// The program or shell a pane is showing. Prompt-style titles such as
@@ -398,13 +407,14 @@ fn pane_header(
 fn draw_pane(
     ui: &mut Ui,
     id: PaneId,
-    card: Rect,
+    place: Placement,
     pane: &mut PaneRender,
     stage: &Stage,
     actions: &mut Vec<Action>,
     output: &mut StageOutput,
 ) {
     let p = stage.p;
+    let card = place.drawn;
     let Some(presentation) = stage.presentations.get(&id) else {
         ui.painter().rect_filled(card, metrics::PANE_RADIUS, p.bg);
         return;
@@ -416,12 +426,15 @@ fn draw_pane(
     } else {
         0.0
     };
-    let body_min = card.min + vec2(12.0, if stage.multiple { header_height } else { 10.0 });
-    let body = Rect::from_min_max(body_min, (card.max - vec2(12.0, 10.0)).max(body_min));
+    let inset = |card: Rect| {
+        let min = card.min + vec2(12.0, if stage.multiple { header_height } else { 10.0 });
+        Rect::from_min_max(min, (card.max - vec2(12.0, 10.0)).max(min))
+    };
+    let body = inset(card);
 
     // Measure and prepare first, so the surface matches a background the
     // running program may have set.
-    if let Some(geometry) = pane.cache.geometry(ui, body, stage.config) {
+    if let Some(geometry) = pane.cache.geometry(ui, inset(place.settled), stage.config) {
         actions.push(Action::Resize(id, geometry));
     }
     pane.cache
@@ -560,7 +573,7 @@ fn draw_pane(
         && let Some(pointer) = ui.ctx().pointer_interact_pos()
         && card.contains(pointer)
     {
-        output.drop = Some(drop_placement(card, pointer, id));
+        output.drop = Some(drop_destination(card, pointer, id));
     }
 
     if presentation.starting {
@@ -650,10 +663,42 @@ fn draw_pane(
     }
 }
 
+/// The two sides of a split and the gutter between them.
+fn divide(rect: Rect, vertical: bool, ratio: f32) -> (Rect, Rect, Rect) {
+    let length = if vertical {
+        rect.width()
+    } else {
+        rect.height()
+    };
+    let min = if vertical { 200.0 } else { 130.0 };
+    let low = (min / length).min(0.45);
+    let cut = length * ratio.clamp(low, 1.0 - low);
+    let half = metrics::GUTTER * 0.5;
+    if vertical {
+        (
+            Rect::from_min_max(rect.min, Pos2::new(rect.left() + cut - half, rect.bottom())),
+            Rect::from_min_max(Pos2::new(rect.left() + cut + half, rect.top()), rect.max),
+            Rect::from_min_max(
+                Pos2::new(rect.left() + cut - half, rect.top()),
+                Pos2::new(rect.left() + cut + half, rect.bottom()),
+            ),
+        )
+    } else {
+        (
+            Rect::from_min_max(rect.min, Pos2::new(rect.right(), rect.top() + cut - half)),
+            Rect::from_min_max(Pos2::new(rect.left(), rect.top() + cut + half), rect.max),
+            Rect::from_min_max(
+                Pos2::new(rect.left(), rect.top() + cut - half),
+                Pos2::new(rect.right(), rect.top() + cut + half),
+            ),
+        )
+    }
+}
+
 pub fn draw_node(
     ui: &mut Ui,
     node: &pace_model::Layout,
-    rect: Rect,
+    place: Placement,
     panes: &mut BTreeMap<PaneId, PaneRender>,
     stage: &Stage,
     actions: &mut Vec<Action>,
@@ -662,7 +707,7 @@ pub fn draw_node(
     match node {
         pace_model::Layout::Leaf(id) => {
             if let Some(pane) = panes.get_mut(id) {
-                draw_pane(ui, *id, rect, pane, stage, actions, output);
+                draw_pane(ui, *id, place, pane, stage, actions, output);
             }
         }
         pace_model::Layout::Split {
@@ -673,37 +718,14 @@ pub fn draw_node(
             second,
         } => {
             let vertical = *axis == Axis::Vertical;
+            let rect = place.drawn;
             let length = if vertical {
                 rect.width()
             } else {
                 rect.height()
             };
-            let min = if vertical { 200.0 } else { 130.0 };
-            let low = (min / length).min(0.45);
-            let cut = length * ratio.clamp(low, 1.0 - low);
-            let half = metrics::GUTTER * 0.5;
-            let (a, b, gap) = if vertical {
-                (
-                    Rect::from_min_max(
-                        rect.min,
-                        Pos2::new(rect.left() + cut - half, rect.bottom()),
-                    ),
-                    Rect::from_min_max(Pos2::new(rect.left() + cut + half, rect.top()), rect.max),
-                    Rect::from_min_max(
-                        Pos2::new(rect.left() + cut - half, rect.top()),
-                        Pos2::new(rect.left() + cut + half, rect.bottom()),
-                    ),
-                )
-            } else {
-                (
-                    Rect::from_min_max(rect.min, Pos2::new(rect.right(), rect.top() + cut - half)),
-                    Rect::from_min_max(Pos2::new(rect.left(), rect.top() + cut + half), rect.max),
-                    Rect::from_min_max(
-                        Pos2::new(rect.left(), rect.top() + cut - half),
-                        Pos2::new(rect.right(), rect.top() + cut + half),
-                    ),
-                )
-            };
+            let (a, b, gap) = divide(rect, vertical, *ratio);
+            let (settled_a, settled_b, _) = divide(place.settled, vertical, *ratio);
             // A slightly wider grab area than the visible gutter.
             let grab = if vertical {
                 gap.expand2(vec2(2.0, 0.0))
@@ -760,8 +782,10 @@ pub fn draw_node(
                     ),
                 );
             }
-            draw_node(ui, first, a, panes, stage, actions, output);
-            draw_node(ui, second, b, panes, stage, actions, output);
+            for (node, drawn, settled) in [(first, a, settled_a), (second, b, settled_b)] {
+                let place = Placement { drawn, settled };
+                draw_node(ui, node, place, panes, stage, actions, output);
+            }
         }
     }
 }
@@ -788,10 +812,10 @@ pub fn pane_drag(ui: &mut Ui, stage: &Stage, output: &StageOutput, actions: &mut
     let p = stage.p;
     let target = stage.drag.and(output.drop);
     if let Some(pane) = stage.drag
-        && let Some((placement, _)) = target
+        && let Some((destination, _)) = target
         && ctx.input(|input| input.pointer.primary_released())
     {
-        actions.push(Action::MovePane(pane, placement));
+        actions.push(Action::MovePane(pane, destination));
     }
 
     // The preview glides between drop areas and fades where it was released.
@@ -822,7 +846,8 @@ pub fn pane_drag(ui: &mut Ui, stage: &Stage, output: &StageOutput, actions: &mut
             Stroke::new(1.5, theme::tint(p.accent, 0.9 * opacity)),
             StrokeKind::Inside,
         );
-        if matches!(target, Some((Placement::Swap(_), _))) && area.width().min(area.height()) > 48.0
+        if matches!(target, Some((Destination::Swap(_), _)))
+            && area.width().min(area.height()) > 48.0
         {
             let badge = Rect::from_center_size(area.center(), Vec2::splat(32.0));
             capsule(painter, badge, p);
@@ -1025,10 +1050,14 @@ mod tests {
                         search: "",
                         drag: self.drag,
                     };
+                    let rect = ui.max_rect();
                     draw_node(
                         ui,
                         &self.layout,
-                        ui.max_rect(),
+                        Placement {
+                            drawn: rect,
+                            settled: rect,
+                        },
                         &mut self.panes,
                         &stage,
                         &mut actions,
@@ -1063,11 +1092,11 @@ mod tests {
         }
     }
 
-    fn moves(actions: &[Action]) -> Vec<(PaneId, Placement)> {
+    fn moves(actions: &[Action]) -> Vec<(PaneId, Destination)> {
         actions
             .iter()
             .filter_map(|action| match action {
-                Action::MovePane(pane, placement) => Some((*pane, *placement)),
+                Action::MovePane(pane, destination) => Some((*pane, *destination)),
                 _ => None,
             })
             .collect()
@@ -1076,15 +1105,15 @@ mod tests {
     #[test]
     fn dragging_a_header_onto_another_pane_moves_that_terminal_once_on_release() {
         let (first, second) = (PaneId::new(1), PaneId::new(2));
-        for (pos, placement) in [
+        for (pos, destination) in [
             (
                 Pos2::new(780.0, 200.0),
-                Placement::Beside {
+                Destination::Beside {
                     pane: second,
                     edge: Edge::Right,
                 },
             ),
-            (Pos2::new(600.0, 200.0), Placement::Swap(second)),
+            (Pos2::new(600.0, 200.0), Destination::Swap(second)),
         ] {
             let mut bench = Bench::new();
             let carried = bench.carry_to(pos);
@@ -1096,7 +1125,7 @@ mod tests {
                     .any(|action| matches!(action, Action::Focus(pane) if *pane == first)),
                 "the carried terminal takes focus"
             );
-            assert_eq!(moves(&bench.button(pos, false)), [(first, placement)]);
+            assert_eq!(moves(&bench.button(pos, false)), [(first, destination)]);
             assert_eq!(bench.drag, None);
             assert!(moves(&bench.frame(vec![])).is_empty());
         }
@@ -1140,8 +1169,8 @@ mod tests {
     fn a_drop_lands_against_the_nearest_edge_or_swaps_near_the_centre() {
         let card = Rect::from_min_size(Pos2::new(100.0, 50.0), vec2(400.0, 200.0));
         let pane = PaneId::new(3);
-        let at = |x: f32, y: f32| drop_placement(card, Pos2::new(x, y), pane);
-        let beside = |edge| Placement::Beside { pane, edge };
+        let at = |x: f32, y: f32| drop_destination(card, Pos2::new(x, y), pane);
+        let beside = |edge| Destination::Beside { pane, edge };
         assert_eq!(at(120.0, 150.0).0, beside(Edge::Left));
         assert_eq!(at(480.0, 150.0).0, beside(Edge::Right));
         assert_eq!(at(300.0, 60.0).0, beside(Edge::Top));
@@ -1149,7 +1178,7 @@ mod tests {
         // Distance is relative to the pane, so a wide pane's corner still
         // resolves to the edge the pointer is proportionally closest to.
         assert_eq!(at(180.0, 60.0).0, beside(Edge::Top));
-        assert_eq!(at(300.0, 150.0), (Placement::Swap(pane), card));
+        assert_eq!(at(300.0, 150.0), (Destination::Swap(pane), card));
         // Each edge takes its half of the pane, less the gutter between them.
         let (_, left) = at(120.0, 150.0);
         let (_, right) = at(480.0, 150.0);
@@ -1159,6 +1188,86 @@ mod tests {
         let (_, bottom) = at(300.0, 240.0);
         assert_eq!(top.bottom() + metrics::GUTTER, bottom.top());
         assert_eq!((top.min, bottom.max), (card.min, card.max));
+    }
+
+    #[test]
+    fn a_sliding_stage_resizes_each_terminal_once_to_where_it_rests() {
+        let ctx = egui::Context::default();
+        theme::fonts(&ctx);
+        let (left, right) = (PaneId::new(1), PaneId::new(2));
+        let layout = pace_model::Layout::Split {
+            id: pace_model::SplitId::new(1),
+            axis: Axis::Vertical,
+            ratio: 0.5,
+            first: Box::new(pace_model::Layout::Leaf(left)),
+            second: Box::new(pace_model::Layout::Leaf(right)),
+        };
+        let presentations: BTreeMap<_, _> = [left, right]
+            .map(|id| {
+                let presentation = PanePresentation {
+                    metadata: metadata("zsh"),
+                    snapshot: ViewportSnapshot::blank(80, 24),
+                    starting: false,
+                };
+                (id, presentation)
+            })
+            .into();
+        let mut panes: BTreeMap<_, _> = [left, right].map(|id| (id, PaneRender::new(id))).into();
+        let config = Config::default();
+        let settled = Rect::from_min_max(Pos2::new(216.0, 44.0), Pos2::new(1174.0, 754.0));
+        let mut resizes = Vec::new();
+        // The sidebar slides in: the stage's leading edge moves every frame.
+        for edge in [6.0, 60.0, 140.0, 200.0, 216.0, 216.0] {
+            let mut actions = Vec::new();
+            let mut frame = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1180.0, 760.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    draw_node(
+                        ui,
+                        &layout,
+                        Placement {
+                            drawn: Rect::from_min_max(Pos2::new(edge, 44.0), settled.max),
+                            settled,
+                        },
+                        &mut panes,
+                        &Stage {
+                            presentations: &presentations,
+                            active: left,
+                            multiple: true,
+                            zoomed: false,
+                            keyboard: true,
+                            previous_terminal: None,
+                            config: &config,
+                            p: Palette::for_config(&config),
+                            search: "",
+                            drag: None,
+                        },
+                        &mut actions,
+                        &mut StageOutput::default(),
+                    );
+                },
+            );
+            frame.textures_delta.clear();
+            resizes.extend(actions.into_iter().filter_map(|action| match action {
+                Action::Resize(id, geometry) => Some((id, geometry)),
+                _ => None,
+            }));
+        }
+        let (_, _, gap) = divide(settled, true, 0.5);
+        assert_eq!(
+            resizes.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            [left, right]
+        );
+        for (width, (_, geometry)) in [gap.left() - settled.left(), settled.right() - gap.right()]
+            .into_iter()
+            .zip(&resizes)
+        {
+            // Each body is inset 12 points from its card on both sides.
+            assert_eq!(geometry.pixel_width, (width - 24.0) as u16);
+        }
     }
 
     #[test]

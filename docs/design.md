@@ -85,6 +85,12 @@ icon buttons keep a 28-point target around a 16-point glyph.
   While a terminal is carried, every other workspace's row is a drop
   destination and takes the accent under the pointer.
   The sidebar yields to terminal content below 820 points of window width.
+  Toggling it slides it in or out over 160 ms, from the button, the shortcut
+  or the command palette alike. The window controls stay in place, the toggle
+  travels between the sidebar's trailing edge and its place in the toolbar, and
+  the terminals follow the sidebar's edge. Each shell is resized once, to the
+  size it will rest at, and a toggle reversed midway turns around from where it
+  is. Restored state and the width threshold take effect at once.
 - **Toolbar.** Belongs to the content area and drags the window. Leading: the
   workspace name and the focused terminal's program and directory. Centre: a
   command field that opens the palette, replaced by the search field while
