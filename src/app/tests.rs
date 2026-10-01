@@ -41,6 +41,7 @@ fn fixture(root: &std::path::Path) -> (App, mpsc::SyncSender<Startup>) {
         ime_composing: false,
         terminal_focus: None,
         overlay_was_open: false,
+        _font_shortcut_monitor: Default::default(),
         diagnostics: diagnostics::Diagnostics::new(false),
     };
     (app, sender)
@@ -779,6 +780,192 @@ fn terminal_font_shortcuts_use_primary_shift_in_preferences_and_respect_limits()
         assert_eq!(app.config.font_size, Config::default().font_size);
         assert_eq!(ctx.zoom_factor(), 1.4);
     }
+}
+
+#[test]
+fn latin_american_font_shortcuts_use_the_labeled_keys_in_terminal_and_preferences() {
+    for overlay in [OverlayState::None, OverlayState::Settings] {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _sender) = fixture(root.path());
+        let ctx = egui::Context::default();
+        ctx.options_mut(|options| options.zoom_with_keyboard = false);
+        app.startup = None;
+        app.ui.overlay = overlay;
+        let modifiers =
+            egui::Modifiers::MAC_CMD | egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
+        for (logical, physical, text, expected) in [
+            (egui::Key::CloseBracket, egui::Key::CloseBracket, "*", 15.0),
+            (egui::Key::Slash, egui::Key::Slash, "_", 14.0),
+            (egui::Key::Equals, egui::Key::Num0, "=", 14.0),
+        ] {
+            if physical == egui::Key::Num0 {
+                app.config.font_size = 20.0;
+            }
+            ctx.run_ui(
+                egui::RawInput {
+                    events: vec![
+                        key(logical, Some(physical), modifiers),
+                        egui::Event::Text(text.into()),
+                        egui::Event::Key {
+                            key: logical,
+                            physical_key: Some(physical),
+                            pressed: false,
+                            repeat: false,
+                            modifiers,
+                        },
+                        egui::Event::Text("other input".into()),
+                    ],
+                    ..Default::default()
+                },
+                |ui| {
+                    app.shortcuts_with_keymap(ui.ctx(), |key| match key {
+                        egui::Key::CloseBracket => Some(egui::Key::Plus),
+                        egui::Key::Slash => Some(egui::Key::Minus),
+                        egui::Key::Num0 => Some(egui::Key::Num0),
+                        _ => None,
+                    });
+                    assert_eq!(app.config.font_size, expected, "{physical:?}");
+                    assert_eq!(app.config.window_zoom, 1.0);
+                    assert_eq!(
+                        ui.input(|input| input.events.clone()),
+                        [egui::Event::Text("other input".into())]
+                    );
+                },
+            )
+            .textures_delta
+            .clear();
+        }
+    }
+}
+
+#[test]
+fn repeated_font_shortcuts_in_one_frame_accumulate_and_do_not_change_app_zoom() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    app.startup = None;
+    let modifiers = egui::Modifiers::MAC_CMD | egui::Modifiers::SHIFT;
+    ctx.run_ui(
+        egui::RawInput {
+            events: vec![
+                key(egui::Key::Plus, None, modifiers),
+                key(egui::Key::Plus, None, modifiers),
+                key(egui::Key::Minus, None, modifiers),
+            ],
+            ..Default::default()
+        },
+        |ui| {
+            app.shortcuts(ui.ctx());
+            assert_eq!(app.config.font_size, 15.0);
+            assert_eq!(app.config.window_zoom, 1.0);
+            assert!(ui.input(|input| input.events.is_empty()));
+        },
+    )
+    .textures_delta
+    .clear();
+}
+
+#[test]
+fn font_shortcuts_preserve_ordinary_symbol_text_in_the_same_frame() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    ctx.options_mut(|options| options.zoom_with_keyboard = false);
+    app.startup = None;
+    let modifiers = egui::Modifiers::MAC_CMD | egui::Modifiers::SHIFT;
+    let ordinary = vec![
+        egui::Event::ModifiersChanged(egui::Modifiers::SHIFT),
+        key(
+            egui::Key::CloseBracket,
+            Some(egui::Key::CloseBracket),
+            egui::Modifiers::SHIFT,
+        ),
+        egui::Event::Text("*".into()),
+    ];
+    let mut events = vec![
+        key(
+            egui::Key::CloseBracket,
+            Some(egui::Key::CloseBracket),
+            modifiers,
+        ),
+        egui::Event::Text("*".into()),
+        egui::Event::Key {
+            key: egui::Key::CloseBracket,
+            physical_key: Some(egui::Key::CloseBracket),
+            pressed: false,
+            repeat: false,
+            modifiers,
+        },
+    ];
+    events.extend(ordinary.clone());
+    ctx.run_ui(
+        egui::RawInput {
+            events,
+            ..Default::default()
+        },
+        |ui| {
+            app.shortcuts_with_keymap(ui.ctx(), |_| Some(egui::Key::Plus));
+            assert_eq!(app.config.font_size, 15.0);
+            assert_eq!(ui.input(|input| input.events.clone()), ordinary);
+        },
+    )
+    .textures_delta
+    .clear();
+}
+
+#[test]
+fn font_keymap_resolution_leaves_unrelated_modifiers_and_keys_with_their_owner() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    ctx.options_mut(|options| options.zoom_with_keyboard = false);
+    app.startup = None;
+    for modifiers in [
+        egui::Modifiers::NONE,
+        egui::Modifiers::SHIFT,
+        egui::Modifiers::MAC_CMD | egui::Modifiers::ALT | egui::Modifiers::SHIFT,
+        egui::Modifiers::MAC_CMD | egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+    ] {
+        let event = key(
+            egui::Key::CloseBracket,
+            Some(egui::Key::CloseBracket),
+            modifiers,
+        );
+        ctx.run_ui(
+            egui::RawInput {
+                events: vec![event.clone()],
+                ..Default::default()
+            },
+            |ui| {
+                let original = ui.input(|input| input.events.clone());
+                app.shortcuts_with_keymap(ui.ctx(), |_| panic!("not a font shortcut"));
+                assert_eq!(ui.input(|input| input.events.clone()), original);
+            },
+        )
+        .textures_delta
+        .clear();
+    }
+    let event = key(
+        egui::Key::Questionmark,
+        Some(egui::Key::Slash),
+        egui::Modifiers::MAC_CMD | egui::Modifiers::SHIFT,
+    );
+    ctx.run_ui(
+        egui::RawInput {
+            events: vec![event.clone()],
+            ..Default::default()
+        },
+        |ui| {
+            let original = ui.input(|input| input.events.clone());
+            // On a US layout this key is /, rather than Latin America's -.
+            app.shortcuts_with_keymap(ui.ctx(), |_| None);
+            assert_eq!(ui.input(|input| input.events.clone()), original);
+        },
+    )
+    .textures_delta
+    .clear();
+    assert_eq!(app.config.font_size, 14.0);
+    assert_eq!(app.config.window_zoom, 1.0);
 }
 
 #[test]

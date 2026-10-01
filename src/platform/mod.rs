@@ -2,4 +2,5 @@
 
 pub mod clipboard;
 pub mod fonts;
+pub(crate) mod keyboard;
 pub mod window;
