@@ -37,7 +37,10 @@ cargo build --release --locked --bin pace
 
 Rust 1.97.1 is pinned by `rust-toolchain.toml` and is the declared minimum for all
 packages. CI tests default and inspection configurations on that baseline on
-Linux, macOS and Windows. Latest stable gets an all-target/all-feature compile
+Linux, macOS (Apple Silicon) and Windows. Apple Silicon is the primary macOS
+target; native Intel macOS build/test coverage runs on release tags through
+[release.yml](../.github/workflows/release.yml).
+Latest stable gets an all-target/all-feature compile
 check rather than a second copy of the Linux test suite. Formatting and
 architecture checks precede compilation; documentation/evidence-only PRs skip
 the build matrix while retaining successful required statuses. The `ci` Cargo
