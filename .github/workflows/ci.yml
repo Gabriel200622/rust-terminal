@@ -2,20 +2,22 @@ name: CI
 
 on:
   pull_request:
+  merge_group:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # New commits replace only runs for the same PR; other events stay independent.
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   preflight:
-    name: Fast validation
+    name: Classify changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -23,35 +25,51 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          # The PR merge commit's first parent is the current base branch.
+          # Normal PRs compare against the merge commit's first parent.
           fetch-depth: 2
       - name: Classify changes
         id: changes
         shell: python
+        env:
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
           import os
           from pathlib import Path
           import subprocess
 
-          paths = subprocess.check_output(['git', 'diff', '--name-only', '-z', 'HEAD^1', 'HEAD']).decode('utf-8').split('\0')
+          base = 'HEAD^1'
+          if os.environ['GITHUB_EVENT_NAME'] == 'merge_group':
+              # Include every queued PR, not just the last merge's first-parent diff.
+              base = os.environ['MERGE_GROUP_BASE_SHA']
+              subprocess.run(['git', 'fetch', '--no-tags', '--depth=1', 'origin', base], check=True)
+          paths = subprocess.check_output(['git', 'diff', '--name-only', '-z', base, 'HEAD']).decode('utf-8').split('\0')
           code = any(path and not (path.endswith('.md') or path.startswith('artifacts/')) for path in paths)
           with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:
               output.write(f'code={str(code).lower()}\n')
           print('Source/configuration changes: run native matrix' if code else 'Documentation/evidence only: skip compilation')
+
+  # Formatting and architecture checks do not gate independent native builds.
+  validate:
+    name: Fast validation
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
-        if: steps.changes.outputs.code == 'true'
+        if: needs.preflight.outputs.code == 'true'
         with:
           toolchain: 1.97.1
           components: rustfmt
       - name: Check formatting
-        if: steps.changes.outputs.code == 'true'
+        if: needs.preflight.outputs.code == 'true'
         run: cargo fmt --all -- --check
       - name: Check dependency boundaries and checker regressions
         run: |
           python3 scripts/check-architecture.py
           python3 scripts/check-architecture.py --self-test
 
-  check:
+  native:
     name: Check (${{ matrix.check-name }})
     needs: preflight
     # Instantiate the matrix so documentation PRs emit the required per-OS names.
@@ -72,7 +90,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
-      - name: Require successful preflight
+      - name: Require successful change classification
         if: needs.preflight.result != 'success'
         run: exit 1
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -128,38 +146,61 @@ jobs:
   latest:
     name: Latest stable compatibility (Linux)
     needs: preflight
-    if: always() && (needs.preflight.result != 'success' || needs.preflight.outputs.code == 'true')
+    # Keep the job successful on documentation-only changes without compiling.
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Require successful preflight
+      - name: Require successful change classification
         if: needs.preflight.result != 'success'
         run: exit 1
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        if: needs.preflight.outputs.code == 'true'
       - run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y pkg-config libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+        if: needs.preflight.outputs.code == 'true'
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        if: needs.preflight.outputs.code == 'true'
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        if: needs.preflight.outputs.code == 'true'
         with:
           key: ci-latest
           cache-on-failure: true
       - name: Check all targets and features with the latest compiler
+        if: needs.preflight.outputs.code == 'true'
         run: cargo +stable check --profile ci --workspace --all-targets --all-features --locked
 
   # Keep the required status name while avoiding a separate cold GUI build.
-  # This gate succeeds only after the matrix (including Linux native inspection)
-  # succeeds; a failing or cancelled matrix cannot report native acceptance.
+  # Include fast validation so the existing ruleset still enforces it until
+  # required statuses are replaced by Check.
   native-linux:
     name: Isolated native inspection (Linux X11)
-    needs: [preflight, check]
-    if: always() && (needs.preflight.result != 'success' || needs.preflight.outputs.code == 'true')
+    needs: [preflight, validate, native]
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 1
     steps:
-      - name: Require successful preflight and native matrix
-        if: needs.preflight.result != 'success' || needs.check.result != 'success'
+      - name: Require successful classification, validation, and native matrix
+        if: needs.preflight.result != 'success' || needs.validate.result != 'success' || needs.native.result != 'success'
         run: exit 1
       - run: echo 'Native inspection and restoration passed in the Linux matrix job.'
+        if: needs.preflight.outputs.code == 'true'
+
+  # Require this single status in the main ruleset. Add every CI job to needs.
+  check:
+    name: Check
+    needs: [preflight, validate, native, latest, native-linux]
+    # Run even after failures/cancellations; a skipped gate cannot enforce results.
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every job to pass
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$RESULTS" | jq -e 'all(.[]; .result == "success")' > /dev/null
