@@ -27,6 +27,8 @@ Workspace navigation, independent shell panes, split layouts, scrollback, termin
 
 When no saved workspace can be restored, Pace opens a terminal in your home directory (`~`). Use `--cwd` to choose another starting directory.
 
+New workspace opens and selects a fresh shell at `~` immediately. Rename it later by double-clicking its sidebar row or choosing Rename workspace from its menu or the command palette.
+
 ```sh
 pace --cwd /path/to/project
 pace --config config.example.toml
