@@ -19,7 +19,7 @@ const HELP: &str = "pace-inspect [--addr HOST:PORT] COMMAND\n\
   double-click X Y             Two primary clicks within one frame\n\
   drag X1 Y1 X2 Y2             Press at the first point, move, release at the second\n\
   press X Y                    Press and hold the primary button, e.g. to inspect a drag\n\
-  release X Y                  Release the primary button\n\
+  release X Y                  Move to the point and release the primary button\n\
   resize WIDTH HEIGHT          Resize using logical dimensions\n\
   settle [MAX_STEPS]            Wait for an idle frame (default: 60)\n\
 \n\
@@ -306,7 +306,8 @@ fn main() -> Result<()> {
                 pos.x.is_finite() && pos.y.is_finite(),
                 "coordinates must be finite"
             );
-            // The pointer arrives a frame before the button, as in a real gesture.
+            // The pointer arrives a frame before the button changes, so the
+            // toolkit resolves the press or release against that position.
             client.events(vec![
                 Event::ModifiersChanged(Modifiers::NONE),
                 Event::PointerMoved(pos),

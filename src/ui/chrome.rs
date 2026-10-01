@@ -14,7 +14,7 @@ use eframe::egui::{
     Sense, Shadow, Stroke, StrokeKind, Ui, UiBuilder, Vec2, WidgetInfo, WidgetType,
     emath::GuiRounding as _, style::ScrollAnimation, vec2,
 };
-use pace_model::{PaneId, WorkspaceId};
+use pace_model::{Destination, PaneId, WorkspaceId};
 
 /// What the chrome needs to know about the frame it surrounds.
 pub struct ChromeView<'a> {
@@ -35,6 +35,8 @@ pub struct ChromeView<'a> {
     pub sidebar_width: f32,
     /// The window is wide enough to show a sidebar at all.
     pub sidebar_available: bool,
+    /// A terminal of the active workspace is being carried by its header.
+    pub pane_drag: Option<PaneId>,
 }
 
 const SIDEBAR_WIDTH: std::ops::RangeInclusive<f32> = 170.0..=360.0;
@@ -517,6 +519,8 @@ struct RowState {
     lift: f32,
     /// A row is held by the pointer, so rows give no hover feedback.
     dragging: bool,
+    /// A terminal carried from the stage, which this row may receive.
+    pane_drag: Option<PaneId>,
 }
 
 fn workspace_row(
@@ -532,6 +536,7 @@ fn workspace_row(
         selected,
         lift,
         dragging,
+        pane_drag,
     } = state;
     let response = ui.interact(
         row,
@@ -578,6 +583,32 @@ fn workspace_row(
             Stroke::new(1.5, p.accent),
             egui::StrokeKind::Inside,
         );
+    }
+    // A carried terminal can be dropped on any workspace but its own.
+    let receiving = pane_drag.filter(|_| !selected && ui.rect_contains_pointer(row));
+    let receive = animate(
+        ui.ctx(),
+        ui.id().with(("workspace-drop", workspace.id.get())),
+        receiving.is_some(),
+        0.12,
+    );
+    if receive > 0.0 {
+        painter.rect_filled(
+            row,
+            metrics::ROW_RADIUS,
+            theme::tint(p.accent, 0.2 * receive),
+        );
+        painter.rect_stroke(
+            row,
+            metrics::ROW_RADIUS,
+            Stroke::new(1.5, theme::tint(p.accent, 0.9 * receive)),
+            egui::StrokeKind::Inside,
+        );
+    }
+    if let Some(pane) = receiving
+        && ui.input(|input| input.pointer.primary_released())
+    {
+        actions.push(Action::MovePane(pane, Destination::Workspace(workspace.id)));
     }
 
     let identity = theme::identity_color(workspace.id.get(), p.dark);
@@ -668,7 +699,8 @@ fn workspace_row(
             format!("Actions for {}", workspace.name),
         )
     });
-    if (hovered && !dragging) || more_response.has_focus() {
+    // While a row or a terminal is carried, rows are destinations, not controls.
+    if (hovered && !dragging && pane_drag.is_none()) || more_response.has_focus() {
         if more_response.hovered() || menu_open {
             painter.rect_filled(more, 6, p.pressed);
         }
@@ -822,6 +854,7 @@ fn workspace_list(
                     0.12,
                 ),
                 dragging: held.is_some(),
+                pane_drag: view.pane_drag,
             },
             actions,
         );
@@ -1124,6 +1157,7 @@ mod tests {
                 sidebar_open: true,
                 sidebar_width: 216.0,
                 sidebar_available: true,
+                pane_drag: None,
             };
             let p = Palette::new(Config::default().theme);
             let side = Rect::from_min_size(Pos2::ZERO, vec2(216.0, self.height));
@@ -1323,6 +1357,99 @@ mod tests {
             SidebarSlide::toggled(Some(hide), false, 11.0).reveal(true, 11.0),
             Some(0.0)
         );
+    }
+
+    #[test]
+    fn a_carried_terminal_drops_on_another_workspace_row_but_not_its_own() {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(crate::platform::fonts::bundled_definitions());
+        let config = crate::config::Config::default();
+        theme::apply(&ctx, &config);
+        let workspaces: Vec<WorkspaceView> = [1, 2]
+            .into_iter()
+            .map(|id| WorkspaceView {
+                id: WorkspaceId::new(id),
+                name: format!("workspace {id}"),
+                cwd: "/srv/app".into(),
+                panes: 2,
+                running: true,
+            })
+            .collect();
+        let pane = PaneId::new(7);
+        let frame = |drag: Option<PaneId>, events: Vec<egui::Event>| {
+            let mut actions = Vec::new();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 600.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    sidebar(
+                        ui,
+                        Rect::from_min_size(Pos2::ZERO, vec2(216.0, 600.0)),
+                        Palette::for_config(&config),
+                        &ChromeView {
+                            workspaces: &workspaces,
+                            active: Some(WorkspaceId::new(1)),
+                            pane: Some(pane),
+                            subtitle: "",
+                            zoomed: false,
+                            window: Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 600.0)),
+                            sidebar: 1.0,
+                            sidebar_open: true,
+                            sidebar_width: 216.0,
+                            sidebar_available: true,
+                            pane_drag: drag,
+                        },
+                        &mut UiState::default(),
+                        &mut actions,
+                    );
+                },
+            );
+            output.textures_delta.clear();
+            actions
+        };
+        // Rows are 46 points tall, two points apart, below the list heading.
+        let own = Pos2::new(100.0, metrics::TOOLBAR_HEIGHT + 30.0 + 23.0);
+        let other = own + vec2(0.0, 48.0);
+        let release = |pos| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let press = |pos| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(None, vec![]);
+        for (pos, drag, expected) in [
+            (other, Some(pane), Some(WorkspaceId::new(2))),
+            (own, Some(pane), None),
+            // Without a carried terminal a release is an ordinary click.
+            (other, None, None),
+        ] {
+            frame(drag, vec![egui::Event::PointerMoved(pos), press(pos)]);
+            let moved: Vec<_> = frame(drag, vec![release(pos)])
+                .into_iter()
+                .filter_map(|action| match action {
+                    Action::MovePane(pane, Destination::Workspace(workspace)) => {
+                        Some((pane, workspace))
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                moved,
+                expected
+                    .map(|workspace| (pane, workspace))
+                    .into_iter()
+                    .collect::<Vec<_>>()
+            );
+        }
     }
 
     #[test]
