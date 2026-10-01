@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Pace
+Comment=Native GPU terminal
+Exec=pace
+Icon=pace
+Terminal=false
+Categories=System;TerminalEmulator;
+StartupWMClass=dev.pace.terminal
+Keywords=terminal;shell;console;

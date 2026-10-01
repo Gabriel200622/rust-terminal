@@ -1,0 +1,27 @@
+//! Desktop composition. Durable state belongs to pace-model, processes to runtime,
+//! file compatibility to persistence, and terminal drawing to terminal_view.
+pub mod app;
+pub mod config;
+pub mod icons;
+pub mod input;
+pub mod persistence;
+pub mod platform;
+pub mod runtime;
+pub mod terminal;
+pub mod terminal_view;
+pub mod theme;
+pub mod ui;
+
+use std::path::PathBuf;
+
+#[derive(Default)]
+pub struct Launch {
+    pub cwd: Option<PathBuf>,
+    pub config: Option<PathBuf>,
+    pub data_root: Option<PathBuf>,
+    pub command: Option<String>,
+    pub screenshot: Option<PathBuf>,
+    pub size: Option<[f32; 2]>,
+    pub no_restore: bool,
+    pub diagnostics: bool,
+}

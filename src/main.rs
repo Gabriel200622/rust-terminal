@@ -1,0 +1,136 @@
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+use pace_terminal::{Launch, app};
+
+fn main() -> anyhow::Result<()> {
+    let mut launch = Launch::default();
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--cwd" => {
+                launch.cwd = Some(
+                    args.next()
+                        .ok_or_else(|| anyhow::anyhow!("--cwd needs a path"))?
+                        .into(),
+                )
+            }
+            "--config" => {
+                launch.config = Some(
+                    args.next()
+                        .ok_or_else(|| anyhow::anyhow!("--config needs a path"))?
+                        .into(),
+                )
+            }
+            "--data-root" => {
+                launch.data_root = Some(
+                    args.next()
+                        .ok_or_else(|| anyhow::anyhow!("--data-root needs a path"))?
+                        .into(),
+                );
+            }
+            "--command" => {
+                launch.command = Some(
+                    args.next()
+                        .ok_or_else(|| anyhow::anyhow!("--command needs a shell command"))?,
+                )
+            }
+            "--screenshot" => {
+                launch.screenshot = Some(
+                    args.next()
+                        .ok_or_else(|| anyhow::anyhow!("--screenshot needs a path"))?
+                        .into(),
+                )
+            }
+            "--size" => {
+                let size = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--size needs WIDTHxHEIGHT"))?;
+                let (w, h) = size
+                    .split_once('x')
+                    .ok_or_else(|| anyhow::anyhow!("--size needs WIDTHxHEIGHT"))?;
+                let w: f32 = w.parse()?;
+                let h: f32 = h.parse()?;
+                anyhow::ensure!(
+                    w.is_finite()
+                        && h.is_finite()
+                        && (640.0..=8192.0).contains(&w)
+                        && (400.0..=8192.0).contains(&h),
+                    "size must be 640x400 to 8192x8192"
+                );
+                launch.size = Some([w, h]);
+            }
+            "--no-restore" => launch.no_restore = true,
+            "--diagnostics" => launch.diagnostics = true,
+            "--version" | "-V" => {
+                println!("Pace {}", env!("CARGO_PKG_VERSION"));
+                return Ok(());
+            }
+            "--help" | "-h" => {
+                println!(
+                    "Pace — a native GPU terminal\n\nUsage: pace [OPTIONS]\n  --cwd PATH         Open a workspace at PATH\n  --config PATH      Use a TOML configuration\n  --data-root PATH   Isolate settings and saved workspace state\n  --command COMMAND  Run a command in the first terminal\n  --no-restore       Start without saved workspaces\n  --size WIDTHxHEIGHT\n  --screenshot PATH  Capture the native window after 3 seconds and exit\n  --diagnostics      Print renderer and display details\n  --version\n  --help"
+                );
+                return Ok(());
+            }
+            _ => anyhow::bail!("Unknown option {arg}. Try --help"),
+        }
+    }
+    if let Some(cwd) = &launch.cwd {
+        anyhow::ensure!(cwd.is_dir(), "Directory does not exist: {}", cwd.display());
+    }
+    let size = launch.size.unwrap_or([1180.0, 760.0]);
+    let options = eframe::NativeOptions {
+        viewport: eframe::egui::ViewportBuilder::default()
+            .with_title("Pace")
+            .with_app_id("dev.pace.terminal")
+            .with_icon(native_icon())
+            .with_inner_size(size)
+            .with_min_inner_size([640.0, 400.0])
+            .with_transparent(cfg!(target_os = "linux"))
+            .with_decorations(false),
+        renderer: eframe::Renderer::Wgpu,
+        ..Default::default()
+    };
+    eframe::run_native(
+        "Pace",
+        options,
+        Box::new(move |cc| Ok(Box::new(app::App::new(cc, launch)))),
+    )
+    .map_err(|e| anyhow::anyhow!("Cannot start native renderer: {e}"))
+}
+
+fn native_icon() -> eframe::egui::IconData {
+    let mut rgba = vec![0; 128 * 128 * 4];
+    let distance = |x: f32, y: f32, a: [f32; 2], b: [f32; 2]| {
+        let dx = b[0] - a[0];
+        let dy = b[1] - a[1];
+        let t = (((x - a[0]) * dx + (y - a[1]) * dy) / (dx * dx + dy * dy)).clamp(0.0, 1.0);
+        ((x - a[0] - t * dx).powi(2) + (y - a[1] - t * dy).powi(2)).sqrt()
+    };
+    for y in 0..128 {
+        for x in 0..128 {
+            let px = x as f32 + 0.5;
+            let py = y as f32 + 0.5;
+            let qx = (px - 64.0).abs() - 34.0;
+            let qy = (py - 64.0).abs() - 34.0;
+            let corner =
+                (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - 30.0;
+            let alpha = (0.5 - corner).clamp(0.0, 1.0);
+            let line = distance(px, py, [35.0, 37.0], [60.0, 64.0])
+                .min(distance(px, py, [60.0, 64.0], [35.0, 91.0]))
+                .min(distance(px, py, [73.0, 91.0], [95.0, 91.0]));
+            let blend = (5.0 - line).clamp(0.0, 1.0);
+            let offset = (y * 128 + x) * 4;
+            for (channel, (base, ink)) in [(23.0, 185.0), (23.0, 172.0), (25.0, 242.0)]
+                .into_iter()
+                .enumerate()
+            {
+                rgba[offset + channel] = (base + (ink - base) * blend) as u8;
+            }
+            rgba[offset + 3] = (alpha * 255.0) as u8;
+        }
+    }
+    eframe::egui::IconData {
+        rgba,
+        width: 128,
+        height: 128,
+    }
+}

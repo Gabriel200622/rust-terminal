@@ -1,0 +1,29 @@
+# Use with: pace --config config.example.toml
+# Omitted fields use the application's defaults. Unknown keys are rejected.
+
+# graphite, dusk, or light
+theme = "graphite"
+
+# Terminal text size: 9–32. Line-height multiplier: 1.0–2.0.
+font_size = 14.0
+line_height = 1.4
+
+# Maximum retained history lines per terminal: 0–1,000,000.
+# A 16-million-cell budget also bounds history and both screen buffers.
+# Wide grids with large history limits can exceed this budget.
+scrollback = 10000
+
+# Omit shell to use the platform default. This is an executable, not a shell
+# command with arguments. Examples: /bin/zsh, /bin/bash, pwsh.exe.
+# shell = "/bin/zsh"
+
+# block, beam, or underline
+cursor = "block"
+cursor_blink = false
+
+# Sidebar width: 170–360 logical pixels.
+sidebar_width = 216.0
+
+# Restore workspace organization; every terminal starts a new process.
+restore_workspaces = true
+confirm_close = true

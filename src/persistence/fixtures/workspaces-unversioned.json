@@ -1,0 +1,23 @@
+{
+  "workspaces": [
+    {
+      "name": "Legacy workspace",
+      "cwd": "@DIRECTORY@",
+      "layout": {
+        "Split": {
+          "vertical": true,
+          "ratio": 0.65,
+          "first": { "Leaf": 9 },
+          "second": { "Leaf": 12 }
+        }
+      },
+      "panes": [
+        { "id": 9, "cwd": "@DIRECTORY@" },
+        { "id": 12, "cwd": "@DIRECTORY@" }
+      ],
+      "active": 12
+    }
+  ],
+  "active": 0,
+  "sidebar": true
+}

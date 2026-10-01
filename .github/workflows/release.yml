@@ -1,0 +1,152 @@
+name: Release artifacts
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Package ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: macos-15
+            target: aarch64-apple-darwin
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y pkg-config libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev zsh
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.97.1
+          targets: ${{ matrix.target }}
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: release-${{ matrix.target }}
+      - name: Check formatting
+        if: runner.os == 'Linux'
+        run: cargo fmt --all -- --check
+      - name: Check lints
+        run: cargo clippy --workspace --all-targets --locked --target ${{ matrix.target }} -- -D warnings
+      - name: Test before packaging
+        run: cargo test --workspace --locked --target ${{ matrix.target }}
+      - name: Build optimized native binary
+        run: cargo build --release --locked --bin pace --target ${{ matrix.target }}
+      - name: Create archive and dependency notices
+        shell: python
+        env:
+          PACE_TARGET: ${{ matrix.target }}
+          PACE_TAG: ${{ github.ref_name }}
+        run: |
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import shutil
+          import subprocess
+          import tarfile
+          import tomllib
+          import zipfile
+
+          target = os.environ['PACE_TARGET']
+          tag = os.environ['PACE_TAG']
+          version = tomllib.loads(Path('Cargo.toml').read_text())['package']['version']
+          if tag != f'v{version}' or not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?', tag):
+              raise SystemExit('Release tag must match the package version in Cargo.toml')
+          name = f'pace-{tag}-{target}'
+          stage = Path('package') / name
+          stage.mkdir(parents=True)
+          executable = 'pace.exe' if 'windows' in target else 'pace'
+          shutil.copy2(Path('target') / target / 'release' / executable, stage / executable)
+          for filename in ('LICENSE', 'README.md', 'config.example.toml'):
+              shutil.copy2(filename, stage / filename)
+          (stage / 'assets').mkdir()
+          shutil.copy2('assets/pace.svg', stage / 'assets' / 'pace.svg')
+          if 'linux' in target:
+              shutil.copy2('packaging/pace.desktop', stage / 'pace.desktop')
+          font_notices = stage / 'licenses' / 'fonts'
+          font_notices.mkdir(parents=True)
+          for filename in Path('assets/fonts').glob('*LICENSE*'):
+              shutil.copy2(filename, font_notices / filename.name)
+          metadata = json.loads(subprocess.check_output(['cargo', 'metadata', '--locked', '--format-version', '1'], text=True))
+          notices = []
+          for package in sorted(metadata['packages'], key=lambda p: (p['name'], p['version'])):
+              notices.append(f"{package['name']} {package['version']}\nLicense: {package.get('license') or 'see license file'}\n")
+              root = Path(package['manifest_path']).parent
+              paths = set()
+              if package.get('license_file'):
+                  paths.add(root / package['license_file'])
+              for pattern in ('LICENSE*', 'LICENCE*', 'COPYING*', 'NOTICE*', 'COPYRIGHT*'):
+                  paths.update(root.glob(pattern))
+              for path in sorted(paths):
+                  if path.is_file():
+                      notices.append(f"\n--- {path.name} ---\n{path.read_text(errors='replace')}\n")
+              notices.append('\n' + '=' * 72 + '\n')
+          (stage / 'THIRD-PARTY-NOTICES.txt').write_text('\n'.join(notices), encoding='utf-8')
+          dist = Path('dist')
+          dist.mkdir()
+          if 'windows' in target:
+              archive = dist / f'{name}.zip'
+              with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as bundle:
+                  for path in sorted(stage.rglob('*')):
+                      if path.is_file():
+                          bundle.write(path, path.relative_to(stage.parent))
+          else:
+              archive = dist / f'{name}.tar.gz'
+              with tarfile.open(archive, 'w:gz') as bundle:
+                  bundle.add(stage, arcname=name)
+          digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+          archive.with_name(archive.name + '.sha256').write_text(f'{digest}  {archive.name}\n')
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pace-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  draft-release:
+    name: Stage draft release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: pace-*
+          merge-multiple: true
+          path: dist
+      - name: Create or update draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PACE_TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$PACE_TAG" >/dev/null 2>&1; then
+            gh release upload "$PACE_TAG" dist/* --clobber
+          else
+            gh release create "$PACE_TAG" dist/* --verify-tag --draft --generate-notes --title "Pace $PACE_TAG"
+          fi

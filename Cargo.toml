@@ -1,0 +1,49 @@
+[workspace]
+members = ["crates/terminal-core", "crates/pace-model"]
+resolver = "3"
+
+[package]
+name = "pace-terminal"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"
+description = "A quiet, native GPU terminal for focused work"
+license = "MIT"
+default-run = "pace"
+
+[[bin]]
+name = "pace"
+path = "src/main.rs"
+
+[[bin]]
+name = "pace-inspect"
+path = "src/bin/pace-inspect.rs"
+required-features = ["inspection"]
+
+[features]
+inspection = ["eframe/inspection", "dep:egui_inspection"]
+
+[dependencies]
+terminal-core = { path = "crates/terminal-core" }
+pace-model = { path = "crates/pace-model" }
+eframe = { version = "0.36.2", default-features = false, features = ["default_fonts", "wgpu", "wayland", "x11", "accesskit"] }
+egui_inspection = { version = "0.36.2", optional = true }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+serde_json = "1"
+directories = "6"
+arboard = "3"
+png = "0.18"
+tempfile = "3.27"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2

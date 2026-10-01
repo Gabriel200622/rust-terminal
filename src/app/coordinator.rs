@@ -1,0 +1,407 @@
+//! Executes bounded effects and feeds completions to the same controller used by
+//! shortcuts, sidebar, dialogs and pane widgets.
+use super::*;
+use crate::persistence::workspace_state::StateSnapshot;
+use crate::runtime::persistence::SaveKind;
+impl App {
+    pub(super) fn dispatch(&mut self, ctx: &egui::Context, command: Command) {
+        match self.controller.dispatch(command) {
+            Ok(effects) => self.execute(ctx, effects),
+            Err(error) => self.ui.error = Some(error.to_string()),
+        }
+    }
+    pub(super) fn execute(&mut self, ctx: &egui::Context, effects: Vec<Effect>) {
+        let replacements: std::collections::HashSet<_> = effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::StartSession {
+                    pane,
+                    replacement: true,
+                    ..
+                } => Some(*pane),
+                _ => None,
+            })
+            .collect();
+        for effect in effects {
+            match effect {
+                Effect::StartSession {
+                    pane,
+                    generation,
+                    cwd,
+                    replacement,
+                } => {
+                    self.renders.insert(pane, PaneRender::new(pane));
+                    let wake = ctx.clone();
+                    let options = SessionOptions {
+                        cwd,
+                        cols: 100,
+                        rows: 32,
+                        scrollback: self.config.scrollback,
+                        shell: self.config.shell.clone(),
+                        ..Default::default()
+                    };
+                    if let Err(error) = self.sessions.start(
+                        pane,
+                        generation,
+                        replacement,
+                        options,
+                        Arc::new(move || wake.request_repaint()),
+                    ) {
+                        self.diagnostics
+                            .failure("start", Some(pane), Some(generation), "Runtime");
+                        self.dispatch(
+                            ctx,
+                            Command::SessionFailed {
+                                pane,
+                                generation,
+                                error: error.clone(),
+                            },
+                        );
+                        self.ui.error = Some(format!("Pane {pane}: {error}"));
+                    }
+                }
+                Effect::StopSession { pane, .. } => {
+                    if !replacements.contains(&pane) {
+                        self.sessions.close(pane);
+                    }
+                    self.renders.remove(&pane);
+                }
+                Effect::Focus { old, new } => {
+                    if let Some(id) = old
+                        && let Some(session) = self.sessions.get(id)
+                    {
+                        let _ = session.focus(false);
+                        if let Some(render) = self.renders.get_mut(&id)
+                            && let Some(button) = render.mouse_button.take()
+                        {
+                            let (col, row, _) = render.mouse_cell.unwrap_or((0, 0, None));
+                            if let Some(bytes) = crate::input::mouse(
+                                button,
+                                col,
+                                row,
+                                false,
+                                Default::default(),
+                                render.cache.mode,
+                            ) {
+                                let _ = session.write(&bytes);
+                            }
+                        }
+                    }
+                    if let Some(id) = new
+                        && let Some(session) = self.sessions.get(id)
+                    {
+                        let _ = session.focus(true);
+                    }
+                }
+                Effect::ResetSearch => {
+                    self.search_point = None;
+                    self.search_task = None;
+                    self.ui.search_error = None;
+                }
+                Effect::Persist { .. } => self.save_state(),
+                Effect::SavePreferences => {
+                    self.preference_generation += 1;
+                    if let Some(writer) = &self.writer
+                        && let Err(error) =
+                            writer.submit_config(self.preference_generation, self.config.clone())
+                    {
+                        self.ui.error = Some(error);
+                    }
+                }
+            }
+        }
+    }
+    pub(super) fn save_state(&mut self) {
+        if self.ephemeral || !self.state_writable {
+            return;
+        }
+        if let Some(writer) = &self.writer
+            && let Err(error) = writer.submit_state(
+                self.controller.generation(),
+                StateSnapshot::from_model(self.controller.model()),
+            )
+        {
+            self.ui.error = Some(format!("Cannot queue workspace save: {error}"));
+        }
+    }
+    pub(super) fn poll_saves(&mut self, ctx: &egui::Context) {
+        let events = self
+            .writer
+            .as_ref()
+            .map(|writer| writer.drain_events())
+            .unwrap_or_default();
+        for event in events {
+            match event.result {
+                Ok(()) => {
+                    if event.kind == SaveKind::State {
+                        self.dispatch(
+                            ctx,
+                            Command::AcknowledgeSave {
+                                generation: event.generation,
+                            },
+                        );
+                    }
+                }
+                Err(error) => {
+                    self.diagnostics.failure(
+                        match event.kind {
+                            SaveKind::State => "save_state",
+                            SaveKind::Config => "save_preferences",
+                        },
+                        None,
+                        Some(event.generation),
+                        "Persistence",
+                    );
+                    self.ui.error = Some(format!(
+                        "{:?} save {} failed: {error}",
+                        event.kind, event.generation
+                    ))
+                }
+            }
+        }
+    }
+    pub(super) fn action(&mut self, ctx: &egui::Context, action: Action) {
+        if self.startup.is_some()
+            && matches!(
+                action,
+                Action::Create(..) | Action::Preferences(_) | Action::ToggleSidebar
+            )
+        {
+            if matches!(action, Action::Preferences(_)) {
+                self.deferred_actions
+                    .retain(|pending| !matches!(pending, Action::Preferences(_)));
+            }
+            if self.deferred_actions.len() >= 24 {
+                self.ui.error =
+                    Some("Too many workspace operations are waiting for restoration".into());
+                return;
+            }
+            if matches!(action, Action::Create(..)) {
+                self.ui.overlay = OverlayState::None;
+            }
+            self.deferred_actions.push(action);
+            ctx.request_repaint();
+            return;
+        }
+        match action {
+            Action::Create(cwd, name) => {
+                let name = name.unwrap_or_else(|| {
+                    cwd.file_name()
+                        .unwrap_or_else(|| std::ffi::OsStr::new("Home"))
+                        .to_string_lossy()
+                        .into_owned()
+                });
+                self.dispatch(ctx, Command::AddWorkspace { cwd, name });
+                self.ui.overlay = OverlayState::None;
+            }
+            Action::Split(pane, axis) => {
+                if let Some(workspace) = self.controller.model().workspace_for_pane(pane) {
+                    let cwd = self
+                        .sessions
+                        .get(pane)
+                        .map(|session| session.metadata().cwd)
+                        .or_else(|| self.controller.model().pane(pane).map(|p| p.cwd().into()))
+                        .unwrap_or_default();
+                    self.dispatch(
+                        ctx,
+                        Command::SplitPane {
+                            workspace,
+                            pane,
+                            axis,
+                            cwd,
+                        },
+                    );
+                }
+            }
+            Action::SelectWorkspace(id) => self.dispatch(ctx, Command::SelectWorkspace(id)),
+            Action::Focus(pane) => {
+                if let Some(workspace) = self.controller.model().workspace_for_pane(pane) {
+                    self.dispatch(ctx, Command::FocusPane { workspace, pane });
+                }
+            }
+            Action::Ratio(split, ratio) => {
+                self.dispatch(ctx, Command::SetSplitRatio { split, ratio })
+            }
+            Action::ClosePane(pane) => self.request_close(ctx, Close::Pane(pane)),
+            Action::CloseWorkspace(id) => self.request_close(ctx, Close::Workspace(id)),
+            Action::WindowClose => self.request_close(ctx, Close::App),
+            Action::New => {
+                self.ui.new_name.clear();
+                self.ui.new_cwd = self
+                    .controller
+                    .model()
+                    .active_workspace()
+                    .and_then(|id| self.controller.model().workspace(id))
+                    .map(|w| w.cwd().display().to_string())
+                    .unwrap_or_default();
+                self.ui.overlay = OverlayState::NewWorkspace;
+            }
+            Action::Rename(id) => {
+                if let Some(w) = self.controller.model().workspace(id) {
+                    self.ui.rename_name = w.name().into();
+                    self.ui.overlay = OverlayState::Rename(id);
+                }
+            }
+            Action::SetName(workspace, name) => {
+                self.dispatch(ctx, Command::RenameWorkspace { workspace, name })
+            }
+            Action::Settings => {
+                self.ui.overlay = if self.ui.overlay == OverlayState::Settings {
+                    OverlayState::None
+                } else {
+                    OverlayState::Settings
+                };
+            }
+            Action::Palette => {
+                self.ui.palette_query.clear();
+                self.ui.overlay = if self.ui.overlay == OverlayState::Palette {
+                    OverlayState::None
+                } else {
+                    OverlayState::Palette
+                };
+            }
+            Action::ToggleSidebar => {
+                self.dispatch(ctx, Command::SetSidebar(!self.controller.model().sidebar()))
+            }
+            Action::Zoom => self.ui.zoomed = !self.ui.zoomed,
+            Action::Find => {
+                self.ui.search_open = !self.ui.search_open;
+                self.ui.search_focus = self.ui.search_open;
+                self.search_point = None;
+                self.search_task = None;
+            }
+            Action::Clear(pane) => {
+                if let Some(session) = self.sessions.get(pane) {
+                    session.clear_history();
+                    session.scroll_to_bottom();
+                    if let Err(error) = session.write(b"\x0c") {
+                        self.ui.error = Some(error.to_string());
+                    }
+                }
+            }
+            Action::Restart(pane) => self.dispatch(ctx, Command::RestartPane(pane)),
+            Action::Copy(pane) => {
+                if let Some(text) = self
+                    .sessions
+                    .get(pane)
+                    .and_then(|session| session.selected_text())
+                {
+                    crate::platform::clipboard::copy(ctx, text);
+                }
+            }
+            Action::Paste(pane) => match crate::platform::clipboard::read() {
+                Ok(text) => {
+                    if let Some(session) = self.sessions.get(pane)
+                        && let Err(error) = session.paste(&text)
+                    {
+                        self.ui.error = Some(error.to_string());
+                    }
+                }
+                Err(error) => self.ui.error = Some(error),
+            },
+            Action::Preferences(mut config) => {
+                if let Err(error) = config.validate() {
+                    self.ui.error = Some(error.to_string());
+                    return;
+                }
+                self.config = config;
+                theme::apply(ctx, self.config.theme);
+                for (_, session) in self.sessions.iter() {
+                    set_session_palette(session, Palette::new(self.config.theme));
+                }
+                self.dispatch(ctx, Command::UpdatePreferences);
+            }
+            Action::Confirm(close) => {
+                self.ui.overlay = OverlayState::None;
+                match close {
+                    Close::App => self.exit_approved = true,
+                    Close::Pane(pane) => self.dispatch(ctx, Command::ClosePane(pane)),
+                    Close::Workspace(workspace) => {
+                        self.dispatch(ctx, Command::CloseWorkspace(workspace))
+                    }
+                }
+            }
+            Action::CancelClose => self.ui.overlay = OverlayState::None,
+            Action::Resize(pane, geometry) => {
+                let result = self.sessions.resize(
+                    pane,
+                    geometry.columns,
+                    geometry.lines,
+                    geometry.pixel_width,
+                    geometry.pixel_height,
+                    self.config.scrollback,
+                );
+                if let Some(render) = self.renders.get_mut(&pane) {
+                    render.cache.resize_error = result.err();
+                }
+                ctx.request_repaint();
+            }
+            Action::Selection(pane, interaction) => {
+                if let Some(session) = self.sessions.get(pane) {
+                    use crate::terminal_view::SelectionInteraction;
+                    match interaction {
+                        SelectionInteraction::Start { point, kind } => {
+                            session.start_selection_at(point, kind)
+                        }
+                        SelectionInteraction::Update(point) => session.update_selection_at(point),
+                        SelectionInteraction::Clear => session.clear_selection(),
+                    }
+                }
+            }
+            Action::ScrollBottom(pane) => {
+                if let Some(session) = self.sessions.get(pane) {
+                    session.scroll_to_bottom();
+                }
+            }
+        }
+    }
+
+    pub(super) fn send_startup_command(&mut self) {
+        if self.command.is_none() || self.started.elapsed() < Duration::from_millis(650) {
+            return;
+        }
+        let Some((pane, generation)) = self.command_target else {
+            return;
+        };
+        if self
+            .controller
+            .model()
+            .pane(pane)
+            .is_none_or(|target| target.generation() != generation)
+        {
+            self.command = None;
+            self.ui.error = Some(format!(
+                "Startup command cancelled: pane {pane} was closed or restarted"
+            ));
+            return;
+        }
+        if self.controller.model().pane(pane).is_some_and(|target| {
+            matches!(target.lifecycle(), Lifecycle::Failed(_) | Lifecycle::Exited)
+        }) {
+            self.command = None;
+            self.ui.error.get_or_insert_with(|| {
+                format!("Startup command cancelled: pane {pane} is unavailable")
+            });
+            return;
+        }
+        if let Some(session) = self.sessions.get(pane)
+            && let Some(command) = self.command.take()
+            && let Err(error) = session.write(format!("{command}\r").as_bytes())
+        {
+            self.diagnostics.failure(
+                "launch_command",
+                Some(pane),
+                Some(generation),
+                &format!("{:?}", error.kind()),
+            );
+            self.ui.error = Some(error.to_string());
+        }
+    }
+    fn request_close(&mut self, ctx: &egui::Context, close: Close) {
+        if self.config.confirm_close {
+            self.ui.overlay = OverlayState::ConfirmClose(close);
+        } else {
+            self.action(ctx, Action::Confirm(close));
+        }
+    }
+}

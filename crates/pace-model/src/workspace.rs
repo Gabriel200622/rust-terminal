@@ -1,0 +1,326 @@
+use crate::{Layout, PaneId, WorkspaceId};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Error {
+    UnknownWorkspace(WorkspaceId),
+    UnknownPane(PaneId),
+    UnknownSplit(crate::SplitId),
+    WorkspaceLimit,
+    PaneLimit,
+    TotalPaneLimit,
+    InvalidLayout(&'static str),
+    InvalidRatio,
+    InvalidIdentity,
+    InvalidName,
+    IdentityExhausted,
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnknownWorkspace(id) => write!(f, "Workspace {id} does not exist"),
+            Self::UnknownPane(id) => {
+                write!(f, "Pane {id} does not exist in the targeted workspace")
+            }
+            Self::UnknownSplit(id) => write!(f, "Split {id} does not exist"),
+            Self::WorkspaceLimit => f.write_str("Workspace limit reached"),
+            Self::PaneLimit => f.write_str("Workspace pane limit reached"),
+            Self::TotalPaneLimit => f.write_str("Total pane limit reached"),
+            Self::InvalidLayout(reason) => write!(f, "Invalid layout: {reason}"),
+            Self::InvalidRatio => f.write_str("Split ratio must be finite and between 0.1 and 0.9"),
+            Self::InvalidIdentity => f.write_str("Identities must be nonzero and unique"),
+            Self::InvalidName => f.write_str("Workspace name cannot be empty"),
+            Self::IdentityExhausted => f.write_str("Identity counter exhausted"),
+        }
+    }
+}
+impl std::error::Error for Error {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limits {
+    pub workspaces: usize,
+    pub panes_per_workspace: usize,
+    pub total_panes: usize,
+}
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            workspaces: 24,
+            panes_per_workspace: 12,
+            total_panes: 64,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Lifecycle {
+    Starting,
+    Running,
+    Closing,
+    Exited,
+    Failed(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pane {
+    pub(crate) id: PaneId,
+    pub(crate) cwd: PathBuf,
+    pub(crate) generation: u64,
+    pub(crate) lifecycle: Lifecycle,
+}
+impl Pane {
+    pub fn id(&self) -> PaneId {
+        self.id
+    }
+    pub fn cwd(&self) -> &Path {
+        &self.cwd
+    }
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+    pub fn lifecycle(&self) -> &Lifecycle {
+        &self.lifecycle
+    }
+}
+
+/// Construction data; model adoption validates all identity and layout invariants.
+#[derive(Debug, Clone)]
+pub struct PaneSpec {
+    pub id: PaneId,
+    pub cwd: PathBuf,
+}
+#[derive(Debug, Clone)]
+pub struct WorkspaceSpec {
+    pub id: WorkspaceId,
+    pub name: String,
+    pub cwd: PathBuf,
+    pub panes: Vec<PaneSpec>,
+    pub layout: Layout,
+    pub active: PaneId,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Workspace {
+    pub(crate) id: WorkspaceId,
+    pub(crate) name: String,
+    pub(crate) cwd: PathBuf,
+    pub(crate) panes: Vec<Pane>,
+    pub(crate) layout: Layout,
+    pub(crate) active: PaneId,
+}
+impl Workspace {
+    pub fn id(&self) -> WorkspaceId {
+        self.id
+    }
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    pub fn cwd(&self) -> &Path {
+        &self.cwd
+    }
+    pub fn panes(&self) -> &[Pane] {
+        &self.panes
+    }
+    pub fn layout(&self) -> &Layout {
+        &self.layout
+    }
+    pub fn active(&self) -> PaneId {
+        self.active
+    }
+    pub fn pane(&self, id: PaneId) -> Option<&Pane> {
+        self.panes.iter().find(|pane| pane.id == id)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Model {
+    pub(crate) workspaces: Vec<Workspace>,
+    pub(crate) active: Option<WorkspaceId>,
+    pub(crate) sidebar: bool,
+    pub(crate) next_workspace: u64,
+    pub(crate) next_pane: u64,
+    pub(crate) next_split: u64,
+    pub(crate) limits: Limits,
+}
+impl Default for Model {
+    fn default() -> Self {
+        Self::new(Limits::default())
+    }
+}
+impl Model {
+    pub fn new(limits: Limits) -> Self {
+        Self {
+            workspaces: Vec::new(),
+            active: None,
+            sidebar: true,
+            next_workspace: 1,
+            next_pane: 1,
+            next_split: 1,
+            limits,
+        }
+    }
+    pub fn workspaces(&self) -> &[Workspace] {
+        &self.workspaces
+    }
+    pub fn workspace(&self, id: WorkspaceId) -> Option<&Workspace> {
+        self.workspaces.iter().find(|workspace| workspace.id == id)
+    }
+    pub fn active_workspace(&self) -> Option<WorkspaceId> {
+        self.active
+    }
+    pub fn active_pane(&self) -> Option<PaneId> {
+        self.active
+            .and_then(|id| self.workspace(id))
+            .map(|workspace| workspace.active)
+    }
+    pub fn sidebar(&self) -> bool {
+        self.sidebar
+    }
+    pub fn limits(&self) -> Limits {
+        self.limits
+    }
+    pub fn pane(&self, id: PaneId) -> Option<&Pane> {
+        self.workspaces
+            .iter()
+            .find_map(|workspace| workspace.pane(id))
+    }
+    pub fn pane_count(&self) -> usize {
+        self.workspaces
+            .iter()
+            .map(|workspace| workspace.panes.len())
+            .sum()
+    }
+    pub fn workspace_for_pane(&self, id: PaneId) -> Option<WorkspaceId> {
+        self.workspaces
+            .iter()
+            .find(|workspace| workspace.pane(id).is_some())
+            .map(|workspace| workspace.id)
+    }
+
+    /// Filesystem checks are deliberately left to the persistence/runtime owner.
+    /// Validation is atomic: a rejected restore never partially changes a model.
+    pub fn restore(
+        specs: Vec<WorkspaceSpec>,
+        active: Option<WorkspaceId>,
+        sidebar: bool,
+        limits: Limits,
+    ) -> Result<Self, Error> {
+        if specs.len() > limits.workspaces {
+            return Err(Error::WorkspaceLimit);
+        }
+        let mut model = Self::new(limits);
+        let mut workspace_ids = HashSet::new();
+        let mut pane_ids = HashSet::new();
+        let mut split_ids = HashSet::new();
+        for spec in specs {
+            if spec.id.get() == 0 || !workspace_ids.insert(spec.id) {
+                return Err(Error::InvalidIdentity);
+            }
+            if spec.name.trim().is_empty() {
+                return Err(Error::InvalidName);
+            }
+            if spec.panes.is_empty() {
+                return Err(Error::InvalidLayout("workspace has no panes"));
+            }
+            if spec.panes.len() > limits.panes_per_workspace {
+                return Err(Error::PaneLimit);
+            }
+            let mut members = HashSet::new();
+            for pane in &spec.panes {
+                if pane.id.get() == 0 || !pane_ids.insert(pane.id) {
+                    return Err(Error::InvalidIdentity);
+                }
+                members.insert(pane.id);
+                model.next_pane = model.next_pane.max(
+                    pane.id
+                        .get()
+                        .checked_add(1)
+                        .ok_or(Error::IdentityExhausted)?,
+                );
+            }
+            if !members.contains(&spec.active) {
+                return Err(Error::UnknownPane(spec.active));
+            }
+            spec.layout.validate(&members, &mut split_ids)?;
+            model.next_split = model.next_split.max(
+                spec.layout
+                    .max_split_id()
+                    .checked_add(1)
+                    .ok_or(Error::IdentityExhausted)?,
+            );
+            model.next_workspace = model.next_workspace.max(
+                spec.id
+                    .get()
+                    .checked_add(1)
+                    .ok_or(Error::IdentityExhausted)?,
+            );
+            model.workspaces.push(Workspace {
+                id: spec.id,
+                name: spec.name,
+                cwd: spec.cwd,
+                panes: spec
+                    .panes
+                    .into_iter()
+                    .map(|pane| Pane {
+                        id: pane.id,
+                        cwd: pane.cwd,
+                        generation: 1,
+                        lifecycle: Lifecycle::Starting,
+                    })
+                    .collect(),
+                layout: spec.layout,
+                active: spec.active,
+            });
+        }
+        if model.pane_count() > limits.total_panes {
+            return Err(Error::TotalPaneLimit);
+        }
+        if let Some(id) = active
+            && model.workspace(id).is_none()
+        {
+            return Err(Error::UnknownWorkspace(id));
+        }
+        model.active = active.or_else(|| model.workspaces.first().map(Workspace::id));
+        model.sidebar = sidebar;
+        Ok(model)
+    }
+
+    pub fn specs(&self) -> Vec<WorkspaceSpec> {
+        self.workspaces
+            .iter()
+            .map(|workspace| WorkspaceSpec {
+                id: workspace.id,
+                name: workspace.name.clone(),
+                cwd: workspace.cwd.clone(),
+                panes: workspace
+                    .panes
+                    .iter()
+                    .map(|pane| PaneSpec {
+                        id: pane.id,
+                        cwd: pane.cwd.clone(),
+                    })
+                    .collect(),
+                layout: workspace.layout.clone(),
+                active: workspace.active,
+            })
+            .collect()
+    }
+
+    pub(crate) fn workspace_mut(&mut self, id: WorkspaceId) -> Result<&mut Workspace, Error> {
+        self.workspaces
+            .iter_mut()
+            .find(|workspace| workspace.id == id)
+            .ok_or(Error::UnknownWorkspace(id))
+    }
+    pub(crate) fn pane_mut(&mut self, id: PaneId) -> Result<&mut Pane, Error> {
+        self.workspaces
+            .iter_mut()
+            .flat_map(|workspace| workspace.panes.iter_mut())
+            .find(|pane| pane.id == id)
+            .ok_or(Error::UnknownPane(id))
+    }
+}

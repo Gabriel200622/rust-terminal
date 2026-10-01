@@ -1,0 +1,72 @@
+# Architecture and renderer decision
+
+Pace is a Rust desktop terminal: native windows, operating-system PTYs, a terminal state engine, and GPU rendering. The application uses `eframe`/`egui` with `wgpu`; no browser or webview hosts its interface. This is a cross-platform implementation, but release readiness and platform support must be established by the verification below rather than inferred from its dependencies.
+
+## Why the first version does not embed Ghostty's renderer
+
+Ghostty was researched on 2026-09-30 at upstream commit `76895d97b74ff6b24c2b1543bcd69ccc18048a4d`. There are two different APIs with different purposes:
+
+| API | What it provides | Suitability for Pace |
+| --- | --- | --- |
+| `libghostty-internal`, `include/ghostty.h` | Ghostty application surfaces, including renderer and platform integration | The header identifies the macOS app as its only consumer, discourages external embedding, and exposes macOS/iOS platform surfaces. It is not a portable Linux/Windows GPU surface interface. |
+| `libghostty-vt`, `include/ghostty/vt.h` | Terminal parsing, state, scrollback, input encoding, and render-state extraction | A viable future terminal engine for Linux, Windows, and macOS. It does not draw glyphs or create windows, and its C API is explicitly unstable. |
+
+These distinctions are explicit in [the internal embedding header](https://github.com/ghostty-org/ghostty/blob/76895d97b74ff6b24c2b1543bcd69ccc18048a4d/include/ghostty.h), [the VT header](https://github.com/ghostty-org/ghostty/blob/76895d97b74ff6b24c2b1543bcd69ccc18048a4d/include/ghostty/vt.h), and [the upstream README](https://github.com/ghostty-org/ghostty/blob/76895d97b74ff6b24c2b1543bcd69ccc18048a4d/README.md).
+
+The official [Ghostling example](https://github.com/ghostty-org/ghostling/blob/main/README.md) demonstrates using the VT library with a separately implemented renderer and window layer. It requires Zig in addition to the host build tools. Upstream's [CMake integration](https://github.com/ghostty-org/ghostty/blob/76895d97b74ff6b24c2b1543bcd69ccc18048a4d/CMakeLists.txt) delegates to Zig and has additional static-link considerations for SIMD dependencies on Windows.
+
+The initial engine is `alacritty_terminal`, with PTYs provided by `portable-pty`. These are Rust dependencies with published releases. This choice avoids committing the first release to an unversioned C ABI or to platform-specific Ghostty surfaces. It does **not** mean that Pace inherits Alacritty's renderer or its benchmark results. [Alacritty's upstream documentation](https://github.com/alacritty/alacritty/blob/master/README.md) lists Linux, macOS, and Windows support. [WezTerm's PTY implementation](https://github.com/wezterm/wezterm/blob/main/pty/src/lib.rs) selects Unix PTYs or Windows ConPTY.
+
+## Component boundaries
+
+`pace-model` owns ordered workspaces, pane membership, stable pane/workspace/split identities, validated layouts, lifecycle and targeted commands. It depends only on `serde`. Model fields are private, and the pure controller returns effects; it opens no windows, shells or files.
+
+`terminal-core` owns PTY sessions and terminal state. Each pane is an independent session. Its public contract contains project-owned input modes, coordinates, colors, selection, events, owned viewport snapshots and budgeted search. Alacritty types and mutable grid locks remain internal.
+
+The desktop library connects the controller to `runtime/sessions.rs`, the background persistence writer, platform services and `ui/` widgets. The session manager bounds startup concurrency and retains resource reservations for starting/closing sessions. `terminal_view/` prepares/caches/paints snapshots and returns interactions; painting receives no live session. `input.rs` normalizes egui events and delegates protocol encoding to terminal-core. `platform/` owns clipboard, fonts and window operations.
+
+`persistence/workspace_state.rs` owns independent versioned DTOs and the legacy migration fixture. Invalid entries produce contextual diagnostics. Recovery copies protect damaged/lossy state before replacement; unreadable and unsupported schemas disable workspace saves. One background writer accepts immutable state/config snapshots, coalesces each destination, debounces changes for 75 ms, uses atomic replacement and acknowledges saved generations. Intentional shutdown flushes the latest accepted snapshots with a bounded wait.
+
+The display path is:
+
+```text
+shell/TUI ⇄ native PTY ⇄ terminal-core ⇄ owned viewport ⇄ terminal_view ⇄ egui/wgpu ⇄ native window
+```
+
+PTY startup, reading, VT parsing, configuration loading and persistence run off the UI thread. Rendering reads a visible snapshot; it never waits for a shell command to finish. Search compilation happens when the query changes, and scans use explicit row/time budgets with revision/query/session identity. This separation makes a future `libghostty-vt` adapter practical while preserving the workspace UI and PTY lifecycle. Such an adapter is planned, not implemented.
+
+See [the development contract](../AGENTS.md), [desktop ownership](../src/AGENTS.md), [model ownership](../crates/pace-model/AGENTS.md) and [core threading contracts](../crates/terminal-core/AGENTS.md) for change paths and focused checks. `scripts/check-architecture.py` enforces model dependencies, desktop backend isolation and snapshot-only rendering; Rust privacy enforces validated model mutation and sealed terminal state.
+
+`eframe` supports native Linux, macOS, and Windows applications and a `wgpu` renderer; see [the framework documentation](https://github.com/emilk/egui/blob/master/crates/eframe/README.md). `wgpu` selects a backend available on the host, normally Vulkan on Linux, Direct3D 12 on Windows, or Metal on macOS; see [its supported-platform matrix](https://github.com/gfx-rs/wgpu/blob/trunk/README.md#supported-platforms). A GPU-backed framework alone does not guarantee low latency or high throughput: the terminal paint path must also be measured.
+
+## Performance strategy
+
+- Keep terminal I/O independent of rendering. Parse buffered PTY reads and coalesce repaint notifications rather than posting an event for every byte.
+- Bound scrollback and output queues. Render only visible rows. Hidden sessions continue processing output without submitting their glyphs to the GPU.
+- Keep terminal locks short. Copy or extract the visible state while locked, then shape text and paint after releasing the lock.
+- Cache glyphs and row layout. Avoid rebuilding text layout or allocating a widget per cell on every frame. Invalidate caches on terminal changes, font changes, zoom, and DPI changes.
+- Schedule frames from input, output, resize, and cursor deadlines. Idle terminals should sleep rather than continuously repaint.
+- Use optimized release builds for performance measurements. Developer builds enable extra checks and are not comparable to shipped terminals.
+
+Some of these are release requirements rather than guarantees of the initial implementation. Profiling must determine whether egui's text path is sufficient. If it dominates frame time, preserve egui for chrome and replace terminal painting with a dedicated `wgpu` instanced glyph renderer sharing the font atlas.
+
+Ghostty's [render-state API](https://github.com/ghostty-org/ghostty/blob/76895d97b74ff6b24c2b1543bcd69ccc18048a4d/include/ghostty/vt/render.h) is a useful future integration point: it supports dirty rows, row identity, and a two-phase extraction flow that can release terminal access before deferred work completes. A future adapter must honor synchronized output holds and render-state lifetimes; polling the raw grid indiscriminately would lose those benefits.
+
+## Verification and release gates
+
+Record the host OS, GPU/backend, display scale, window size, font size, build profile, and dependency lockfile for every result. Measure both the parser and the complete PTY-to-screen path. Throughput numbers alone do not establish interaction latency.
+
+| Area | Evidence required before a production release |
+| --- | --- |
+| Linux, macOS, Windows | Native release builds and interactive PTY smoke tests on each OS; ConPTY verification on Windows; Wayland and X11 verification on Linux |
+| Terminal correctness | Real shells and TUIs, alternate screen, resize/reflow, Unicode widths, combining marks, true color, bracketed paste, mouse reporting, selection, search, and synchronized output |
+| Lifecycle | Closing panes and the application releases PTYs and child processes; exited shells are represented accurately; failed spawn/resize/write operations are visible |
+| Performance | Parser throughput, sustained output throughput, input-to-display latency, frame-time percentiles, idle CPU, memory at maximum scrollback, and behavior with many panes |
+| Desktop quality | DPI changes, IME, clipboard, keyboard layouts, screen-reader navigation, window controls, packaging, signing, and update strategy |
+| Visual quality | Screenshots of the running native application at several sizes and states, followed by design critique and corrections |
+
+Kitty keyboard mode negotiation and press/release/repeat encoding are implemented and covered by protocol tests. Native keypad identity, lock-state modifiers, and some platform-specific key combinations still need dedicated verification. Kitty graphics, full text shaping/font fallback, and platform integrations should only be advertised when implemented and verified. Sessions restore workspace organization; they do not preserve live processes across application restarts unless a separate persistence/multiplexing service is implemented.
+
+## Reconsidering libghostty-vt
+
+Build a small proof of concept pinned to a specific Ghostty commit, with generated bindings hidden behind safe Rust ownership types. Validate Linux, macOS, and Windows build/link behavior, callback lifetimes, input encoding, resize, and incremental rendering. Compare it against the current engine using identical workloads before changing the default. Keep the Zig toolchain and vendored sources reproducible, and treat upstream API updates as explicit migrations.
