@@ -78,11 +78,14 @@ these repository constraints also apply when following a skill.
 
 ## Safe development and verification
 
+- Changes arrive by PR from a feature branch into `main`, including hotfixes.
+  Never commit directly to `main`, or directly push or force-push to a protected
+  branch. CI must be green before merge. For branch, PR and merge operations,
+  read [the issue tracker guide](docs/agents/issue-tracker.md).
 - Preserve the branch/worktree in which the task was launched unless the task
-  requires changing it. For a new issue/feature branch, use the project's normal
-  base branch, confirmed from repository configuration or the remote default;
-  do not assume `main` or branch from unrelated feature work. Never overwrite,
-  reset, clean or stage unrelated work.
+  requires changing it. Start new issue/feature branches from `main`; do not
+  branch from unrelated feature work. Never overwrite, reset, clean or stage
+  unrelated work.
 - Track processes/services started by this task and stop only those. Never kill
   by application name, path or worktree pattern, or stop another task's services.
   Native test launches use fresh `--data-root` storage; `--config` and
@@ -98,3 +101,17 @@ these repository constraints also apply when following a skill.
   toolchain or lockfile merely to get a check running. Local commands belong in
   the owning guide. Report actual checks, host/features and any unverified
   native/platform behavior.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live in GitHub Issues for `Gabriel200622/rust-terminal`. For ticket operations, read [the issue tracker guide](docs/agents/issue-tracker.md).
+
+### Triage labels
+
+Use `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. For triage, read [the label mapping](docs/agents/triage-labels.md).
+
+### Domain docs
+
+Use a single root `GLOSSARY.md` and `docs/adr/`. For domain vocabulary and decisions, read [the domain guide](docs/agents/domain.md).

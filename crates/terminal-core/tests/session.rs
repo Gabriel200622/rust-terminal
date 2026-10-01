@@ -21,6 +21,7 @@ fn shell(script: &str) -> TerminalSession {
     .unwrap()
 }
 
+#[track_caller]
 fn wait_for(mut condition: impl FnMut() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while !condition() {
@@ -383,7 +384,9 @@ RPROMPT=
     let session = TerminalSession::spawn(
         SessionOptions {
             shell: Some("zsh".into()),
-            args: vec!["-i".into()],
+            // Global compinit can prompt about insecure runner completion
+            // directories. Load only this fixture's user startup files.
+            args: vec!["-d".into(), "-i".into()],
             cwd: directory.path().into(),
             env: vec![(
                 "ZDOTDIR".into(),

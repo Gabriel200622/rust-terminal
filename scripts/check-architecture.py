@@ -10,6 +10,7 @@ import sys
 import tempfile
 import tomllib
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,7 +44,7 @@ def check(root: Path) -> list[str]:
     manifest_path = root / "crates/pace-model/Cargo.toml"
     if not manifest_path.is_file():
         return ["Missing pure model manifest"]
-    manifest = tomllib.loads(manifest_path.read_text())
+    manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
 
     def dependencies(table: dict, context: str = "") -> None:
         for key, value in table.items():
@@ -64,20 +65,37 @@ def check(root: Path) -> list[str]:
             errors.append(f"{path.relative_to(root)}:{line}: {message}")
 
     for path in (root / "crates/pace-model/src").rglob("*.rs"):
-        reject(path, rust_code(path.read_text()), r"\b(?:eframe|egui|terminal_core|alacritty_terminal|portable_pty|fs|process|thread)\b", "pure model imports a runtime/backend capability")
+        reject(path, rust_code(path.read_text(encoding="utf-8")), r"\b(?:eframe|egui|terminal_core|alacritty_terminal|portable_pty|fs|process|thread)\b", "pure model imports a runtime/backend capability")
     for path in (root / "src").rglob("*.rs"):
-        code = production_code(path.read_text())
+        code = production_code(path.read_text(encoding="utf-8"))
         reject(path, code, r"\b(?:alacritty_terminal|portable_pty)\b", "desktop imports terminal backend internals")
         if "runtime" not in path.relative_to(root / "src").parts:
             reject(path, code, r"\.\s*lock\s*\(", "UI/persistence must not receive or lock live terminal state")
         if "terminal_view" in path.relative_to(root / "src").parts:
             reject(path, code, r"\b(?:TerminalSession|SessionOptions|MutexGuard)\b", "renderer receives a live session or mutex guard")
     for path in (root / "crates/terminal-core/src").rglob("*.rs"):
-        reject(path, production_code(path.read_text()), r"pub\s+fn\s+lock\s*\(", "terminal-core exposes a mutable backend lock")
+        reject(path, production_code(path.read_text(encoding="utf-8")), r"pub\s+fn\s+lock\s*\(", "terminal-core exposes a mutable backend lock")
     return errors
 
 
 class ArchitectureTests(unittest.TestCase):
+    def test_utf8_sources_do_not_depend_on_windows_default_encoding(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.scaffold(root)
+            for relative in ("crates/pace-model/Cargo.toml", "crates/pace-model/src/lib.rs", "src/app.rs", "crates/terminal-core/src/lib.rs"):
+                path = root / relative
+                with path.open("a", encoding="utf-8") as file:
+                    file.write("# \u0141\n" if path.suffix == ".toml" else "// \u0141\n")
+            read_text = Path.read_text
+
+            def windows_read(path: Path, *args, **kwargs) -> str:
+                kwargs.setdefault("encoding", "cp1252")
+                return read_text(path, *args, **kwargs)
+
+            with patch.object(Path, "read_text", windows_read):
+                self.assertEqual(check(root), [])
+
     def scaffold(self, root: Path) -> None:
         (root / "crates/pace-model/src").mkdir(parents=True)
         (root / "src/terminal_view").mkdir(parents=True)
