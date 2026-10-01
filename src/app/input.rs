@@ -219,16 +219,19 @@ impl App {
                 continue;
             }
             if key == egui::Key::Escape {
-                // Escape leaves the topmost transient surface. With none open
-                // it belongs to the terminal: a message never takes a key the
-                // shell is waiting for, and is dismissed by Escape only when
-                // there is no terminal to receive it.
+                // Escape cancels a terminal drag, then leaves the topmost
+                // transient surface. With neither it belongs to the terminal:
+                // a message never takes a key the shell is waiting for, and is
+                // dismissed by Escape only when there is no terminal to
+                // receive it.
                 let search = ui::search::input_id();
                 let searching = self.ui.search_open
                     && ctx.memory(|memory| {
                         memory.has_focus(search) || memory.had_focus_last_frame(search)
                     });
-                if self.ui.overlay != OverlayState::None {
+                if self.ui.pane_drag.is_some() {
+                    self.cancel_pane_drag(ctx);
+                } else if self.ui.overlay != OverlayState::None {
                     self.ui.overlay = OverlayState::None;
                 } else if searching {
                     self.ui.search_open = false;

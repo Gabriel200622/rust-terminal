@@ -9,7 +9,7 @@ pub mod preferences;
 pub mod search;
 pub mod workspace;
 use crate::{config::Config, terminal::Cache};
-use pace_model::{Axis, PaneId, SplitId, WorkspaceId};
+use pace_model::{Axis, Destination, PaneId, SplitId, WorkspaceId};
 use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,10 +46,13 @@ pub struct UiState {
     pub sidebar_drag: Option<f32>,
     /// A sidebar toggle still sliding into place.
     pub sidebar_slide: Option<chrome::SidebarSlide>,
+    /// The terminal being carried by its header, as of the last frame.
+    pub pane_drag: Option<PaneId>,
 }
 #[derive(Clone)]
 pub enum Action {
     Split(PaneId, Axis),
+    MovePane(PaneId, Destination),
     ClosePane(PaneId),
     CloseWorkspace(WorkspaceId),
     SelectWorkspace(WorkspaceId),
