@@ -338,7 +338,21 @@ mod tests {
         std::thread::scope(|scope| {
             let reader = scope.spawn(|| {
                 while !complete.load(Ordering::Acquire) {
-                    let bytes = std::fs::read(&path).unwrap();
+                    let bytes = match std::fs::read(&path) {
+                        Ok(bytes) => bytes,
+                        #[cfg(windows)]
+                        Err(error) if matches!(error.raw_os_error(), Some(5 | 32 | 33)) => {
+                            // Replacement can temporarily deny a new read while
+                            // the previous file is pending deletion on Windows.
+                            // Validate every successful snapshot and require the
+                            // final read after all writers finish to succeed.
+                            std::thread::yield_now();
+                            continue;
+                        }
+                        Err(error) => {
+                            panic!("Cannot read concurrently saved configuration: {error}")
+                        }
+                    };
                     assert_eq!(bytes.len(), LENGTH);
                     assert!(bytes.iter().all(|byte| *byte == bytes[0]));
                 }
