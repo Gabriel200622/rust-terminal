@@ -10,8 +10,9 @@ use crate::{
     theme::{self, Palette, metrics},
 };
 use eframe::egui::{
-    self, Align, Align2, Color32, CursorIcon, Layout, Pos2, Rect, Sense, Stroke, Ui, UiBuilder,
-    Vec2, WidgetInfo, WidgetType, vec2,
+    self, Align, Align2, Color32, CursorIcon, Key, Layout, Modifiers, PointerButton, Pos2, Rect,
+    Sense, Shadow, Stroke, StrokeKind, Ui, UiBuilder, Vec2, WidgetInfo, WidgetType,
+    emath::GuiRounding as _, style::ScrollAnimation, vec2,
 };
 use pace_model::{Destination, PaneId, WorkspaceId};
 
@@ -40,6 +41,44 @@ pub struct ChromeView<'a> {
 
 const SIDEBAR_WIDTH: std::ops::RangeInclusive<f32> = 170.0..=360.0;
 const DEFAULT_SIDEBAR_WIDTH: f32 = 216.0;
+const ROW_HEIGHT: f32 = 46.0;
+/// The distance between the tops of neighbouring workspace rows.
+const ROW_STEP: f32 = ROW_HEIGHT + 2.0;
+/// Time constant of a displaced row easing into place; it lands within 160 ms.
+const ROW_SETTLE: f32 = 0.035;
+/// Holding a dragged row this close to the list's edge scrolls the list.
+const SCROLL_REACH: f32 = 28.0;
+
+/// A workspace row lifted out of the sidebar list to be dropped elsewhere in it.
+#[derive(Default)]
+pub struct WorkspaceDrag {
+    /// The row drawn above the others: held by the pointer, or settling into
+    /// its place after release.
+    lifted: Option<WorkspaceId>,
+    /// Where the pointer holds the lifted row, measured from the row's top.
+    /// `None` once the row is released or the drag is cancelled.
+    grip: Option<f32>,
+    /// Row tops relative to the list while a row is lifted; empty at rest.
+    tops: Vec<(WorkspaceId, f32)>,
+}
+
+/// The position a row would take if dropped with its top at `top`.
+fn drop_index(top: f32, count: usize) -> usize {
+    ((top / ROW_STEP).round().max(0.0) as usize).min(count.saturating_sub(1))
+}
+
+/// Where the row at `index` rests while the row from `origin` is held over
+/// `target`: the rows between them close the gap it left and open one for it.
+fn displaced(index: usize, origin: usize, target: usize) -> usize {
+    if origin < index && index <= target {
+        index - 1
+    } else if target <= index && index < origin {
+        index + 1
+    } else {
+        index
+    }
+}
+
 /// Seconds a toggled sidebar takes to slide in or out.
 const SIDEBAR_SLIDE: f64 = 0.16;
 
@@ -436,10 +475,24 @@ pub fn toolbar(
     }
 }
 
-fn workspace_menu(ui: &mut Ui, p: Palette, workspace: &WorkspaceView, actions: &mut Vec<Action>) {
+fn workspace_menu(
+    ui: &mut Ui,
+    p: Palette,
+    workspace: &WorkspaceView,
+    (index, count): (usize, usize),
+    actions: &mut Vec<Action>,
+) {
     menu_layout(ui, 210.0);
     if menu_item(ui, p, Icon::Pencil, "Rename…", "", false) {
         actions.push(Action::Rename(workspace.id));
+        ui.close();
+    }
+    if index > 0 && menu_item(ui, p, Icon::ArrowUp, "Move up", "", false) {
+        actions.push(Action::MoveWorkspace(workspace.id, index - 1));
+        ui.close();
+    }
+    if index + 1 < count && menu_item(ui, p, Icon::ArrowDown, "Move down", "", false) {
+        actions.push(Action::MoveWorkspace(workspace.id, index + 1));
         ui.close();
     }
     if workspace.remote.is_some() {
@@ -465,27 +518,71 @@ fn initial(name: &str) -> String {
         .unwrap_or_else(|| "·".into())
 }
 
+/// How a workspace row is drawn this frame.
+struct RowState {
+    rect: Rect,
+    /// The row's position in the list and the list's length.
+    position: (usize, usize),
+    selected: bool,
+    /// Elevation above the list: 0 at rest, 1 while dragged or settling.
+    lift: f32,
+    /// A row is held by the pointer, so rows give no hover feedback.
+    dragging: bool,
+    /// A terminal carried from the stage, which this row may receive.
+    pane_drag: Option<PaneId>,
+    /// The carried terminal's session can run in this workspace.
+    accepts: bool,
+}
+
 fn workspace_row(
     ui: &mut Ui,
     p: Palette,
     workspace: &WorkspaceView,
-    selected: bool,
-    drag: Option<PaneId>,
-    // The carried terminal's session can run in this workspace.
-    accepts: bool,
+    state: RowState,
     actions: &mut Vec<Action>,
-) {
-    let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 46.0), Sense::hover());
+) -> egui::Response {
+    let RowState {
+        rect: row,
+        position,
+        selected,
+        lift,
+        dragging,
+        pane_drag,
+        accepts,
+    } = state;
     let response = ui.interact(
         row,
         ui.id().with(("workspace", workspace.id.get())),
-        Sense::click(),
+        Sense::click_and_drag(),
     );
     let more_id = ui.id().with(("workspace-more", workspace.id.get()));
     let menu_open =
         egui::Popup::is_id_open(ui.ctx(), more_id.with("popup")) || response.context_menu_opened();
-    let hovered = ui.rect_contains_pointer(row) || menu_open;
-    let painter = ui.painter().clone();
+    let hovered = lift > 0.0 || (!dragging && (ui.rect_contains_pointer(row) || menu_open));
+    let painter = if lift > 0.0 {
+        // A lifted row floats: its shadow may fall outside the list.
+        ui.painter()
+            .with_clip_rect(ui.clip_rect().expand2(vec2(8.0, 12.0)))
+    } else {
+        ui.painter().clone()
+    };
+    if lift > 0.0 {
+        let shadow = p.popup_shadow();
+        painter.add(
+            Shadow {
+                color: shadow.color.gamma_multiply(lift),
+                ..shadow
+            }
+            .as_shape(row, metrics::ROW_RADIUS),
+        );
+        painter.rect_filled(row, metrics::ROW_RADIUS, p.elevated.gamma_multiply(lift));
+        painter.rect_stroke(
+            row,
+            metrics::ROW_RADIUS,
+            Stroke::new(1.0, p.border.gamma_multiply(lift)),
+            StrokeKind::Inside,
+        );
+    }
     if selected {
         painter.rect_filled(row, metrics::ROW_RADIUS, p.pressed);
     } else if hovered {
@@ -501,7 +598,7 @@ fn workspace_row(
     }
     // A carried terminal can be dropped on any workspace but its own, as
     // long as that workspace is on the same machine.
-    let receiving = drag.filter(|_| !selected && accepts && ui.rect_contains_pointer(row));
+    let receiving = pane_drag.filter(|_| !selected && accepts && ui.rect_contains_pointer(row));
     let receive = animate(
         ui.ctx(),
         ui.id().with(("workspace-drop", workspace.id.get())),
@@ -623,7 +720,7 @@ fn workspace_row(
     if response.double_clicked() {
         actions.push(Action::Rename(workspace.id));
     }
-    response.context_menu(|ui| workspace_menu(ui, p, workspace, actions));
+    response.context_menu(|ui| workspace_menu(ui, p, workspace, position, actions));
 
     let more = Rect::from_center_size(
         Pos2::new(row.right() - 17.0, row.center().y),
@@ -637,8 +734,8 @@ fn workspace_row(
             format!("Actions for {}", workspace.name),
         )
     });
-    // While a terminal is carried the row is a destination, not a control.
-    if (hovered && drag.is_none()) || more_response.has_focus() {
+    // While a row or a terminal is carried, rows are destinations, not controls.
+    if (hovered && !dragging && pane_drag.is_none()) || more_response.has_focus() {
         if more_response.hovered() || menu_open {
             painter.rect_filled(more, 6, p.pressed);
         }
@@ -661,7 +758,179 @@ fn workspace_row(
             p.muted,
         );
     }
-    egui::Popup::menu(&more_response).show(|ui| workspace_menu(ui, p, workspace, actions));
+    egui::Popup::menu(&more_response)
+        .show(|ui| workspace_menu(ui, p, workspace, position, actions));
+    response
+}
+
+/// The workspace rows. Dragging one lifts it out of the list: it follows the
+/// pointer while its neighbours ease aside, and takes the gap on release.
+fn workspace_list(
+    ui: &mut Ui,
+    p: Palette,
+    view: &ChromeView,
+    viewport: Rect,
+    drag: &mut WorkspaceDrag,
+    actions: &mut Vec<Action>,
+) {
+    let count = view.workspaces.len();
+    let (list, _) = ui.allocate_exact_size(
+        vec2(
+            ui.available_width(),
+            (count as f32 * ROW_STEP - (ROW_STEP - ROW_HEIGHT)).max(0.0),
+        ),
+        Sense::hover(),
+    );
+    let lifted = drag
+        .lifted
+        .and_then(|id| view.workspaces.iter().position(|w| w.id == id));
+    if lifted.is_none() {
+        // Nothing is lifted, or its workspace has closed.
+        *drag = WorkspaceDrag::default();
+    }
+    // A carried terminal stays on the machine of the workspace it came from.
+    let machine = view
+        .workspaces
+        .iter()
+        .find(|workspace| Some(workspace.id) == view.active)
+        .map(|workspace| &workspace.remote);
+    let shown = |id: WorkspaceId, tops: &[(WorkspaceId, f32)]| {
+        tops.iter().find(|(row, _)| *row == id).map(|(_, top)| *top)
+    };
+
+    // The held row follows the pointer, kept inside the list and its viewport.
+    let mut held = lifted.zip(drag.grip).map(|(origin, grip)| {
+        let pointer = ui.input(|input| input.pointer.latest_pos());
+        let low = (viewport.top() - list.top()).max(0.0);
+        let high = ((count - 1) as f32 * ROW_STEP)
+            .min(viewport.bottom() - list.top() - ROW_HEIGHT)
+            .max(low);
+        let top = pointer
+            .map(|pointer| pointer.y - grip - list.top())
+            .or_else(|| shown(view.workspaces[origin].id, &drag.tops))
+            .unwrap_or(origin as f32 * ROW_STEP)
+            .clamp(low, high);
+        if let Some(pointer) = pointer {
+            let over = if list.top() < viewport.top() - 0.5 {
+                (viewport.top() + SCROLL_REACH - pointer.y).max(0.0)
+            } else {
+                0.0
+            } - if list.bottom() > viewport.bottom() + 0.5 {
+                (pointer.y - viewport.bottom() + SCROLL_REACH).max(0.0)
+            } else {
+                0.0
+            };
+            if over != 0.0 {
+                let speed = over.clamp(-2.0 * SCROLL_REACH, 2.0 * SCROLL_REACH) * 12.0;
+                ui.scroll_with_delta_animation(
+                    vec2(0.0, speed * ui.input(|input| input.stable_dt).min(0.1)),
+                    ScrollAnimation::none(),
+                );
+                ui.ctx().request_repaint();
+            }
+        }
+        (origin, top)
+    });
+    // Escape puts the row back; the shell does not receive that key.
+    if held.is_some() && ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape)) {
+        drag.grip = None;
+        held = None;
+        ui.ctx().request_repaint();
+    }
+    let target = held.map(|(origin, top)| (origin, drop_index(top, count)));
+
+    let decay = (-ui.input(|input| input.stable_dt).min(0.1) / ROW_SETTLE).exp();
+    let mut tops = Vec::new();
+    let mut moving = false;
+    // The lifted row is drawn last, above its neighbours.
+    for index in (0..count)
+        .filter(|index| Some(*index) != lifted)
+        .chain(lifted)
+    {
+        let workspace = &view.workspaces[index];
+        let top = match held {
+            Some((origin, top)) if origin == index => top,
+            _ => {
+                let rest = target.map_or(index, |(origin, target)| displaced(index, origin, target))
+                    as f32
+                    * ROW_STEP;
+                // A row not yet tracked starts from its own place.
+                let from = shown(workspace.id, &drag.tops).unwrap_or(index as f32 * ROW_STEP);
+                let top = rest + (from - rest) * decay;
+                if (top - rest).abs() < 0.5 {
+                    rest
+                } else {
+                    moving = true;
+                    top
+                }
+            }
+        };
+        if lifted.is_some() {
+            tops.push((workspace.id, top));
+        }
+        let response = workspace_row(
+            ui,
+            p,
+            workspace,
+            RowState {
+                rect: Rect::from_min_size(
+                    Pos2::new(
+                        list.left(),
+                        if lifted.is_some() {
+                            // Rows in motion stay on whole pixels, so their edges
+                            // stay crisp at fractional display scales.
+                            (list.top() + top).round_to_pixels(ui.pixels_per_point())
+                        } else {
+                            list.top() + top
+                        },
+                    ),
+                    vec2(list.width(), ROW_HEIGHT),
+                ),
+                position: (index, count),
+                selected: Some(workspace.id) == view.active,
+                lift: animate(
+                    ui.ctx(),
+                    ui.id().with(("workspace-lift", workspace.id.get())),
+                    Some(index) == lifted,
+                    0.12,
+                ),
+                dragging: held.is_some(),
+                pane_drag: view.pane_drag,
+                accepts: Some(&workspace.remote) == machine,
+            },
+            actions,
+        );
+        if let Some((origin, target)) = target.filter(|(origin, _)| *origin == index) {
+            if response.drag_stopped() {
+                if origin != target {
+                    actions.push(Action::MoveWorkspace(workspace.id, target));
+                }
+                drag.grip = None;
+                ui.ctx().request_repaint();
+            } else if response.dragged() {
+                ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
+            } else {
+                // The pointer was released while the row was not shown.
+                drag.grip = None;
+                ui.ctx().request_repaint();
+            }
+        } else if response.drag_started_by(PointerButton::Primary)
+            && let Some(press) = ui.input(|input| input.pointer.press_origin())
+        {
+            drag.lifted = Some(workspace.id);
+            drag.grip = Some(press.y - response.rect.top());
+            ui.ctx().request_repaint();
+        }
+    }
+    if moving {
+        ui.ctx().request_repaint();
+    }
+    if held.is_none() && drag.grip.is_none() && !moving {
+        // Every row is back in place.
+        *drag = WorkspaceDrag::default();
+    } else {
+        drag.tops = tops;
+    }
 }
 
 /// The window controls and the sidebar toggle, drawn over the sidebar and the
@@ -687,16 +956,17 @@ pub fn leading_controls(ui: &mut Ui, p: Palette, view: &ChromeView, actions: &mu
 }
 
 /// The sidebar spans the full window height, like a native source list.
-/// `drag` holds the width while its edge is being dragged. While a toggle
-/// slides it, `rect` moves past the window's leading edge.
+/// `state` holds its width while the edge is dragged, and a lifted workspace
+/// row. While a toggle slides it, `rect` moves past the window's leading edge.
 pub fn sidebar(
     ui: &mut Ui,
     rect: Rect,
     p: Palette,
     view: &ChromeView,
-    drag: &mut Option<f32>,
+    state: &mut UiState,
     actions: &mut Vec<Action>,
 ) {
+    let drag = &mut state.sidebar_drag;
     let strip = Rect::from_min_size(rect.min, vec2(rect.width(), metrics::TOOLBAR_HEIGHT));
     drag_region(ui, strip, "sidebar-drag");
 
@@ -709,35 +979,20 @@ pub fn sidebar(
     );
 
     let footer_top = rect.bottom() - 50.0;
+    let viewport = Rect::from_min_max(
+        Pos2::new(rect.left() + 8.0, strip.bottom() + 30.0),
+        Pos2::new(rect.right() - 8.0, footer_top - 4.0),
+    );
     ui.scope_builder(
         UiBuilder::new()
             .id_salt("workspace-list")
-            .max_rect(Rect::from_min_max(
-                Pos2::new(rect.left() + 8.0, strip.bottom() + 30.0),
-                Pos2::new(rect.right() - 8.0, footer_top - 4.0),
-            )),
+            .max_rect(viewport),
         |ui| {
             egui::ScrollArea::vertical()
                 .id_salt("workspaces")
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = 2.0;
-                    let machine = view
-                        .workspaces
-                        .iter()
-                        .find(|workspace| Some(workspace.id) == view.active)
-                        .map(|workspace| &workspace.remote);
-                    for workspace in view.workspaces {
-                        workspace_row(
-                            ui,
-                            p,
-                            workspace,
-                            Some(workspace.id) == view.active,
-                            view.pane_drag,
-                            Some(&workspace.remote) == machine,
-                            actions,
-                        );
-                    }
+                    workspace_list(ui, p, view, viewport, &mut state.workspace_drag, actions);
                 });
         },
     );
@@ -866,6 +1121,262 @@ pub fn sidebar(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
+    use eframe::egui::Event;
+
+    fn workspaces(ids: &[u64]) -> Vec<WorkspaceView> {
+        ids.iter()
+            .map(|id| WorkspaceView {
+                id: WorkspaceId::new(*id),
+                name: format!("workspace {id}"),
+                cwd: "/srv/app".into(),
+                remote: None,
+                panes: 1,
+                running: true,
+            })
+            .collect()
+    }
+
+    /// The vertical centre of the row at `index` in a list at rest.
+    fn row(index: usize) -> Pos2 {
+        Pos2::new(
+            100.0,
+            metrics::TOOLBAR_HEIGHT + 30.0 + index as f32 * ROW_STEP + ROW_HEIGHT * 0.5,
+        )
+    }
+
+    fn button(pos: Pos2, pressed: bool) -> Event {
+        Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        }
+    }
+
+    /// A sidebar driven one frame at a time, applying moves as the app would.
+    struct Fixture {
+        ctx: egui::Context,
+        order: Vec<u64>,
+        /// Window height; a short window makes the list scroll.
+        height: f32,
+        state: UiState,
+        actions: Vec<Action>,
+        /// Escape was still pending after the sidebar ran.
+        escape_passed: bool,
+    }
+
+    impl Fixture {
+        fn new(order: &[u64]) -> Self {
+            Self::with_height(order, 600.0)
+        }
+
+        fn with_height(order: &[u64], height: f32) -> Self {
+            let ctx = egui::Context::default();
+            ctx.set_fonts(crate::platform::fonts::bundled_definitions());
+            theme::apply(&ctx, &Config::default());
+            let mut fixture = Self {
+                ctx,
+                order: order.into(),
+                height,
+                state: UiState::default(),
+                actions: Vec::new(),
+                escape_passed: false,
+            };
+            fixture.frame(vec![]);
+            fixture
+        }
+
+        fn frame(&mut self, events: Vec<Event>) {
+            let views = workspaces(&self.order);
+            let view = ChromeView {
+                workspaces: &views,
+                active: views.first().map(|workspace| workspace.id),
+                pane: None,
+                subtitle: "",
+                zoomed: false,
+                window: Rect::from_min_size(Pos2::ZERO, vec2(900.0, self.height)),
+                sidebar: 1.0,
+                sidebar_open: true,
+                sidebar_width: 216.0,
+                sidebar_available: true,
+                pane_drag: None,
+            };
+            let p = Palette::new(Config::default().theme);
+            let side = Rect::from_min_size(Pos2::ZERO, vec2(216.0, self.height));
+            let mut actions = Vec::new();
+            let mut output = self.ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(900.0, self.height))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    sidebar(ui, side, p, &view, &mut self.state, &mut actions);
+                    self.escape_passed = ui.input(|input| input.key_pressed(Key::Escape));
+                },
+            );
+            output.textures_delta.clear();
+            for action in &actions {
+                if let Action::MoveWorkspace(id, index) = action {
+                    let from = self.order.iter().position(|w| *w == id.get()).unwrap();
+                    let moved = self.order.remove(from);
+                    self.order.insert(*index, moved);
+                }
+            }
+            self.actions.extend(actions);
+        }
+
+        /// Presses a row and carries it to `to` over several frames.
+        fn carry(&mut self, from: Pos2, to: Pos2) {
+            self.frame(vec![Event::PointerMoved(from)]);
+            self.frame(vec![button(from, true)]);
+            for step in 1..=6 {
+                self.frame(vec![Event::PointerMoved(from.lerp(to, step as f32 / 6.0))]);
+            }
+        }
+
+        fn top(&self, id: u64) -> Option<f32> {
+            let tops = &self.state.workspace_drag.tops;
+            tops.iter()
+                .find(|(row, _)| row.get() == id)
+                .map(|(_, top)| *top)
+        }
+
+        fn moves(&self) -> Vec<(u64, usize)> {
+            self.actions
+                .iter()
+                .filter_map(|action| match action {
+                    Action::MoveWorkspace(id, index) => Some((id.get(), *index)),
+                    _ => None,
+                })
+                .collect()
+        }
+    }
+
+    #[test]
+    fn rows_make_room_for_a_dragged_workspace() {
+        assert_eq!(drop_index(-40.0, 4), 0);
+        assert_eq!(drop_index(ROW_STEP * 0.49, 4), 0);
+        assert_eq!(drop_index(ROW_STEP * 0.51, 4), 1);
+        assert_eq!(drop_index(ROW_STEP * 9.0, 4), 3);
+        assert_eq!(drop_index(0.0, 0), 0);
+        let rests = |origin, target| -> Vec<usize> {
+            (0..5).map(|i| displaced(i, origin, target)).collect()
+        };
+        // The held row's own entry is unused; its neighbours close the gap.
+        assert_eq!(rests(1, 3), [0, 1, 1, 2, 4]);
+        assert_eq!(rests(3, 0), [1, 2, 3, 3, 4]);
+        assert_eq!(rests(2, 2), [0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn dragging_a_row_moves_its_workspace_once_and_the_list_settles() {
+        let mut sidebar = Fixture::new(&[1, 2, 3]);
+        let to = row(2) + vec2(0.0, 6.0);
+        sidebar.carry(row(0), to);
+        assert_eq!(
+            sidebar.state.workspace_drag.lifted,
+            Some(WorkspaceId::new(1))
+        );
+        assert!(sidebar.moves().is_empty(), "nothing moves before release");
+        // The held row tracks the pointer; its neighbours ease up to make room.
+        assert_eq!(sidebar.top(1), Some(2.0 * ROW_STEP));
+        for _ in 0..20 {
+            sidebar.frame(vec![]);
+        }
+        assert_eq!(sidebar.top(2), Some(0.0));
+        assert_eq!(sidebar.top(3), Some(ROW_STEP));
+
+        sidebar.frame(vec![button(to, false)]);
+        assert_eq!(sidebar.moves(), [(1, 2)]);
+        assert_eq!(sidebar.order, [2, 3, 1]);
+        for _ in 0..20 {
+            sidebar.frame(vec![]);
+        }
+        let rest = &sidebar.state.workspace_drag;
+        assert!(rest.lifted.is_none() && rest.grip.is_none() && rest.tops.is_empty());
+        assert_eq!(sidebar.moves().len(), 1);
+        assert!(
+            !sidebar
+                .actions
+                .iter()
+                .any(|action| matches!(action, Action::SelectWorkspace(_))),
+            "a drag is not a click"
+        );
+    }
+
+    #[test]
+    fn a_click_still_selects_and_a_row_dropped_in_place_does_not_move() {
+        let mut sidebar = Fixture::new(&[1, 2, 3]);
+        sidebar.frame(vec![Event::PointerMoved(row(1))]);
+        sidebar.frame(vec![button(row(1), true)]);
+        sidebar.frame(vec![button(row(1), false)]);
+        assert!(matches!(
+            sidebar.actions[..],
+            [Action::SelectWorkspace(id)] if id == WorkspaceId::new(2)
+        ));
+
+        // Lifted, but released before it passes the middle of a neighbour.
+        let to = row(1) + vec2(0.0, 20.0);
+        sidebar.carry(row(1), to);
+        assert_eq!(
+            sidebar.state.workspace_drag.lifted,
+            Some(WorkspaceId::new(2))
+        );
+        sidebar.frame(vec![button(to, false)]);
+        assert!(sidebar.moves().is_empty());
+        assert_eq!(sidebar.order, [1, 2, 3]);
+    }
+
+    #[test]
+    fn holding_a_row_at_the_edge_scrolls_to_positions_out_of_view() {
+        // Three and a half of eight rows fit: the last position starts hidden.
+        let mut sidebar = Fixture::with_height(&[1, 2, 3, 4, 5, 6, 7, 8], 300.0);
+        let edge = Pos2::new(100.0, 300.0 - 54.0);
+        sidebar.carry(row(0), edge);
+        let reachable = sidebar.top(1).unwrap();
+        assert!(reachable < 3.0 * ROW_STEP, "the row stays inside the view");
+        for _ in 0..120 {
+            sidebar.frame(vec![]);
+        }
+        assert_eq!(sidebar.top(1), Some(7.0 * ROW_STEP));
+        sidebar.frame(vec![button(edge, false)]);
+        assert_eq!(sidebar.moves(), [(1, 7)]);
+
+        // And back up: the list scrolls the other way under a row held at the top.
+        for _ in 0..20 {
+            sidebar.frame(vec![]);
+        }
+        let top = Pos2::new(100.0, metrics::TOOLBAR_HEIGHT + 30.0);
+        sidebar.carry(edge - vec2(0.0, 20.0), top);
+        for _ in 0..120 {
+            sidebar.frame(vec![]);
+        }
+        sidebar.frame(vec![button(top, false)]);
+        assert_eq!(sidebar.moves(), [(1, 7), (1, 0)]);
+        assert_eq!(sidebar.order, [1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn escape_puts_a_dragged_row_back_and_is_not_passed_on() {
+        let mut sidebar = Fixture::new(&[1, 2, 3]);
+        let to = row(0) + vec2(0.0, 6.0);
+        sidebar.carry(row(2), to);
+        assert!(sidebar.state.workspace_drag.grip.is_some());
+        sidebar.frame(vec![Event::Key {
+            key: Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        }]);
+        assert!(!sidebar.escape_passed, "the shell must not see this Escape");
+        assert!(sidebar.state.workspace_drag.grip.is_none());
+        sidebar.frame(vec![button(to, false)]);
+        assert!(sidebar.moves().is_empty());
+        assert_eq!(sidebar.order, [1, 2, 3]);
+    }
 
     #[test]
     fn a_toggled_sidebar_eases_to_rest_and_reverses_from_where_it_is() {
@@ -935,7 +1446,7 @@ mod tests {
                             sidebar_available: true,
                             pane_drag: drag,
                         },
-                        &mut None,
+                        &mut UiState::default(),
                         &mut actions,
                     );
                 },

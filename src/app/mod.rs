@@ -645,8 +645,10 @@ impl eframe::App for App {
             self.ui.sidebar_slide = None;
         }
         if !sidebar_open {
-            // An edge drag cannot finish once the sidebar is leaving.
+            // Neither an edge drag nor a row drag can finish once the sidebar
+            // is leaving.
             self.ui.sidebar_drag = None;
+            self.ui.workspace_drag = Default::default();
         }
         let sidebar_width = self
             .ui
@@ -677,14 +679,7 @@ impl eframe::App for App {
                 Pos2::new(bounds.left() + edge - sidebar_width, bounds.top()),
                 Vec2::new(sidebar_width, bounds.height()),
             );
-            ui::chrome::sidebar(
-                ui,
-                side,
-                p,
-                &chrome,
-                &mut self.ui.sidebar_drag,
-                &mut actions,
-            );
+            ui::chrome::sidebar(ui, side, p, &chrome, &mut self.ui, &mut actions);
         }
         let toolbar = Rect::from_min_max(
             Pos2::new(bounds.left() + edge, bounds.top()),
