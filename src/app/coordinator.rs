@@ -202,6 +202,9 @@ impl App {
             }
             self.restore_maximized = false;
         }
+        // Save native logical dimensions, not the zoomed content area,
+        // so reopening a zoomed window does not shrink it on every launch.
+        let size = size * ctx.zoom_factor();
         let changed = ctx.input(|input| {
             let viewport = input.viewport();
             self.window_state.observe(
@@ -270,6 +273,9 @@ impl App {
                 Action::Create(..)
                     | Action::Connect { .. }
                     | Action::Preferences(_)
+                    | Action::ZoomUiIn
+                    | Action::ZoomUiOut
+                    | Action::ResetUiZoom
                     | Action::ToggleSidebar
             )
         {
@@ -425,9 +431,26 @@ impl App {
                 self.action(ctx, Action::Preferences(config));
             }
             Action::Zoom => self.ui.zoomed = !self.ui.zoomed,
-            Action::ZoomUiIn => egui::gui_zoom::zoom_in(ctx),
-            Action::ZoomUiOut => egui::gui_zoom::zoom_out(ctx),
-            Action::ResetUiZoom => ctx.set_zoom_factor(1.0),
+            action @ (Action::ZoomUiIn | Action::ZoomUiOut | Action::ResetUiZoom) => {
+                let zoom = match action {
+                    Action::ZoomUiIn => ((self.config.window_zoom + 0.1) * 10.0).round() / 10.0,
+                    Action::ZoomUiOut => ((self.config.window_zoom - 0.1) * 10.0).round() / 10.0,
+                    _ => Config::default().window_zoom,
+                };
+                let zoom = zoom.clamp(
+                    *Config::WINDOW_ZOOM_RANGE.start(),
+                    *Config::WINDOW_ZOOM_RANGE.end(),
+                );
+                if zoom != self.config.window_zoom {
+                    self.action(
+                        ctx,
+                        Action::Preferences(Config {
+                            window_zoom: zoom,
+                            ..self.config.clone()
+                        }),
+                    );
+                }
+            }
             Action::Find => {
                 let editing = ctx.memory(|memory| memory.has_focus(ui::search::input_id()));
                 if self.ui.search_open && !editing {
@@ -487,6 +510,7 @@ impl App {
                     return;
                 }
                 self.config = config;
+                ctx.set_zoom_factor(self.config.window_zoom);
                 theme::apply(ctx, &self.config);
                 for (_, session) in self.sessions.iter() {
                     set_session_palette(session, Palette::for_config(&self.config));

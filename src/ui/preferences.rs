@@ -197,7 +197,30 @@ pub fn show(ctx: &egui::Context, current: &Config, actions: &mut Vec<Action>) {
                     ui.add_space(8.0);
                     group(ui, p, |ui, rows| {
                         rows.row(ui, "Accent", |ui| accent_dots(ui, p, &mut config.accent));
+                        rows.row(ui, "Window zoom", |ui| {
+                            let text = format!("{:.0}%", config.window_zoom * 100.0);
+                            if stepper(
+                                ui,
+                                p,
+                                "Window zoom",
+                                &mut config.window_zoom,
+                                Config::WINDOW_ZOOM_RANGE,
+                                0.1,
+                                &text,
+                            ) {
+                                config.window_zoom = (config.window_zoom * 100.0).round() / 100.0;
+                            }
+                        });
                     });
+                    caption(
+                        ui,
+                        p,
+                        if cfg!(target_os = "macos") {
+                            "Window zoom: Command+Plus / Minus. Reset: Command+0. Saved for next launch."
+                        } else {
+                            "Window zoom: Ctrl+Plus / Minus. Reset: Ctrl+0. Saved for next launch."
+                        },
+                    );
 
                     ui.add_space(14.0);
                     section_label(ui, p, "Text");
