@@ -7,7 +7,7 @@ mod ids;
 mod layout;
 mod workspace;
 
-pub use controller::{Command, Completion, Controller, Effect};
+pub use controller::{Command, Completion, Controller, Destination, Effect};
 pub use ids::{PaneId, SessionGeneration, SplitId, WorkspaceId};
-pub use layout::{Axis, FocusDirection, Layout};
+pub use layout::{Axis, Edge, FocusDirection, Layout};
 pub use workspace::{Error, Lifecycle, Limits, Model, Pane, PaneSpec, Workspace, WorkspaceSpec};

@@ -13,7 +13,7 @@ use eframe::egui::{
     self, Align, Align2, Id, Key, Layout, Modifiers, Pos2, Rect, Sense, Vec2, WidgetInfo,
     WidgetType, vec2,
 };
-use pace_model::{Axis, FocusDirection, PaneId, WorkspaceId};
+use pace_model::{Axis, Destination, FocusDirection, PaneId, WorkspaceId};
 
 pub struct PaletteView<'a> {
     pub pane: Option<PaneId>,
@@ -195,6 +195,23 @@ fn commands(view: &PaletteView) -> Vec<Command> {
             )
         });
     }
+    if let Some(pane) = view.pane {
+        for workspace in view.workspaces {
+            if Some(workspace.id) == view.active {
+                continue;
+            }
+            list.push(Command {
+                target: workspace.id.get(),
+                ..command(
+                    "Move to",
+                    Icon::ArrowUpRight,
+                    format!("Move terminal to {}", workspace.name),
+                    "",
+                    [Action::MovePane(pane, Destination::Workspace(workspace.id))],
+                )
+            });
+        }
+    }
     if view.message {
         // Escape belongs to the shell while a terminal is focused, so the
         // message has its own keyboard path.
@@ -222,28 +239,17 @@ fn commands(view: &PaletteView) -> Vec<Command> {
             [Action::Settings],
         ),
     ]);
-    for (title, key, size) in [
-        (
-            "Increase font size",
-            "+",
-            (view.config.font_size + 1.0).min(32.0),
-        ),
-        (
-            "Decrease font size",
-            "-",
-            (view.config.font_size - 1.0).max(9.0),
-        ),
-        ("Reset font size", "0", Config::default().font_size),
+    for (title, key, action) in [
+        ("Zoom app in", "+", Action::ZoomUiIn),
+        ("Zoom app out", "-", Action::ZoomUiOut),
+        ("Reset app zoom", "0", Action::ResetUiZoom),
     ] {
         list.push(command(
             "View",
             Icon::TextSize,
             title,
             edit_shortcut(key),
-            [Action::Preferences(Config {
-                font_size: size,
-                ..view.config.clone()
-            })],
+            [action],
         ));
     }
     for (theme, name, icon) in [
@@ -532,6 +538,45 @@ mod tests {
     }
 
     #[test]
+    fn a_focused_terminal_can_be_sent_to_each_other_workspace() {
+        let config = Config::default();
+        let workspaces: Vec<WorkspaceView> = [1, 2, 3]
+            .into_iter()
+            .map(|id| WorkspaceView {
+                id: WorkspaceId::new(id),
+                name: "app".into(),
+                cwd: "/srv/app".into(),
+                panes: 1,
+                running: true,
+            })
+            .collect();
+        let moves = |pane| -> Vec<(u64, Vec<Action>)> {
+            commands(&PaletteView {
+                pane,
+                active: Some(WorkspaceId::new(2)),
+                ..view(&config, &workspaces)
+            })
+            .into_iter()
+            .filter(|command| command.group == "Move to")
+            .map(|command| (command.target, command.actions))
+            .collect()
+        };
+        assert!(moves(None).is_empty());
+        let list = moves(Some(PaneId::new(7)));
+        // Same-named destinations stay distinct, and the terminal's own
+        // workspace is not offered.
+        assert_eq!(
+            list.iter().map(|(target, _)| *target).collect::<Vec<_>>(),
+            [1, 3]
+        );
+        assert!(matches!(
+            list[1].1[..],
+            [Action::MovePane(pane, Destination::Workspace(workspace))]
+                if pane == PaneId::new(7) && workspace == WorkspaceId::new(3)
+        ));
+    }
+
+    #[test]
     fn terminal_commands_require_a_focused_pane() {
         let config = Config::default();
         let without = commands(&view(&config, &[]));
@@ -597,7 +642,8 @@ mod tests {
                 .collect()
         };
         assert_eq!(titles("right split"), ["Split right"]);
-        assert_eq!(titles("FONT reset"), ["Reset font size"]);
+        assert_eq!(titles("zoom reset"), ["Reset app zoom"]);
+        assert!(titles("font").is_empty());
         assert!(
             titles("appearance")
                 .iter()
