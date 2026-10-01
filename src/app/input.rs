@@ -193,6 +193,14 @@ impl App {
 }
 impl App {
     pub(super) fn shortcuts(&mut self, ctx: &egui::Context) {
+        self.shortcuts_with_keymap(ctx, crate::platform::keyboard::unshifted_zoom_key);
+    }
+
+    pub(super) fn shortcuts_with_keymap(
+        &mut self,
+        ctx: &egui::Context,
+        mut unshifted_key: impl FnMut(egui::Key) -> Option<egui::Key>,
+    ) {
         let mut actions = Vec::new();
         for event in ctx.input(|i| i.events.clone()) {
             let egui::Event::Key {
@@ -250,23 +258,59 @@ impl App {
                 }
                 continue;
             }
-            if !pressed {
-                continue;
-            }
-            if let Some(action) = zoom_shortcut(key, m, &self.config) {
-                actions.push(action);
+            let zoom_key = if m.shift && !m.alt && (m.ctrl ^ m.mac_cmd) {
+                physical_key.and_then(&mut unshifted_key).unwrap_or(key)
+            } else {
+                key
+            };
+            if let Some(action) = zoom_shortcut(zoom_key, m, &self.config) {
+                if pressed {
+                    for pending in actions.drain(..) {
+                        self.action(ctx, pending);
+                    }
+                    self.action(ctx, action);
+                }
                 ctx.input_mut(|input| {
-                    input.consume_key(m, key);
-                    // Shift+Minus/0 can produce underscore/closing parenthesis.
-                    input.events.retain(|event| {
-                        !matches!(event, egui::Event::Text(text) if match key {
-                            egui::Key::Plus | egui::Key::Equals => matches!(text.as_str(), "+" | "="),
-                            egui::Key::Minus => matches!(text.as_str(), "-" | "_"),
-                            egui::Key::Num0 => matches!(text.as_str(), "0" | ")"),
-                            _ => false,
-                        })
+                    // Consume the original event, including releases, rather
+                    // than the labeled key recovered from the keyboard layout.
+                    // Text belongs to the immediately preceding key press;
+                    // ordinary symbols typed later in this frame must survive.
+                    let mut shortcut_text = false;
+                    input.events.retain(|event| match event {
+                        egui::Event::Key {
+                            key: value,
+                            physical_key: physical,
+                            pressed,
+                            modifiers,
+                            ..
+                        } => {
+                            let matched =
+                                *value == key && *physical == physical_key && *modifiers == m;
+                            shortcut_text = matched && *pressed;
+                            !matched
+                        }
+                        egui::Event::Text(text) => {
+                            let consume = shortcut_text
+                                && match zoom_key {
+                                    egui::Key::Plus | egui::Key::Equals => {
+                                        matches!(text.as_str(), "+" | "=" | "*")
+                                    }
+                                    egui::Key::Minus => matches!(text.as_str(), "-" | "_"),
+                                    egui::Key::Num0 => matches!(text.as_str(), "0" | ")" | "="),
+                                    _ => false,
+                                };
+                            shortcut_text = false;
+                            !consume
+                        }
+                        _ => {
+                            shortcut_text = false;
+                            true
+                        }
                     });
                 });
+                continue;
+            }
+            if !pressed {
                 continue;
             }
             if key == egui::Key::Escape {

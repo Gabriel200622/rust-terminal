@@ -86,6 +86,7 @@ pub struct App {
     terminal_focus: Option<egui::Id>,
     /// A sheet or the palette was open when focus was last reconciled.
     overlay_was_open: bool,
+    _font_shortcut_monitor: crate::platform::keyboard::FontShortcutMonitor,
     diagnostics: diagnostics::Diagnostics,
     link_opener: crate::platform::links::LinkOpener,
 }
@@ -151,6 +152,7 @@ impl App {
             ui.error = Some(format!("Could not start restoration worker: {error}"));
         }
         Self {
+            _font_shortcut_monitor: crate::platform::keyboard::FontShortcutMonitor::install(),
             controller: Controller::new(Model::default()),
             sessions: SessionManager::new(ResourcePolicy::default(), launch.diagnostics),
             renders: BTreeMap::new(),
