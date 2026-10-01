@@ -24,7 +24,6 @@ pub enum OverlayState {
     None,
     Settings,
     Palette,
-    NewWorkspace,
     Rename(WorkspaceId),
     ConfirmClose(Close),
 }
@@ -34,8 +33,6 @@ pub struct UiState {
     pub palette_query: String,
     /// Highlighted command; reset whenever the query changes.
     pub palette_selected: usize,
-    pub new_name: String,
-    pub new_cwd: String,
     pub rename_name: String,
     /// A dialog field should take keyboard focus on its first frame.
     pub overlay_focus: bool,

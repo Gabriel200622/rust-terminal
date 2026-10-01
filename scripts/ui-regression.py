@@ -128,26 +128,26 @@ class Regression:
 
     def create(self):
         self.key("Escape")
-        baseline = self.screenshot("00-single-pane")
-        self.key("ctrl+shift+t")
-        dialog = self.screenshot("01-new-workspace")
-        left, top, right, bottom = self.modal_bounds(baseline, dialog)
-        center = (left + right) / 2
-        # Two text fields appear above the action row. Click the directory field
-        # and use Tab for the name field so its position need not be hardcoded.
-        self.click(center, top + 80 * self.scale)
-        self.key("ctrl+a")
-        self.type(str(self.args.data_root))
-        self.key("Tab")
+        self.screenshot("00-single-pane")
+        state_path = self.args.data_root / "workspaces.json"
+        before = json.loads(state_path.read_text())
+        self.key("ctrl+shift+t", pause=0.8)
+        self.screenshot("01-new-workspace")
+        state = json.loads(state_path.read_text())
+        created = next(workspace for workspace in state["workspaces"] if workspace["id"] == state["active"])
+        self.check("workspace creation", len(state["workspaces"]) == len(before["workspaces"]) + 1 and created["id"] != before["active"] and Path(created["cwd"]) == Path.home(),
+                   "New workspace must immediately select a new terminal at home")
+        self.key("ctrl+shift+p")
+        self.type("Rename workspace")
+        self.key("Return")
         self.key("ctrl+a")
         self.type("Sandbox")
         self.key("Return", pause=0.8)
         self.screenshot("02-sandbox-workspace")
-        state_path = self.args.data_root / "workspaces.json"
-        state = json.loads(state_path.read_text()) if state_path.exists() else {}
-        created = any(workspace.get("name") == "Sandbox" and Path(workspace.get("cwd", "")) == self.args.data_root.resolve()
-                      for workspace in state.get("workspaces", []))
-        self.check("workspace creation", created, "Sandbox in the run-owned directory must appear in persisted workspace state")
+        state = json.loads(state_path.read_text())
+        renamed = next(workspace for workspace in state["workspaces"] if workspace["id"] == created["id"])
+        self.check("workspace renamed afterward", renamed["name"] == "Sandbox" and renamed["cwd"] == created["cwd"] and renamed["layout"] == created["layout"],
+                   "Rename must preserve the new workspace directory and terminal")
 
     def split(self):
         self.key("ctrl+shift+d", pause=0.75)

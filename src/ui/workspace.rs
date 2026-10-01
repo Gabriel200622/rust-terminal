@@ -945,7 +945,7 @@ pub fn empty_state(
     ui.painter().text(
         center + vec2(0.0, 14.0),
         Align2::CENTER_CENTER,
-        "Start a shell in any folder.",
+        "Start a shell in your home directory.",
         theme::regular(12.5),
         p.secondary,
     );
