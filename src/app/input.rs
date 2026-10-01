@@ -369,7 +369,7 @@ fn zoom_shortcut(key: egui::Key, modifiers: egui::Modifiers, current: &Config) -
     {
         return None;
     }
-    if modifiers.ctrl && modifiers.shift {
+    if modifiers.shift {
         let font_size = match key {
             Key::Plus | Key::Equals => (current.font_size + 1.0).min(32.0),
             Key::Minus => (current.font_size - 1.0).max(9.0),

@@ -238,7 +238,11 @@ pub fn show(ctx: &egui::Context, current: &Config, actions: &mut Vec<Action>) {
                     caption(
                         ui,
                         p,
-                        "Font size: Ctrl+Shift+Plus / Minus. Reset: Ctrl+Shift+0.",
+                        if cfg!(target_os = "macos") {
+                            "Font size: Command+Shift+Plus / Minus. Reset: Command+Shift+0."
+                        } else {
+                            "Font size: Ctrl+Shift+Plus / Minus. Reset: Ctrl+Shift+0."
+                        },
                     );
 
                     ui.add_space(14.0);

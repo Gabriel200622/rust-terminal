@@ -582,11 +582,7 @@ fn app_zoom_shortcuts_scale_the_ui_without_changing_terminal_preferences() {
     let ctx = egui::Context::default();
     app.startup = None;
     app.config.font_size = 19.0;
-    for modifiers in [
-        egui::Modifiers::CTRL,
-        egui::Modifiers::MAC_CMD,
-        egui::Modifiers::MAC_CMD | egui::Modifiers::SHIFT,
-    ] {
+    for modifiers in [egui::Modifiers::CTRL, egui::Modifiers::MAC_CMD] {
         for overlay in [
             OverlayState::None,
             OverlayState::Settings,
@@ -624,33 +620,37 @@ fn app_zoom_shortcuts_scale_the_ui_without_changing_terminal_preferences() {
 }
 
 #[test]
-fn terminal_font_shortcuts_use_ctrl_shift_in_preferences_and_respect_limits() {
-    let root = tempfile::tempdir().unwrap();
-    let (mut app, _sender) = fixture(root.path());
-    let ctx = egui::Context::default();
-    app.startup = None;
-    app.ui.overlay = OverlayState::Settings;
-    let modifiers = egui::Modifiers::CTRL | egui::Modifiers::SHIFT;
-    for (key_code, size) in [
-        (egui::Key::Plus, 15.0),
-        (egui::Key::Equals, 16.0),
-        (egui::Key::Minus, 15.0),
+fn terminal_font_shortcuts_use_primary_shift_in_preferences_and_respect_limits() {
+    for modifiers in [
+        egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+        egui::Modifiers::MAC_CMD | egui::Modifiers::SHIFT,
     ] {
-        assert!(press(&mut app, &ctx, key(key_code, None, modifiers)));
-        assert_eq!(app.config.font_size, size);
-        assert_eq!(ctx.zoom_factor(), 1.0);
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _sender) = fixture(root.path());
+        let ctx = egui::Context::default();
+        app.startup = None;
+        app.ui.overlay = OverlayState::Settings;
+        for (key_code, size) in [
+            (egui::Key::Plus, 15.0),
+            (egui::Key::Equals, 16.0),
+            (egui::Key::Minus, 15.0),
+        ] {
+            assert!(press(&mut app, &ctx, key(key_code, None, modifiers)));
+            assert_eq!(app.config.font_size, size);
+            assert_eq!(ctx.zoom_factor(), 1.0);
+        }
+        for (size, key_code) in [(32.0, egui::Key::Plus), (9.0, egui::Key::Minus)] {
+            app.config.font_size = size;
+            assert!(press(&mut app, &ctx, key(key_code, None, modifiers)));
+            assert_eq!(app.config.font_size, size);
+        }
+        ctx.set_zoom_factor(1.4);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+        output.textures_delta.clear();
+        assert!(press(&mut app, &ctx, key(egui::Key::Num0, None, modifiers)));
+        assert_eq!(app.config.font_size, Config::default().font_size);
+        assert_eq!(ctx.zoom_factor(), 1.4);
     }
-    for (size, key_code) in [(32.0, egui::Key::Plus), (9.0, egui::Key::Minus)] {
-        app.config.font_size = size;
-        assert!(press(&mut app, &ctx, key(key_code, None, modifiers)));
-        assert_eq!(app.config.font_size, size);
-    }
-    ctx.set_zoom_factor(1.4);
-    let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
-    output.textures_delta.clear();
-    assert!(press(&mut app, &ctx, key(egui::Key::Num0, None, modifiers)));
-    assert_eq!(app.config.font_size, Config::default().font_size);
-    assert_eq!(ctx.zoom_factor(), 1.4);
 }
 
 #[test]
@@ -677,6 +677,26 @@ fn zoom_shortcuts_consume_key_and_text_events_before_terminal_input() {
         (
             egui::Key::Num0,
             egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+            ")",
+        ),
+        (
+            egui::Key::Plus,
+            egui::Modifiers::MAC_CMD | egui::Modifiers::SHIFT,
+            "+",
+        ),
+        (
+            egui::Key::Equals,
+            egui::Modifiers::MAC_CMD | egui::Modifiers::SHIFT,
+            "+",
+        ),
+        (
+            egui::Key::Minus,
+            egui::Modifiers::MAC_CMD | egui::Modifiers::SHIFT,
+            "_",
+        ),
+        (
+            egui::Key::Num0,
+            egui::Modifiers::MAC_CMD | egui::Modifiers::SHIFT,
             ")",
         ),
     ] {
