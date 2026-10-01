@@ -1,5 +1,10 @@
 # Chapter 7 - Type State Pattern
 
+> Adapted from [Apollo GraphQL's Rust Best Practices Handbook](https://github.com/apollographql/rust-best-practices/blob/eb485a5ddb68e0ded3d79549e994f63ec0a6f6c0/book/chapter_07.md),
+> licensed under [Apache-2.0](../../../../licenses/skills/apollographql-rust-best-practices-Apache-2.0.txt).
+> This copy includes skill adaptations and local edits, including this source
+> and license notice.
+
 Models state at compile time, preventing bugs by making illegal states unrepresentable. It takes advantage of the Rust generics and type system to create sub-types that can only be reached if a certain condition is achieved, making some operations illegal at compile time.
 
 > Recently it became the standard design pattern of Rust programming. However, it is not exclusive to Rust, as it is achievable and has inspired other languages to do the same [swift](https://swiftology.io/articles/typestate/) and [typescript](https://catchts.com/type-state).

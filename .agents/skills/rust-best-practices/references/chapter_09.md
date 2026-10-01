@@ -1,5 +1,10 @@
 # Chapter 9 - Understanding Pointers
 
+> Adapted from [Apollo GraphQL's Rust Best Practices Handbook](https://github.com/apollographql/rust-best-practices/blob/eb485a5ddb68e0ded3d79549e994f63ec0a6f6c0/book/chapter_09.md),
+> licensed under [Apache-2.0](../../../../licenses/skills/apollographql-rust-best-practices-Apache-2.0.txt).
+> This copy includes skill adaptations and local edits, including this source
+> and license notice.
+
 Many higher level languages hide memory management, typically **passing by value** (copy data) or **passing by reference** (reference to shared data) without worrying about allocation, heap, stack, ownership and lifetimes, it is all delegated to the garbage collector or VM. Here is a comparison on this topic between a few languages:
 
 ### 📌 Language Comparison 

@@ -8,7 +8,7 @@ description: >
   (4) implementing error handling with Result types,
   (5) optimizing Rust code for performance,
   (6) writing tests or documentation for Rust projects.
-license: MIT
+license: MIT AND Apache-2.0
 compatibility: Rust 1.70+, Cargo
 metadata:
   author: apollographql
@@ -19,6 +19,10 @@ allowed-tools: Bash(cargo:*) Bash(rustc:*) Bash(rustfmt:*) Bash(clippy:*) Read W
 # Rust Best Practices
 
 Apply these guidelines when writing or reviewing Rust code. Based on Apollo GraphQL's [Rust Best Practices Handbook](https://github.com/apollographql/rust-best-practices).
+
+The skill guide and adaptations are MIT licensed; the bundled handbook material
+is Apache-2.0 licensed. See [third-party notices](../../../THIRD-PARTY-NOTICES.md)
+for attribution and the full license texts.
 
 ## Best Practices Reference
 

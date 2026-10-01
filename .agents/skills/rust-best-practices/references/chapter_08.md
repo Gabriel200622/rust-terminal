@@ -1,5 +1,10 @@
 # Chapter 8 - Comments vs Documentation
 
+> Adapted from [Apollo GraphQL's Rust Best Practices Handbook](https://github.com/apollographql/rust-best-practices/blob/eb485a5ddb68e0ded3d79549e994f63ec0a6f6c0/book/chapter_08.md),
+> licensed under [Apache-2.0](../../../../licenses/skills/apollographql-rust-best-practices-Apache-2.0.txt).
+> This copy includes skill adaptations and local edits, including this source
+> and license notice.
+
 > Clear code beats clear comments. However, when the why isn't obvious, comment it plainly - or link to where you can read more context.
 
 ## 8.1 Comments vs Documentation: Know the Difference

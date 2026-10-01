@@ -110,7 +110,7 @@ Pushing a tag matching the package version, such as `v0.1.0`, runs release check
 
 These are binary archives, not installers. macOS signing/notarization, Windows signing, an update mechanism, and distribution-specific integration remain release work. Kitty graphics, full font fallback/shaping, keypad identification and some advanced keyboard modes, and platform accessibility need dedicated coverage before they are advertised. Running a GUI and reviewing screenshots on each OS remains necessary even after CI passes.
 
-MIT licensed. Bundled fonts retain their SIL Open Font License notices; third-party dependencies retain their respective licenses.
+Pace is MIT licensed. Bundled fonts retain their SIL Open Font License notices; third-party dependencies and vendored development skills retain their respective licenses. See [third-party notices](THIRD-PARTY-NOTICES.md) for skill attribution and the full upstream license texts.
 
 Developer inspection is opt-in through the `inspection` feature. `pace-inspect` exposes the native accessibility tree and supports `screenshot`, `key`, `text`, `click`, `context` (secondary click), `double-click`, `drag`, `press`, `release`, and `resize` commands for repeatable native visual review. The normal release binary has no inspection listener. Independent launches must follow [the run-isolation rules](scripts/AGENTS.md).
 

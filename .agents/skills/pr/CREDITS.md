@@ -1,3 +1,12 @@
 # Credits
 
-The **Summary** section's menu of visuals (pseudocode, call trees, component trees, file trees, Mermaid, diffs) and its placement guidance come from [Dex Horthy](https://github.com/dexhorthy)'s [`show-me`](https://github.com/humanlayer/humanlayer) skill, reproduced almost word for word and aimed at a diff instead of a live conversation. `pr` does not depend on `show-me` as a skill (it isn't part of this repo, and a hard dependency would break standalone installs), so the content is copied in rather than pointed at; this file is the attribution a dependency would otherwise have carried.
+The **Summary** section's visual examples and placement guidance are adapted
+from [Dex Horthy](https://github.com/dexhorthy) and HumanLayer's
+[`show-me`](https://github.com/humanlayer/skills/blob/ca7c8088db69e315a8b2deea43820270457f8f3c/plugins/show-me/skills/show-me/SKILL.md)
+skill, with the examples aimed at pull request diffs.
+
+HumanLayer's original copyright and MIT license are preserved in the
+[license notice](../../../licenses/skills/humanlayer-skills-MIT.txt). Matt
+Pocock's `pr` skill retains its [MIT notice](../../../licenses/skills/mattpocock-skills-MIT.txt).
+See [third-party notices](../../../THIRD-PARTY-NOTICES.md) for the full source and
+license mapping.
