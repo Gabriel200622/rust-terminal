@@ -127,6 +127,9 @@ impl App {
                     modifiers: m,
                 } => {
                     let pos = egui::pos2(position.x, position.y);
+                    if button == PointerButton::Primary && pane.cache.link_pointer_owned {
+                        continue;
+                    }
                     if (pressed && (!rect.contains(pos) || m.shift))
                         || (!pressed && pane.mouse_button.is_none())
                     {
@@ -156,7 +159,7 @@ impl App {
                     modifiers: m,
                 } => {
                     let pos = egui::pos2(position.x, position.y);
-                    if !rect.contains(pos) || m.shift {
+                    if !rect.contains(pos) || m.shift || pane.cache.link_pointer_owned {
                         continue;
                     }
                     let col = ((pos.x - rect.left()) / pane.cache.cell.x).max(0.0) as u16;

@@ -506,6 +506,9 @@ fn draw_pane(
         if let Some(interaction) = painted.interaction {
             actions.push(Action::Selection(id, interaction));
         }
+        if let Some(link) = painted.open_link {
+            actions.push(Action::OpenLink(link));
+        }
         // A focused widget also reports Enter and Space as clicks; only the
         // pointer changes which pane is focused.
         if (response.clicked() && response.interact_pointer_pos().is_some())

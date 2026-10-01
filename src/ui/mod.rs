@@ -103,6 +103,7 @@ pub enum Action {
     DismissError,
     Resize(PaneId, crate::terminal_view::geometry::ResizeRequest),
     Selection(PaneId, crate::terminal_view::SelectionInteraction),
+    OpenLink(crate::platform::links::WebLink),
     ScrollBottom(PaneId),
 }
 #[derive(Clone)]

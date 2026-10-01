@@ -43,6 +43,7 @@ fn fixture(root: &std::path::Path) -> (App, mpsc::SyncSender<Startup>) {
         overlay_was_open: false,
         _font_shortcut_monitor: Default::default(),
         diagnostics: diagnostics::Diagnostics::new(false),
+        link_opener: Default::default(),
     };
     (app, sender)
 }
