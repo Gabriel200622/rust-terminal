@@ -2,6 +2,7 @@
 use super::*;
 use crate::view;
 use alacritty_terminal::term::TermDamage;
+use std::collections::HashMap;
 
 pub(super) fn selection_type(kind: view::SelectionType) -> SelectionType {
     match kind {
@@ -121,6 +122,7 @@ impl TerminalSession {
             view::ViewportDamage::Full => (0..screen_lines).collect(),
             view::ViewportDamage::Rows(rows) => rows.clone(),
         };
+        let mut hyperlinks = HashMap::new();
         for &row in &changed {
             if row >= screen_lines {
                 continue;
@@ -136,6 +138,14 @@ impl TerminalSession {
                         fg: color(cell.fg),
                         bg: color(cell.bg),
                         flags: view::Flags::from_bits_retain(cell.flags.bits()),
+                        hyperlink: cell.hyperlink().map(|link| {
+                            // The grid holds each target alive for this extraction.
+                            // Key by allocation so long URIs aren't hashed per cell.
+                            hyperlinks
+                                .entry(link.uri().as_ptr())
+                                .or_insert_with(|| Arc::<str>::from(link.uri()))
+                                .clone()
+                        }),
                     }
                 })
                 .collect();
@@ -286,6 +296,8 @@ impl TerminalSession {
                     fg: color(cell.fg),
                     bg: color(cell.bg),
                     flags: view::Flags::from_bits_retain(cell.flags.bits()),
+                    // Search consumes characters and columns, not link targets.
+                    hyperlink: None,
                 }
             })
             .collect();

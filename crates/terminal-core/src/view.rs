@@ -165,6 +165,8 @@ pub struct Cell {
     pub fg: Color,
     pub bg: Color,
     pub flags: Flags,
+    /// OSC 8 target, shared by cells belonging to the same hyperlink.
+    pub hyperlink: Option<Arc<str>>,
 }
 impl Default for Cell {
     fn default() -> Self {
@@ -175,6 +177,7 @@ impl Default for Cell {
             fg: Color::Named(NamedColor::Foreground),
             bg: Color::Named(NamedColor::Background),
             flags: Flags::empty(),
+            hyperlink: None,
         }
     }
 }
