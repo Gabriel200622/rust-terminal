@@ -83,9 +83,15 @@ these repository constraints also apply when following a skill.
   branch. CI must be green before merge. For branch, PR and merge operations,
   read [the issue tracker guide](docs/agents/issue-tracker.md).
 - Preserve the branch/worktree in which the task was launched unless the task
-  requires changing it. Start new issue/feature branches from `main`; do not
-  branch from unrelated feature work. Never overwrite, reset, clean or stage
-  unrelated work.
+  requires changing it or the post-merge cleanup below applies. Start new
+  issue/feature branches from `main`; do not branch from unrelated feature work.
+  Never overwrite, reset, clean or stage unrelated work.
+- After merging a PR, remove its task worktree and delete both its local and
+  remote feature branches once you verify that the worktree has no tracked or
+  untracked changes and all work on both branches is included in the updated
+  target branch, accounting for squash and rebase merges. Move to a retained
+  worktree before removal. If work remains or merge coverage is uncertain, keep
+  the worktree and both branches and report why.
 - Track processes/services started by this task and stop only those. Never kill
   by application name, path or worktree pattern, or stop another task's services.
   Native test launches use fresh `--data-root` storage; `--config` and

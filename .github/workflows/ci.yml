@@ -54,7 +54,9 @@ jobs:
   check:
     name: Check (${{ matrix.os }})
     needs: preflight
-    if: always() && (needs.preflight.result != 'success' || needs.preflight.outputs.code == 'true')
+    # Instantiate the matrix so documentation PRs emit the required per-OS names.
+    # Skip expensive source checks at the step level instead.
+    if: always()
     strategy:
       fail-fast: false
       matrix:
@@ -69,33 +71,37 @@ jobs:
       - name: Check source decoding on this platform
         run: python3 scripts/check-architecture.py
       - name: Install Linux build and native inspection dependencies
-        if: runner.os == 'Linux'
+        if: needs.preflight.outputs.code == 'true' && runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y pkg-config libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev zsh xvfb libgl1-mesa-dri mesa-vulkan-drivers
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        if: needs.preflight.outputs.code == 'true'
         with:
           toolchain: 1.97.1
           components: clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        if: needs.preflight.outputs.code == 'true'
         with:
           key: ci-${{ matrix.os }}
           cache-on-failure: true
       - name: Check lints
-        if: runner.os == 'Linux'
+        if: needs.preflight.outputs.code == 'true' && runner.os == 'Linux'
         run: cargo clippy --profile ci --workspace --all-targets --all-features --locked -- -D warnings
       - name: Test ordinary application configuration
+        if: needs.preflight.outputs.code == 'true'
         run: cargo test --profile ci --workspace --locked
       - name: Test inspection configuration
+        if: needs.preflight.outputs.code == 'true'
         run: cargo test --profile ci --workspace --all-features --locked
       - name: Build native application
-        if: runner.os != 'Linux'
+        if: needs.preflight.outputs.code == 'true' && runner.os != 'Linux'
         run: cargo build --profile ci --locked --bin pace
       - name: Build native inspection binaries with the existing dependency cache
-        if: runner.os == 'Linux'
+        if: needs.preflight.outputs.code == 'true' && runner.os == 'Linux'
         run: cargo build --profile ci --features inspection --locked --bin pace --bin pace-inspect
       - name: Verify isolated native inspection and workspace restoration
-        if: runner.os == 'Linux'
+        if: needs.preflight.outputs.code == 'true' && runner.os == 'Linux'
         env:
           WGPU_BACKEND: vulkan
           LIBGL_ALWAYS_SOFTWARE: '1'
@@ -104,7 +110,7 @@ jobs:
           install -d -m 700 "$XDG_RUNTIME_DIR"
           xvfb-run -a python3 scripts/native-harness.py --app target/ci/pace --client target/ci/pace-inspect --restore --output artifacts/native-ci
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always() && runner.os == 'Linux'
+        if: always() && needs.preflight.outputs.code == 'true' && runner.os == 'Linux'
         with:
           name: native-linux-1.97.1-inspection
           path: artifacts/native-ci
