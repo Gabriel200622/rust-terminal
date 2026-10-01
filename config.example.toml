@@ -4,6 +4,10 @@
 # graphite, dusk, or light
 theme = "graphite"
 
+# Highlight for focus, selection and the cursor:
+# blue, indigo, purple, pink, red, orange, yellow, green, or graphite
+accent = "blue"
+
 # Terminal text size: 9–32. Line-height multiplier: 1.0–2.0.
 font_size = 14.0
 line_height = 1.4

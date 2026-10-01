@@ -46,7 +46,7 @@ coverage includes:
 | Resize and backpressure | Native resize waits for terminal-grid access; a rejected resize preserves existing grid dimensions when the input queue is full |
 | Terminal input | Ctrl combinations, application cursor mode, modified/function keys, Unicode text ownership, Kitty key flags/repeat/release, SGR/legacy mouse coordinates, and motion modes |
 | Renderer cache | A real quiet shell and headless egui frames retain galley identity when cells are unchanged; one changed row rebuilds once; wide/combining Unicode search highlights use terminal columns; a display-scale change rebuilds glyph layouts at unchanged grid dimensions and subsequent frames reuse them |
-| Custom controls | A right-aligned titlebar icon retains its widget identity across hover/press/release and clicks once; hiding a neighboring control preserves the focused action, so Enter cannot activate a different button |
+| Custom controls | A right-aligned titlebar icon retains its widget identity across hover/press/release and clicks once; hiding a neighboring control preserves the focused action, so Enter cannot activate a different button; switches, segmented choices, sliders and steppers change once per interaction and respect their bounds; a new dialog gives its first field the keyboard once visible; command-palette entries capture their pane and filter by query |
 | Configuration and layout | Resource validation, serialization, atomic replacement, failed/concurrent writes, saved split validation, split removal, and Unicode-safe labels |
 | Pure application controller | Targeted commands, workspace order/identity, closing before/at/after focus, stable split identities, failed/stale startup, restart at capacity, fake-runtime effects and dirty/save acknowledgements |
 | Persistence compatibility and scheduling | Unversioned fixture migration, independent versioned DTOs, invalid/missing directory recovery, corrupt-file preservation, unsupported/unreadable write protection, coalescing, destination generations, slow/failing storage, bounded flush and ephemeral isolation |
@@ -127,9 +127,11 @@ python3 scripts/inspect-regression.py --addr HOST:PORT --data-root PATH \
 
 The harness requires Python 3 and the inspection binaries. It checks native
 field values, persisted workspace/theme state, independent interactive terminal
-bodies, shell command markers, the Preferences content viewport, search, and
-close/cancel behavior. It captures right/below splits, Graphite/Light preferences,
-and full-size/narrow windows. The harness verifies restoration by default and
+bodies, shell command markers, delivery of a literal Tab to the foreground
+process with the terminal keeping keyboard focus, the terminal context menu and
+its dismissal, sidebar resizing and reset from its edge, the Preferences content
+viewport, search, and close/cancel behavior. It captures right/below splits, the terminal menu, Graphite/Light
+preferences, and full-size/narrow windows. The harness verifies restoration by default and
 cleans up its owned process. `--no-restore-check` skips that part. A manually
 managed regression without `--restore` leaves its application running after
 cancelling close.
@@ -259,6 +261,46 @@ successful exact command execution and an unavailable-shell failure. The latter
 verified a visible error, a structured `Spawn` category with pane/generation,
 complete teardown and no execution of the pending launch command. Both confirmed
 inspection was disabled and ephemeral storage remained unchanged.
+
+## Interface rebuild verification: 2026-09-30
+
+The interface was rebuilt on this date; [design.md](design.md) records the
+direction and the corrections made during review. Evidence is under
+[`artifacts/ui-rebuild`](../artifacts/ui-rebuild).
+
+- **Focused tests.** The desktop library suite passes 85 tests on Linux with
+  Rust 1.97.1 (`cargo test -p pace-terminal --lib --locked`), and the
+  inspection client's two tests pass. Clippy with warnings denied passes for the
+  desktop package's targets with and without `inspection`; rustfmt and the
+  architecture boundary check pass. The workspace-wide suite, `pace-model` and
+  `terminal-core` tests were not rerun locally; neither crate changed.
+- **Native regression.** The optimized inspection build passed 24 semantic
+  checks and produced 25 captures in the
+  [accepted run](../artifacts/ui-rebuild/20261001T034328Z-2d49bbe2/ui-regression.json);
+  its [metadata](../artifacts/ui-rebuild/20261001T034328Z-2d49bbe2/run.json)
+  records the binary and lockfile hashes. The run used X11 through the harness.
+  New checks cover Tab delivery with the terminal keeping focus, the terminal
+  menu and its dismissal, and sidebar resize and reset. An
+  [earlier run](../artifacts/ui-rebuild/20261001T033954Z-4724214b/ui-regression.json)
+  failed at the sidebar reset: the handle accepted only an exact double-click,
+  and the toolkit counted the clicks as a triple because another click had just
+  happened. Both resize handles now accept either. That run is retained as
+  diagnostic evidence.
+- **Captures.** The run's captures and separate manual captures of states the
+  harness does not reach were inspected. Capture 17 was taken while two
+  restored shells were still drawing their startup prompt; a resize trace of a
+  separate restoration showed both resizes of every pane within 34 ms of launch
+  and none later, and capture 18 shows the settled prompts.
+- **Native Wayland.** The ordinary release build rendered
+  [a one-shot capture](../artifacts/ui-rebuild/wayland-release.png) at 1.5×
+  scale with transparent window corners, and was observed idle; see
+  [performance.md](performance.md#native-wayland-idle-after-the-interface-rebuild).
+  Wayland keyboard, pointer, clipboard and IME behaviour were not exercised.
+
+Not verified: macOS and Windows builds and appearance (the Windows target is
+not installed locally; CI owns those jobs), operating-system keyboard injection,
+clipboard, screen-reader navigation of the new controls, and an input method
+that is actively composing.
 
 ## Historical visual acceptance
 

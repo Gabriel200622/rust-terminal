@@ -235,11 +235,13 @@ impl App {
                     .map(|w| w.cwd().display().to_string())
                     .unwrap_or_default();
                 self.ui.overlay = OverlayState::NewWorkspace;
+                self.ui.overlay_focus = true;
             }
             Action::Rename(id) => {
                 if let Some(w) = self.controller.model().workspace(id) {
                     self.ui.rename_name = w.name().into();
                     self.ui.overlay = OverlayState::Rename(id);
+                    self.ui.overlay_focus = true;
                 }
             }
             Action::SetName(workspace, name) => {
@@ -254,6 +256,7 @@ impl App {
             }
             Action::Palette => {
                 self.ui.palette_query.clear();
+                self.ui.palette_selected = 0;
                 self.ui.overlay = if self.ui.overlay == OverlayState::Palette {
                     OverlayState::None
                 } else {
@@ -263,13 +266,38 @@ impl App {
             Action::ToggleSidebar => {
                 self.dispatch(ctx, Command::SetSidebar(!self.controller.model().sidebar()))
             }
+            Action::SidebarWidth(width) => {
+                let config = Config {
+                    sidebar_width: width.clamp(170.0, 360.0),
+                    ..self.config.clone()
+                };
+                self.action(ctx, Action::Preferences(config));
+            }
             Action::Zoom => self.ui.zoomed = !self.ui.zoomed,
             Action::Find => {
-                self.ui.search_open = !self.ui.search_open;
-                self.ui.search_focus = self.ui.search_open;
+                let editing = ctx.memory(|memory| memory.has_focus(ui::search::input_id()));
+                if self.ui.search_open && !editing {
+                    // Search is open but the terminal has the keyboard: return
+                    // to the field instead of closing it.
+                    self.ui.search_focus = true;
+                } else {
+                    self.ui.search_open = !self.ui.search_open;
+                    self.ui.search_focus = self.ui.search_open;
+                    self.search_point = None;
+                    self.search_task = None;
+                }
+            }
+            Action::SearchChanged => {
                 self.search_point = None;
+                self.find_next(false);
+            }
+            Action::FindNext { reverse } => self.find_next(reverse),
+            Action::CloseSearch => {
+                self.ui.search_open = false;
                 self.search_task = None;
             }
+            Action::CloseOverlay => self.ui.overlay = OverlayState::None,
+            Action::DismissError => self.ui.error = None,
             Action::Clear(pane) => {
                 if let Some(session) = self.sessions.get(pane) {
                     session.clear_history();
@@ -305,9 +333,9 @@ impl App {
                     return;
                 }
                 self.config = config;
-                theme::apply(ctx, self.config.theme);
+                theme::apply(ctx, &self.config);
                 for (_, session) in self.sessions.iter() {
-                    set_session_palette(session, Palette::new(self.config.theme));
+                    set_session_palette(session, Palette::for_config(&self.config));
                 }
                 self.dispatch(ctx, Command::UpdatePreferences);
             }

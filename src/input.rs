@@ -60,6 +60,27 @@ pub fn normalize_pointer_events(
         .collect()
 }
 
+/// Removes pre-edit updates that repeat an already empty composition.
+///
+/// Some input methods answer every cursor-area update with another empty
+/// pre-edit. The toolkit repaints for any event and then updates the cursor
+/// area again, so the window would never go idle. A change to or from an
+/// active composition is always kept.
+pub fn drop_redundant_preedits(events: &mut Vec<egui::Event>, composing: &mut bool) {
+    events.retain(|event| match event {
+        egui::Event::Ime(egui::ImeEvent::Preedit { text, .. }) => {
+            let redundant = text.is_empty() && !*composing;
+            *composing = !text.is_empty();
+            !redundant
+        }
+        egui::Event::Ime(egui::ImeEvent::Commit(_)) => {
+            *composing = false;
+            true
+        }
+        _ => true,
+    });
+}
+
 /// Normalizes a frame without interpreting shortcuts or touching a session.
 pub fn normalize_events(
     events: &[egui::Event],
@@ -294,6 +315,36 @@ pub fn encode_mouse_motion(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeated_empty_preedits_are_dropped_but_composition_changes_are_kept() {
+        let preedit = |text: &str| {
+            egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: text.into(),
+                active_range_chars: None,
+            })
+        };
+        let mut composing = false;
+
+        // An idle input method repeating itself must not look like activity.
+        let mut events = vec![preedit(""), egui::Event::Text("a".into()), preedit("")];
+        drop_redundant_preedits(&mut events, &mut composing);
+        assert_eq!(events, [egui::Event::Text("a".into())]);
+        assert!(!composing);
+
+        // Starting, updating and clearing a composition all reach the terminal.
+        let mut events = vec![preedit("に"), preedit("にほ"), preedit(""), preedit("")];
+        drop_redundant_preedits(&mut events, &mut composing);
+        assert_eq!(events, [preedit("に"), preedit("にほ"), preedit("")]);
+        assert!(!composing);
+
+        // A commit ends the composition; the empty pre-edit after it is noise.
+        let commit = egui::Event::Ime(egui::ImeEvent::Commit("日本".into()));
+        let mut events = vec![preedit("にほん"), commit.clone(), preedit("")];
+        drop_redundant_preedits(&mut events, &mut composing);
+        assert_eq!(events, [preedit("にほん"), commit]);
+        assert!(!composing);
+    }
 
     #[test]
     fn normalization_preserves_layout_text_and_physical_key() {

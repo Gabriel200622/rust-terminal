@@ -40,6 +40,9 @@ cancel. Update affected user guidance and links when their meaning changes.
 User-visible UI changes require visual review of the running native application
 after the final build, including affected states and narrow windows. Headless
 tests and successful interaction reports do not establish visual acceptance.
+In UI reports, embed a running-app screenshot of **every changed screen** from
+the native desktop app, mobile emulator or web browser, as applicable. If a
+screenshot is unavailable, name the screen and explain why.
 
 ## Engineering taste
 

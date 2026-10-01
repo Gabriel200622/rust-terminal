@@ -167,9 +167,9 @@ try:
     report['info'] = call('info')
     shot('00-workspace')
     initial_nodes = tree('00-widget-tree')
-    icon_labels = {'Toggle sidebar', 'Command palette', 'Minimize', 'Maximize', 'Close window', 'New workspace', 'Preferences', 'Shortcuts and commands', 'Split right', 'Split below', 'Close terminal'}
+    icon_labels = {'Toggle sidebar', 'Command palette', 'Minimize', 'Maximize', 'Close window', 'New workspace', 'Preferences', 'Find in terminal', 'Split right', 'Split below'}
     available_labels = {n['properties'].get('label') for n in initial_nodes if n['role'] == 'button'}
-    check('icon accessibility labels', icon_labels <= available_labels, 'icon-only controls must expose descriptive native button labels')
+    check('icon accessibility labels', icon_labels <= available_labels, 'window, sidebar and toolbar controls must expose descriptive native button labels')
     state_path = args.data_root / 'workspaces.json'
     before_creation = wait_until('initial workspace state', state)
     key(app_modifier + '+t')
@@ -210,6 +210,36 @@ try:
     check('three independent shell processes', len(set(shell_pids)) == 3 and all(pid.isdecimal() for pid in shell_pids), 'each focused native pane must execute commands in a different real shell')
     report['shell_pids'] = shell_pids
     shot('05-independent-shells')
+    pane_labels = {n['properties'].get('label') for n in tree() if n['role'] == 'button'}
+    check('pane header controls', {'Close terminal', 'Zoom terminal'} <= pane_labels, 'split panes must expose their own close and zoom controls')
+    # The focused terminal owns Tab; the toolkit must not move focus into the chrome.
+    tab_marker = args.data_root / 'tab-ok'
+    tab_marker.unlink(missing_ok=True)
+    shell(f"cat > {shlex.quote(str(tab_marker))}")
+    call('text', 'a')
+    key('Tab')
+    call('text', 'b')
+    key('Enter')
+    key('ctrl+d')
+    wait_until('Tab to reach the shell', lambda: tab_marker.exists() and tab_marker.read_text() == 'a\tb\n')
+    focused = [n for n in tree() if n['inspection_focused']]
+    check('Tab reaches the shell', tab_marker.read_text() == 'a\tb\n' and len(focused) == 1 and focused[0]['properties'].get('label', '').startswith('Terminal pane '), 'a literal Tab is delivered to the foreground process and the terminal keeps keyboard focus')
+    call('context', *center(panes[-1]))
+    call('settle', 60)
+    menu_labels = {n['properties'].get('label') for n in tree('05-context-menu-tree') if n['role'] == 'button'}
+    check('terminal context menu', {'Copy', 'Paste', 'Clear scrollback', 'Restart terminal'} <= menu_labels, 'secondary click opens the terminal menu with its actions')
+    shot('05-context-menu')
+    key('Escape')
+    call('settle', 60)
+    check('context menu dismissed', 'Restart terminal' not in {n['properties'].get('label') for n in tree()} and len(bodies(tree())) == 3, 'Escape closes the menu without changing the panes')
+    edge_x, edge_y = center(find(tree(), 'Resize sidebar'))
+    call('drag', edge_x, edge_y, edge_x + 60, edge_y)
+    wait_until('sidebar width persistence', lambda: abs(config().get('sidebar_width', 0) - (edge_x + 60)) <= 3)
+    check('sidebar resizes from its edge', abs(config().get('sidebar_width', 0) - (edge_x + 60)) <= 3 and len(bodies(tree())) == 3, 'dragging the sidebar edge saves the new width on release and keeps every pane')
+    shot('05-sidebar-resized')
+    call('double-click', *center(find(tree(), 'Resize sidebar')))
+    wait_until('sidebar width reset', lambda: config().get('sidebar_width') == 216.0)
+    check('sidebar width resets on double-click', config().get('sidebar_width') == 216.0, 'double-clicking the edge restores the default width')
     marker = args.data_root / 'interrupt-ok'
     marker.unlink(missing_ok=True)
     started = args.data_root / 'interrupt-started'
@@ -275,7 +305,7 @@ try:
         close_nodes = tree('16-app-close-tree')
         shot('16-app-close-confirmation')
         try:
-            click(find(close_nodes, 'Close', 'button'))
+            click(find(close_nodes, 'Quit', 'button'))
         except RuntimeError as error:
             report['close_response'] = str(error)
         wait_until('graceful inspector shutdown', lambda: not endpoint_open())

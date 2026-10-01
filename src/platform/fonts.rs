@@ -33,6 +33,14 @@ fn font_definitions_with(
             include_bytes!("../../assets/fonts/Geist-Regular.ttf").as_slice(),
         ),
         (
+            "GeistMedium",
+            include_bytes!("../../assets/fonts/Geist-Medium.ttf").as_slice(),
+        ),
+        (
+            "GeistSemiBold",
+            include_bytes!("../../assets/fonts/Geist-SemiBold.ttf").as_slice(),
+        ),
+        (
             "JetBrains",
             include_bytes!("../../assets/fonts/JetBrainsMono-Regular.ttf").as_slice(),
         ),
@@ -78,6 +86,19 @@ fn font_definitions_with(
         .or_default();
     proportional.insert(0, "Geist".into());
     proportional.extend(shared_fallbacks);
+    // Interface weights share the regular family's fallbacks, so emphasis never
+    // changes which glyphs are available.
+    let proportional = proportional.clone();
+    for (family, face) in [
+        (crate::theme::MEDIUM, "GeistMedium"),
+        (crate::theme::SEMIBOLD, "GeistSemiBold"),
+    ] {
+        let mut fonts = proportional.clone();
+        fonts[0] = face.into();
+        definitions
+            .families
+            .insert(FontFamily::Name(family.into()), fonts);
+    }
     definitions
 }
 
@@ -264,6 +285,15 @@ mod tests {
             definitions.families[&FontFamily::Name("TerminalBold".into())][0],
             "JetBrainsBold"
         );
+        for (family, face) in [
+            (crate::theme::MEDIUM, "GeistMedium"),
+            (crate::theme::SEMIBOLD, "GeistSemiBold"),
+        ] {
+            assert_eq!(
+                definitions.families[&FontFamily::Name(family.into())][0],
+                face
+            );
+        }
         assert!(!definitions.font_data.contains_key("SystemNerd"));
         assert!(!definitions.font_data.contains_key("SystemCjk"));
     }

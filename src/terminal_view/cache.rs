@@ -156,6 +156,11 @@ impl Cache {
     pub fn invalidate(&mut self) {
         self.revision = u64::MAX;
     }
+    /// The terminal's resolved background after the latest preparation, so the
+    /// surrounding pane can match a program that changes it.
+    pub fn background(&self) -> Color32 {
+        self.background
+    }
     pub fn retry_resize(&mut self) {
         self.key = None;
     }
@@ -649,7 +654,7 @@ mod tests {
             let ctx = egui::Context::default();
             let config = Config::default();
             crate::theme::fonts(&ctx);
-            crate::theme::apply(&ctx, config.theme);
+            crate::theme::apply(&ctx, &config);
             let mut fixture = Self {
                 session,
                 ctx,

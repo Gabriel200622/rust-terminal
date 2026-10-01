@@ -13,13 +13,13 @@ use crate::{
         persistence::PersistenceWriter,
         sessions::{ResourcePolicy, SessionCompletion, SessionManager},
     },
-    theme::{self, Palette},
+    theme::{self, Palette, metrics},
     ui::{
         self, Action, Close, OverlayState, PaneRender, UiState, WorkspaceView,
         workspace::PanePresentation,
     },
 };
-use eframe::egui::{self, Pos2, Rect, Stroke, UiBuilder, Vec2};
+use eframe::egui::{self, Pos2, Rect, Stroke, Vec2};
 use pace_model::{Command, Controller, Effect, Lifecycle, Limits, Model, PaneId};
 use std::{
     collections::BTreeMap,
@@ -67,6 +67,12 @@ pub struct App {
     exit_approved: bool,
     ephemeral: bool,
     preference_generation: u64,
+    /// An input-method composition is in progress.
+    ime_composing: bool,
+    /// The terminal widget that owned the keyboard on the previous frame.
+    terminal_focus: Option<egui::Id>,
+    /// A sheet or the palette was open when focus was last reconciled.
+    overlay_was_open: bool,
     diagnostics: diagnostics::Diagnostics,
 }
 impl App {
@@ -142,6 +148,9 @@ impl App {
             exit_approved: false,
             ephemeral,
             preference_generation: 0,
+            ime_composing: false,
+            terminal_focus: None,
+            overlay_was_open: false,
             diagnostics: diagnostics::Diagnostics::new(launch.diagnostics),
         }
     }
@@ -179,7 +188,7 @@ impl App {
                         render.cache.invalidate();
                     }
                     if let Some(session) = self.sessions.get(pane) {
-                        set_session_palette(session, Palette::new(self.config.theme));
+                        set_session_palette(session, Palette::for_config(&self.config));
                         if self.controller.model().active_pane() == Some(pane) {
                             let _ = session.focus(true);
                         }
@@ -268,7 +277,7 @@ impl App {
     fn complete_startup(&mut self, ctx: &egui::Context, startup: Startup) {
         self.startup = None;
         self.config = startup.config;
-        theme::apply(ctx, self.config.theme);
+        theme::apply(ctx, &self.config);
         self.state_writable = startup.report.can_write;
         let mut errors = startup.report.diagnostics;
         if let Some(error) = startup.error {
@@ -323,10 +332,11 @@ impl App {
                 id: w.id(),
                 name: w.name().into(),
                 cwd: w.cwd().into(),
+                panes: w.panes().len(),
                 running: w
                     .panes()
                     .iter()
-                    .any(|p| p.lifecycle() == &Lifecycle::Running),
+                    .any(|p| matches!(p.lifecycle(), Lifecycle::Starting | Lifecycle::Running)),
             })
             .collect()
     }
@@ -349,6 +359,7 @@ impl App {
                     PanePresentation {
                         metadata: session.metadata(),
                         snapshot: session.viewport(),
+                        starting: false,
                     }
                 } else {
                     let title = match pane.lifecycle() {
@@ -367,7 +378,12 @@ impl App {
                             },
                             bell_count: 0,
                         },
-                        snapshot: ViewportSnapshot::blank(80, 24),
+                        // A placeholder has no shell, so it shows no cursor.
+                        snapshot: ViewportSnapshot {
+                            mode: Mode::NONE,
+                            ..ViewportSnapshot::blank(80, 24)
+                        },
+                        starting: !matches!(pane.lifecycle(), Lifecycle::Failed(_)),
                     }
                 };
                 (pane.id(), presentation)
@@ -432,6 +448,20 @@ impl App {
         });
         self.ui.search_error = Some("Searching…".into());
     }
+    /// When a sheet or the palette closes, its focused control is gone but
+    /// would keep the keyboard for one more frame. Release it at once so the
+    /// terminal can take over without dropping keys.
+    fn release_closed_overlay_focus(&mut self, ctx: &egui::Context) {
+        let open = self.ui.overlay != OverlayState::None;
+        if self.overlay_was_open && !open {
+            ctx.memory_mut(|memory| {
+                if let Some(id) = memory.focused() {
+                    memory.surrender_focus(id);
+                }
+            });
+        }
+        self.overlay_was_open = open;
+    }
     fn poll_search(&mut self, ctx: &egui::Context) {
         let Some(mut search) = self.search_task.take() else {
             return;
@@ -490,6 +520,9 @@ impl eframe::App for App {
     fn clear_color(&self, _: &egui::Visuals) -> [f32; 4] {
         egui::Rgba::TRANSPARENT.to_array()
     }
+    fn raw_input_hook(&mut self, _: &egui::Context, raw_input: &mut egui::RawInput) {
+        crate::input::drop_redundant_preedits(&mut raw_input.events, &mut self.ime_composing);
+    }
     fn ui(&mut self, ui: &mut egui::Ui, _: &mut eframe::Frame) {
         let tick = Instant::now();
         let ctx = ui.ctx().clone();
@@ -505,90 +538,92 @@ impl eframe::App for App {
             self.ui.overlay = OverlayState::ConfirmClose(Close::App);
         }
         self.shortcuts(&ctx);
-        let p = Palette::new(self.config.theme);
+        self.release_closed_overlay_focus(&ctx);
+        // Sampled before widgets run: a menu that closes on this frame's key
+        // press still owns that key.
+        let menu_open = egui::Popup::is_any_open(&ctx);
+        // Tab and the arrow keys move focus only inside sheets and menus.
+        // Everywhere else they belong to the terminal or the focused field,
+        // so the toolkit must not walk focus into the chrome.
+        let sheet_open = !matches!(self.ui.overlay, OverlayState::None | OverlayState::Palette);
+        if !sheet_open && !menu_open {
+            ctx.memory_mut(|memory| memory.move_focus(egui::FocusDirection::None));
+        }
+        let p = Palette::for_config(&self.config);
         let bounds = ui.max_rect();
         let radius = if cfg!(target_os = "linux")
             && ctx.input(|i| {
                 !i.viewport().maximized.unwrap_or(false)
                     && !i.viewport().fullscreen.unwrap_or(false)
             }) {
-            12
+            metrics::WINDOW_RADIUS
         } else {
             0
         };
-        ui.painter().rect_filled(bounds, radius, p.bg);
-        let title = Rect::from_min_size(bounds.min, Vec2::new(bounds.width(), 46.0));
-        let content = Rect::from_min_max(title.left_bottom(), bounds.max);
+        ui.painter().rect_filled(bounds, radius, p.chrome);
         let mut actions = Vec::new();
         let views = self.views();
         let active = self.controller.model().active_workspace();
-        ui::chrome::titlebar(&views, active, ui, title, p, radius, &mut actions);
-        let terminal = if self.controller.model().sidebar() && bounds.width() >= 850.0 {
-            let side = Rect::from_min_size(
-                content.min,
-                Vec2::new(self.config.sidebar_width, content.height()),
-            );
-            ui::chrome::sidebar_ui(&views, active, ui, side, p, radius, &mut actions);
-            Rect::from_min_max(Pos2::new(side.right(), content.top()), content.max)
-        } else {
-            content
+        let active_pane = self.controller.model().active_pane();
+        let presentations = self.presentations();
+        let subtitle = active_pane
+            .and_then(|pane| presentations.get(&pane))
+            .map(|presentation| {
+                format!(
+                    "{} — {}",
+                    ui::workspace::pane_label(&presentation.metadata),
+                    ui::helpers::compact_path(&presentation.metadata.cwd)
+                )
+            })
+            .unwrap_or_default();
+        let sidebar =
+            self.controller.model().sidebar() && bounds.width() >= metrics::SIDEBAR_MIN_WINDOW;
+        let chrome = ui::chrome::ChromeView {
+            workspaces: &views,
+            active,
+            pane: active_pane,
+            subtitle: &subtitle,
+            zoomed: self.ui.zoomed,
+            sidebar,
+            sidebar_available: bounds.width() >= metrics::SIDEBAR_MIN_WINDOW,
         };
-        let mut terminals = terminal.shrink(8.0);
-        if self.ui.search_open {
-            let find = Rect::from_min_size(terminals.min, Vec2::new(terminals.width(), 38.0));
-            ui.scope_builder(
-                UiBuilder::new()
-                    .id_salt("terminal-search")
-                    .max_rect(find)
-                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
-                |ui| {
-                    ui.add_space(12.0);
-                    let response = ui.add(
-                        egui::TextEdit::singleline(&mut self.ui.search)
-                            .id(egui::Id::new("terminal-search-input"))
-                            .hint_text("Find in scrollback…")
-                            .desired_width(240.0),
-                    );
-                    response.widget_info(|| {
-                        egui::WidgetInfo::labeled(
-                            egui::WidgetType::TextEdit,
-                            true,
-                            "Terminal search",
-                        )
-                    });
-                    if self.ui.search_focus {
-                        response.request_focus();
-                        self.ui.search_focus = false;
-                    }
-                    if response.changed() {
-                        self.search_point = None;
-                        self.find_next(false);
-                    }
-                    if response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        self.find_next(ui.input(|i| i.modifiers.shift));
-                    }
-                    if let Some(error) = &self.ui.search_error {
-                        ui.label(egui::RichText::new(error).size(10.0).color(p.muted));
-                    }
-                    if crate::icons::button(ui, crate::icons::Icon::ArrowUp, "Previous match")
-                        .clicked()
-                    {
-                        self.find_next(true);
-                    }
-                    if crate::icons::button(ui, crate::icons::Icon::ArrowDown, "Next match")
-                        .clicked()
-                    {
-                        self.find_next(false);
-                    }
-                    if crate::icons::button(ui, crate::icons::Icon::Close, "Close search").clicked()
-                    {
-                        self.ui.search_open = false;
-                        self.search_task = None;
-                    }
-                },
-            );
-            terminals.min.y += 46.0;
+        if !sidebar {
+            // An edge drag cannot finish once the sidebar is gone.
+            self.ui.sidebar_drag = None;
         }
+        let content = if sidebar {
+            let width = self
+                .ui
+                .sidebar_drag
+                .unwrap_or(self.config.sidebar_width)
+                .min(bounds.width() - 420.0);
+            let side = Rect::from_min_size(bounds.min, Vec2::new(width, bounds.height()));
+            ui::chrome::sidebar(
+                ui,
+                side,
+                p,
+                &chrome,
+                &mut self.ui.sidebar_drag,
+                &mut actions,
+            );
+            Rect::from_min_max(Pos2::new(side.right(), bounds.top()), bounds.max)
+        } else {
+            bounds
+        };
+        let toolbar = Rect::from_min_size(
+            content.min,
+            Vec2::new(content.width(), metrics::TOOLBAR_HEIGHT),
+        );
+        ui::chrome::toolbar(ui, toolbar, p, &chrome, &mut self.ui, &mut actions);
+        // Panes sit in the chrome like inset content; the sidebar supplies its
+        // own trailing margin.
+        let stage = Rect::from_min_max(
+            Pos2::new(
+                content.left() + if sidebar { 0.0 } else { metrics::GUTTER },
+                toolbar.bottom(),
+            ),
+            bounds.max - Vec2::splat(metrics::GUTTER),
+        );
         let visible: std::collections::HashSet<_> = self
             .controller
             .model()
@@ -621,8 +656,8 @@ impl eframe::App for App {
                 cache_bytes = cache_bytes.saturating_sub(bytes);
             }
         }
-        let presentations = self.presentations();
-        let mut active_rect = None;
+        let overlay = self.ui.overlay != OverlayState::None;
+        let mut output = ui::workspace::StageOutput::default();
         if let Some(workspace) = active.and_then(|id| self.controller.model().workspace(id)) {
             let layout = if self.ui.zoomed {
                 pace_model::Layout::Leaf(workspace.active())
@@ -632,77 +667,88 @@ impl eframe::App for App {
             ui::workspace::draw_node(
                 ui,
                 &layout,
-                terminals,
+                stage,
                 &mut self.renders,
-                &presentations,
-                workspace.active(),
-                &self.config,
-                p,
-                if self.ui.search_open {
-                    &self.ui.search
-                } else {
-                    ""
+                &ui::workspace::Stage {
+                    presentations: &presentations,
+                    active: workspace.active(),
+                    multiple: layout.leaves().len() > 1,
+                    zoomed: self.ui.zoomed,
+                    keyboard: !overlay,
+                    previous_terminal: self.terminal_focus,
+                    config: &self.config,
+                    p,
+                    search: if self.ui.search_open {
+                        &self.ui.search
+                    } else {
+                        ""
+                    },
                 },
                 &mut actions,
-                &mut active_rect,
+                &mut output,
             );
         } else {
-            ui.scope_builder(
-                UiBuilder::new().max_rect(Rect::from_center_size(
-                    terminals.center(),
-                    Vec2::new(160.0, 32.0),
-                )),
-                |ui| {
-                    if self.startup.is_some() {
-                        ui.label("Restoring workspaces…");
-                    } else if ui.button("New workspace").clicked() {
-                        actions.push(Action::New);
-                    }
-                },
-            );
+            ui::workspace::empty_state(ui, stage, p, self.startup.is_some(), &mut actions);
         }
         for action in actions.drain(..) {
             self.action(&ctx, action);
         }
-        let context = if self.ui.overlay != OverlayState::None || self.ui.error.is_some() {
+        // The focused terminal holds keyboard focus itself. Focus still on the
+        // terminal that owned the keyboard a frame ago (after a split, close or
+        // workspace switch) is in transit to the new one, so keys are not
+        // dropped; any other focused widget owns typing.
+        let focused = ctx.memory(|memory| memory.focused());
+        let in_transit = focused.is_some() && focused == self.terminal_focus;
+        let context = if self.ui.overlay != OverlayState::None || menu_open {
             crate::input::RoutingContext::Overlay
-        } else if self.ui.search_open {
+        } else if focused == Some(ui::search::input_id()) {
             crate::input::RoutingContext::TerminalSearch
-        } else if ctx.memory(|m| m.focused().is_some()) {
+        } else if focused.is_some() && focused != output.active_terminal && !in_transit {
             crate::input::RoutingContext::TextField
         } else if let Some(pane) = self.controller.model().active_pane() {
             crate::input::RoutingContext::TerminalPane(pane.get())
         } else {
             crate::input::RoutingContext::Overlay
         };
-        if let Some(rect) = active_rect {
+        if let Some(rect) = output.active_body {
             self.terminal_input(&ctx, rect, context);
         }
+        self.terminal_focus = output.active_terminal;
+        // Sheets dim the whole window, following its rounded shape.
+        let dim = ui::helpers::animate(
+            &ctx,
+            egui::Id::new("overlay-scrim"),
+            !matches!(self.ui.overlay, OverlayState::None | OverlayState::Palette),
+            0.16,
+        );
+        let dim = if self.ui.overlay == OverlayState::Palette {
+            // Opened from the keyboard many times a day: no transition.
+            1.0
+        } else {
+            dim
+        };
+        ui::helpers::scrim(ui.painter(), bounds, radius, p, dim);
+        let zoomed = self.ui.zoomed;
+        let message = self.ui.error.is_some();
         match self.ui.overlay {
-            OverlayState::Settings => {
-                let mut open = true;
-                ui::preferences::show(&ctx, &self.config, &mut open, &mut actions);
-                if !open {
-                    self.ui.overlay = OverlayState::None;
-                }
-            }
-            OverlayState::Palette => {
-                let mut open = true;
-                ui::palette::show(
-                    &ctx,
-                    &mut self.ui.palette_query,
-                    &mut open,
-                    self.controller.model().active_pane(),
-                    p,
-                    &mut actions,
-                );
-                if !open {
-                    self.ui.overlay = OverlayState::None;
-                }
-            }
+            OverlayState::Settings => ui::preferences::show(&ctx, &self.config, &mut actions),
+            OverlayState::Palette => ui::palette::show(
+                &ctx,
+                p,
+                &mut self.ui,
+                &ui::palette::PaletteView {
+                    pane: self.controller.model().active_pane(),
+                    workspaces: &views,
+                    active: self.controller.model().active_workspace(),
+                    config: &self.config,
+                    zoomed,
+                    message,
+                },
+                &mut actions,
+            ),
             _ => {}
         }
-        ui::dialogs::show(&ctx, &mut self.ui, &mut actions);
+        ui::dialogs::show(&ctx, p, &mut self.ui, &mut actions);
         for action in actions {
             self.action(&ctx, action);
         }
@@ -748,6 +794,7 @@ impl eframe::App for App {
             );
         }
         ui::helpers::resize_edges(ui, bounds);
+        self.release_closed_overlay_focus(&ctx);
     }
     fn on_exit(&mut self) {
         self.save_state();

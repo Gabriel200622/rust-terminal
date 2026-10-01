@@ -30,6 +30,9 @@ fn fixture(root: &std::path::Path) -> (App, mpsc::SyncSender<Startup>) {
         exit_approved: false,
         ephemeral: true,
         preference_generation: 0,
+        ime_composing: false,
+        terminal_focus: None,
+        overlay_was_open: false,
         diagnostics: diagnostics::Diagnostics::new(false),
     };
     (app, sender)
@@ -239,4 +242,195 @@ fn startup_command_reaches_the_original_pty_once_after_focus_changes() {
     assert_eq!(std::fs::read(first.join("launch-marker")).unwrap(), b"x");
     assert!(!second.join("launch-marker").exists());
     assert!(app.command.is_none());
+}
+
+fn press(app: &mut App, ctx: &egui::Context, event: egui::Event) -> bool {
+    let mut consumed = false;
+    let key = match &event {
+        egui::Event::Key { key, .. } => *key,
+        _ => unreachable!("key events only"),
+    };
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            events: vec![event],
+            ..Default::default()
+        },
+        |ui| {
+            app.shortcuts(ui.ctx());
+            consumed = !ui.input(|input| input.key_pressed(key));
+        },
+    );
+    output.textures_delta.clear();
+    consumed
+}
+
+fn key(key: egui::Key, physical_key: Option<egui::Key>, modifiers: egui::Modifiers) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key,
+        pressed: true,
+        repeat: false,
+        modifiers,
+    }
+}
+
+#[test]
+fn escape_leaves_one_surface_at_a_time_and_otherwise_belongs_to_the_shell() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    let escape = || key(egui::Key::Escape, None, egui::Modifiers::NONE);
+    app.startup = None;
+    app.ui.overlay = OverlayState::Settings;
+    app.ui.search_open = true;
+    app.ui.error = Some("Storage is read-only".into());
+
+    assert!(press(&mut app, &ctx, escape()));
+    assert_eq!(app.ui.overlay, OverlayState::None);
+    assert!(app.ui.search_open && app.ui.error.is_some());
+
+    // With no terminal to receive it, Escape dismisses the message; search,
+    // whose field is not focused, stays.
+    assert!(press(&mut app, &ctx, escape()));
+    assert!(app.ui.error.is_none() && app.ui.search_open);
+
+    app.controller
+        .dispatch(Command::AddWorkspace {
+            cwd: root.path().into(),
+            name: "Shell".into(),
+        })
+        .unwrap();
+    assert!(app.controller.model().active_pane().is_some());
+
+    // A message never takes a key the shell is waiting for.
+    app.ui.error = Some("Storage is read-only".into());
+    assert!(!press(&mut app, &ctx, escape()));
+    assert!(app.ui.error.is_some() && app.ui.search_open);
+
+    ctx.memory_mut(|memory| memory.request_focus(ui::search::input_id()));
+    assert!(press(&mut app, &ctx, escape()));
+    assert!(!app.ui.search_open);
+    assert!(app.ui.error.is_some(), "one surface per Escape");
+}
+
+#[test]
+fn find_returns_to_an_open_search_field_before_it_closes() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    app.startup = None;
+    app.action(&ctx, Action::Find);
+    assert!(app.ui.search_open && app.ui.search_focus);
+
+    // The field took focus and the user then clicked back into the terminal.
+    app.ui.search_focus = false;
+    app.action(&ctx, Action::Find);
+    assert!(app.ui.search_open, "search stays open");
+    assert!(app.ui.search_focus, "the field is focused again");
+
+    ctx.memory_mut(|memory| memory.request_focus(ui::search::input_id()));
+    app.action(&ctx, Action::Find);
+    assert!(!app.ui.search_open);
+}
+
+#[test]
+fn sidebar_width_is_clamped_and_saved_as_one_preference_change() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    app.startup = None;
+    app.action(&ctx, Action::SidebarWidth(900.0));
+    assert_eq!(app.config.sidebar_width, 360.0);
+    app.action(&ctx, Action::SidebarWidth(f32::NAN));
+    assert_eq!(
+        app.config.sidebar_width, 360.0,
+        "invalid widths are refused"
+    );
+    app.action(&ctx, Action::SidebarWidth(12.0));
+    assert_eq!(app.config.sidebar_width, 170.0);
+    assert_eq!(app.preference_generation, 2);
+}
+
+#[test]
+fn dialogs_request_field_focus_and_close_without_touching_workspaces() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    app.startup = None;
+    app.controller
+        .dispatch(Command::AddWorkspace {
+            cwd: root.path().into(),
+            name: "Only".into(),
+        })
+        .unwrap();
+    let workspace = app.controller.model().active_workspace().unwrap();
+    let generation = app.controller.generation();
+
+    app.action(&ctx, Action::New);
+    assert_eq!(app.ui.overlay, OverlayState::NewWorkspace);
+    assert!(app.ui.overlay_focus);
+    assert_eq!(app.ui.new_cwd, root.path().display().to_string());
+    app.action(&ctx, Action::CloseOverlay);
+    assert_eq!(app.ui.overlay, OverlayState::None);
+
+    app.ui.overlay_focus = false;
+    app.action(&ctx, Action::Rename(workspace));
+    assert_eq!(app.ui.overlay, OverlayState::Rename(workspace));
+    assert!(app.ui.overlay_focus);
+    assert_eq!(app.ui.rename_name, "Only");
+    app.action(&ctx, Action::CloseOverlay);
+
+    app.ui.error = Some("Could not save".into());
+    app.action(&ctx, Action::DismissError);
+    assert!(app.ui.error.is_none());
+    assert_eq!(app.controller.generation(), generation);
+    assert_eq!(app.controller.model().workspaces().len(), 1);
+}
+
+#[test]
+fn command_digits_select_workspaces_by_position_even_when_shift_changes_the_symbol() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    app.startup = None;
+    for name in ["First", "Second", "Third"] {
+        app.controller
+            .dispatch(Command::AddWorkspace {
+                cwd: root.path().into(),
+                name: name.into(),
+            })
+            .unwrap();
+    }
+    let ids: Vec<_> = app
+        .controller
+        .model()
+        .workspaces()
+        .iter()
+        .map(|workspace| workspace.id())
+        .collect();
+    assert_eq!(app.controller.model().active_workspace(), Some(ids[2]));
+    let command = if cfg!(target_os = "macos") {
+        egui::Modifiers::MAC_CMD | egui::Modifiers::COMMAND
+    } else {
+        egui::Modifiers::CTRL | egui::Modifiers::SHIFT
+    };
+    // On a US layout Shift+1 arrives as "!" with the digit as its physical key.
+    assert!(press(
+        &mut app,
+        &ctx,
+        key(egui::Key::Exclamationmark, Some(egui::Key::Num1), command)
+    ));
+    assert_eq!(app.controller.model().active_workspace(), Some(ids[0]));
+    assert!(press(&mut app, &ctx, key(egui::Key::Num2, None, command)));
+    assert_eq!(app.controller.model().active_workspace(), Some(ids[1]));
+    // No ninth workspace: the key is left for the terminal and nothing changes.
+    assert!(!press(&mut app, &ctx, key(egui::Key::Num9, None, command)));
+    assert_eq!(app.controller.model().active_workspace(), Some(ids[1]));
+    // A plain digit is ordinary typing.
+    assert!(!press(
+        &mut app,
+        &ctx,
+        key(egui::Key::Num1, None, egui::Modifiers::NONE)
+    ));
+    assert_eq!(app.controller.model().active_workspace(), Some(ids[1]));
 }

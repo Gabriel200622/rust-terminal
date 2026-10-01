@@ -15,6 +15,9 @@ const HELP: &str = "pace-inspect [--addr HOST:PORT] COMMAND\n\
   text TEXT                    Inject text, including Unicode\n\
   move X Y                     Move pointer using logical coordinates\n\
   click X Y                    Click using logical window coordinates\n\
+  context X Y                  Secondary-click, e.g. to open a context menu\n\
+  double-click X Y             Two primary clicks within one frame\n\
+  drag X1 Y1 X2 Y2             Press at the first point, move, release at the second\n\
   resize WIDTH HEIGHT          Resize using logical dimensions\n\
   settle [MAX_STEPS]            Wait for an idle frame (default: 60)\n\
 \n\
@@ -187,7 +190,7 @@ fn main() -> Result<()> {
             ])?;
             print_json(&Response::Done)?;
         }
-        "move" | "click" => {
+        "move" | "click" | "context" => {
             ensure!(
                 arguments.len() == 2,
                 "{command} requires X Y logical coordinates"
@@ -203,24 +206,92 @@ fn main() -> Result<()> {
                 Event::ModifiersChanged(Modifiers::NONE),
                 Event::PointerMoved(pos),
             ])?;
-            if command == "click" {
+            if command != "move" {
+                let button = if command == "context" {
+                    PointerButton::Secondary
+                } else {
+                    PointerButton::Primary
+                };
                 client.events(vec![
                     Event::ModifiersChanged(Modifiers::NONE),
                     Event::PointerMoved(pos),
                     Event::PointerButton {
                         pos,
-                        button: PointerButton::Primary,
+                        button,
                         pressed: true,
                         modifiers: Modifiers::NONE,
                     },
                     Event::PointerButton {
                         pos,
-                        button: PointerButton::Primary,
+                        button,
                         pressed: false,
                         modifiers: Modifiers::NONE,
                     },
                 ])?;
             }
+            print_json(&Response::Done)?;
+        }
+        "double-click" => {
+            ensure!(
+                arguments.len() == 2,
+                "double-click requires X Y logical coordinates"
+            );
+            let pos = pos2(number(&arguments[0], "X")?, number(&arguments[1], "Y")?);
+            ensure!(
+                pos.x.is_finite() && pos.y.is_finite(),
+                "coordinates must be finite"
+            );
+            client.events(vec![
+                Event::ModifiersChanged(Modifiers::NONE),
+                Event::PointerMoved(pos),
+            ])?;
+            // Both clicks share a frame, so they fall inside the toolkit's
+            // double-click interval regardless of client latency.
+            let mut events = vec![Event::PointerMoved(pos)];
+            for pressed in [true, false, true, false] {
+                events.push(Event::PointerButton {
+                    pos,
+                    button: PointerButton::Primary,
+                    pressed,
+                    modifiers: Modifiers::NONE,
+                });
+            }
+            client.events(events)?;
+            print_json(&Response::Done)?;
+        }
+        "drag" => {
+            ensure!(
+                arguments.len() == 4,
+                "drag requires X1 Y1 X2 Y2 logical coordinates"
+            );
+            let from = pos2(number(&arguments[0], "X1")?, number(&arguments[1], "Y1")?);
+            let to = pos2(number(&arguments[2], "X2")?, number(&arguments[3], "Y2")?);
+            ensure!(
+                [from.x, from.y, to.x, to.y]
+                    .iter()
+                    .all(|value| value.is_finite()),
+                "coordinates must be finite"
+            );
+            client.events(vec![
+                Event::ModifiersChanged(Modifiers::NONE),
+                Event::PointerMoved(from),
+            ])?;
+            client.events(vec![Event::PointerButton {
+                pos: from,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            }])?;
+            // Separate frames let the toolkit recognise the motion as a drag.
+            for step in 1..=4 {
+                client.events(vec![Event::PointerMoved(from.lerp(to, step as f32 / 4.0))])?;
+            }
+            client.events(vec![Event::PointerButton {
+                pos: to,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            }])?;
             print_json(&Response::Done)?;
         }
         "resize" => {

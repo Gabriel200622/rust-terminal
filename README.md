@@ -1,6 +1,6 @@
 # Pace
 
-A native Rust terminal for focused work. GPU rendering, real shell sessions, and a quiet workspace interface inspired by cmux and Ghostty. The visual system follows StarkIDE's spacing, rounded controls, and typography with an original terminal layout.
+A native Rust terminal for focused work. GPU rendering, real shell sessions, and a quiet workspace interface inspired by cmux and Ghostty. The interface follows a native, Apple-style visual language: a full-height sidebar, a unified toolbar, terminals as rounded content surfaces, and one accent colour for focus. See [the interface direction](docs/design.md).
 
 Pace uses `egui`/`eframe` with `wgpu`, `alacritty_terminal` for terminal state, and `portable-pty` for Unix PTYs and Windows ConPTY. It contains no webview. This repository is an initial implementation: Linux is the local verification platform; macOS and Windows need native runtime verification before a production release.
 
@@ -23,7 +23,7 @@ The executable is `target/release/pace` on Linux/macOS and `target\release\pace.
 
 ## Workspaces and customization
 
-Workspace navigation, independent shell panes, split layouts, scrollback, terminal search, selection/clipboard, a command palette, and settings are integrated in the native interface. Terminal text uses bundled JetBrains Mono; interface text uses Geist. Font licenses accompany the assets.
+Workspace navigation, independent shell panes, split layouts, scrollback, terminal search, selection/clipboard, a command palette, and settings are integrated in the native interface. Every action is listed in the command palette with its shortcut; secondary-click a terminal or a workspace for its menu, double-click a workspace to rename it, and drag the sidebar's edge to resize it. Terminal text uses bundled JetBrains Mono; interface text uses Geist. Font licenses accompany the assets.
 
 When no saved workspace can be restored, Pace opens a terminal in your home directory (`~`). Use `--cwd` to choose another starting directory.
 
@@ -36,11 +36,11 @@ pace --no-restore
 pace --help
 ```
 
-[config.example.toml](config.example.toml) documents the supported settings: three themes, font size and line height, scrollback limit, shell executable, cursor style/blink, sidebar width, workspace restoration, and close confirmation. Settings are validated; unknown keys are rejected. Workspace restoration restores directories, split positions, and focused panes, and launches fresh shell processes. Commands and process memory are never serialized.
+[config.example.toml](config.example.toml) documents the supported settings: three themes, nine accent colours, font size and line height, scrollback limit, shell executable, cursor style/blink, sidebar width, workspace restoration, and close confirmation. Settings are validated; unknown keys are rejected. Workspace restoration restores directories, split positions, and focused panes, and launches fresh shell processes. Commands and process memory are never serialized.
 
 ## Keyboard shortcuts
 
-Use Ctrl+Shift on Linux/Windows and Command on macOS: T opens a workspace, D splits right, E splits below, W closes the focused pane, F searches, P opens commands, B toggles the sidebar, and Enter focuses a pane at full size. Ctrl+Tab switches workspaces. Ctrl+comma opens preferences; Ctrl+plus/minus adjusts terminal font size. Use Ctrl+Shift+C/V to copy/paste on Linux/Windows, Command+C/V on macOS. Plain Ctrl+C interrupts the shell; Shift+PageUp/PageDown scrolls history. Hold Shift to select text when a TUI owns the mouse.
+Use Ctrl+Shift on Linux/Windows and Command on macOS: T opens a workspace, D splits right, E splits below, W closes the focused pane, F searches, P opens commands, B toggles the sidebar, Enter zooms the focused pane to full size and back, and 1–9 select a workspace by its sidebar position. Ctrl+Tab switches workspaces. Escape leaves a sheet or a focused search field; otherwise it goes to the shell, as do Tab and the arrow keys. Ctrl+comma opens preferences; Ctrl+plus/minus adjusts terminal font size. Use Ctrl+Shift+C/V to copy/paste on Linux/Windows, Command+C/V on macOS. Plain Ctrl+C interrupts the shell; Shift+PageUp/PageDown scrolls history. Hold Shift to select text when a TUI owns the mouse.
 
 The native [desktop icon](assets/pace.svg) and [Linux desktop entry](packaging/pace.desktop) are provided. Install the binary on your PATH and these files in your desktop environment's standard application/icon locations.
 
@@ -66,13 +66,13 @@ Ghostty's public `libghostty-vt` is a possible future engine, but it supplies te
 
 ## CI and artifacts
 
-GitHub Actions builds, tests, and runs Clippy on Linux, macOS, and Windows; formatting is checked on Linux. Pushing a tag matching the package version, such as `v0.1.0`, runs release checks and packages Linux x64, macOS arm64/Intel, and Windows x64 binaries. The archives include configuration, licenses, dependency notices, and SHA-256 checksums, and are staged in a draft GitHub release for review.
+GitHub Actions runs CI only on pull requests: builds, tests, and Clippy run on Linux, macOS, and Windows; formatting is checked on Linux. Pushing a tag matching the package version, such as `v0.1.0`, runs release checks and packages Linux x64, macOS arm64/Intel, and Windows x64 binaries. The archives include configuration, licenses, dependency notices, and SHA-256 checksums, and are staged in a draft GitHub release for review.
 
 These are binary archives, not installers. macOS signing/notarization, Windows signing, an update mechanism, and distribution-specific integration remain release work. Kitty graphics, full font fallback/shaping, keypad identification and some advanced keyboard modes, and platform accessibility need dedicated coverage before they are advertised. Running a GUI and reviewing screenshots on each OS remains necessary even after CI passes.
 
 MIT licensed. Bundled fonts retain their SIL Open Font License notices; third-party dependencies retain their respective licenses.
 
-Developer inspection is opt-in through the `inspection` feature. `pace-inspect` exposes the native accessibility tree and supports `screenshot`, `key`, `text`, `click`, and `resize` commands for repeatable native visual review. The normal release binary has no inspection listener. Independent launches must follow [the run-isolation rules](scripts/AGENTS.md).
+Developer inspection is opt-in through the `inspection` feature. `pace-inspect` exposes the native accessibility tree and supports `screenshot`, `key`, `text`, `click`, `context` (secondary click), `double-click`, `drag`, and `resize` commands for repeatable native visual review. The normal release binary has no inspection listener. Independent launches must follow [the run-isolation rules](scripts/AGENTS.md).
 
 Native regression runs own their process, temporary data directory, and inspection
 endpoint; they never use your saved workspaces:

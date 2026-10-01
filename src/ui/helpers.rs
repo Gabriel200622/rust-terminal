@@ -1,3 +1,5 @@
+//! Label and window helpers, plus the shared controls of the visual system.
+pub use super::controls::*;
 use eframe::egui::{self, Rect, Sense, Vec2};
 use std::path::PathBuf;
 pub fn compact_path(path: &std::path::Path) -> String {

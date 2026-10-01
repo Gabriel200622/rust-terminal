@@ -1,114 +1,563 @@
-use super::Action;
-use crate::{
-    icons::{self, Icon},
-    theme::Palette,
+//! The command palette: every action, searchable, with its shortcut.
+use super::helpers::{
+    SheetPlacement, bare_text_edit, edit_shortcut, elided, galley_at, keycaps, place, sheet,
+    shortcut,
 };
-use eframe::egui::{self, Align2, FontId, Pos2, Rect, Sense, Vec2};
-use pace_model::{Axis, PaneId};
+use super::{Action, UiState, WorkspaceView};
+use crate::{
+    config::{Config, Theme},
+    icons::{self, Icon},
+    theme::{self, Palette},
+};
+use eframe::egui::{
+    self, Align, Align2, Id, Key, Layout, Modifiers, Pos2, Rect, Sense, Vec2, WidgetInfo,
+    WidgetType, vec2,
+};
+use pace_model::{Axis, PaneId, WorkspaceId};
+
+pub struct PaletteView<'a> {
+    pub pane: Option<PaneId>,
+    pub workspaces: &'a [WorkspaceView],
+    pub active: Option<WorkspaceId>,
+    pub config: &'a Config,
+    pub zoomed: bool,
+    /// A message is showing and can be dismissed.
+    pub message: bool,
+}
+
+struct Command {
+    group: &'static str,
+    icon: Icon,
+    title: String,
+    shortcut: String,
+    actions: Vec<Action>,
+    /// Distinguishes commands that can share a title, such as workspaces
+    /// with the same name.
+    target: u64,
+}
+
+fn command(
+    group: &'static str,
+    icon: Icon,
+    title: impl Into<String>,
+    shortcut: impl Into<String>,
+    actions: impl Into<Vec<Action>>,
+) -> Command {
+    Command {
+        group,
+        icon,
+        title: title.into(),
+        shortcut: shortcut.into(),
+        actions: actions.into(),
+        target: 0,
+    }
+}
+
+/// Commands that apply now. Pane commands exist only with a focused terminal,
+/// and each captures its target when the palette is drawn.
+fn commands(view: &PaletteView) -> Vec<Command> {
+    let mut list = Vec::new();
+    if let Some(pane) = view.pane {
+        list.extend([
+            command(
+                "Terminal",
+                Icon::SplitVertical,
+                "Split right",
+                shortcut("D"),
+                [Action::Split(pane, Axis::Vertical)],
+            ),
+            command(
+                "Terminal",
+                Icon::SplitHorizontal,
+                "Split below",
+                shortcut("E"),
+                [Action::Split(pane, Axis::Horizontal)],
+            ),
+            command(
+                "Terminal",
+                if view.zoomed {
+                    Icon::Minimize
+                } else {
+                    Icon::Maximize
+                },
+                if view.zoomed {
+                    "Show all terminals"
+                } else {
+                    "Zoom terminal"
+                },
+                shortcut("Enter"),
+                [Action::Zoom],
+            ),
+            command(
+                "Terminal",
+                Icon::Search,
+                "Find in terminal",
+                shortcut("F"),
+                [Action::Find],
+            ),
+            command(
+                "Terminal",
+                Icon::Copy,
+                "Copy selection",
+                shortcut("C"),
+                [Action::Copy(pane)],
+            ),
+            command(
+                "Terminal",
+                Icon::Clipboard,
+                "Paste",
+                shortcut("V"),
+                [Action::Paste(pane)],
+            ),
+            command(
+                "Terminal",
+                Icon::Eraser,
+                "Clear scrollback",
+                "",
+                [Action::Clear(pane)],
+            ),
+            command(
+                "Terminal",
+                Icon::Refresh,
+                "Restart terminal",
+                "",
+                [Action::Restart(pane)],
+            ),
+            command(
+                "Terminal",
+                Icon::Close,
+                "Close terminal",
+                shortcut("W"),
+                [Action::ClosePane(pane)],
+            ),
+        ]);
+    }
+    list.push(command(
+        "Workspace",
+        Icon::Plus,
+        "New workspace",
+        shortcut("T"),
+        [Action::New],
+    ));
+    if let Some(active) = view.active {
+        list.extend([
+            command(
+                "Workspace",
+                Icon::Pencil,
+                "Rename workspace",
+                "",
+                [Action::Rename(active)],
+            ),
+            command(
+                "Workspace",
+                Icon::Close,
+                "Close workspace",
+                "",
+                [Action::CloseWorkspace(active)],
+            ),
+        ]);
+    }
+    for (index, workspace) in view.workspaces.iter().enumerate() {
+        if Some(workspace.id) == view.active {
+            continue;
+        }
+        list.push(Command {
+            target: workspace.id.get(),
+            ..command(
+                "Go to",
+                Icon::ArrowUpRight,
+                format!("Go to {}", workspace.name),
+                if index < 9 {
+                    shortcut(&(index + 1).to_string())
+                } else {
+                    String::new()
+                },
+                [Action::SelectWorkspace(workspace.id)],
+            )
+        });
+    }
+    if view.message {
+        // Escape belongs to the shell while a terminal is focused, so the
+        // message has its own keyboard path.
+        list.push(command(
+            "View",
+            Icon::Close,
+            "Dismiss message",
+            "",
+            [Action::DismissError],
+        ));
+    }
+    list.extend([
+        command(
+            "View",
+            Icon::Sidebar,
+            "Toggle sidebar",
+            shortcut("B"),
+            [Action::ToggleSidebar],
+        ),
+        command(
+            "View",
+            Icon::Settings,
+            "Preferences",
+            edit_shortcut(","),
+            [Action::Settings],
+        ),
+    ]);
+    for (title, key, size) in [
+        (
+            "Increase font size",
+            "+",
+            (view.config.font_size + 1.0).min(32.0),
+        ),
+        (
+            "Decrease font size",
+            "-",
+            (view.config.font_size - 1.0).max(9.0),
+        ),
+        ("Reset font size", "0", Config::default().font_size),
+    ] {
+        list.push(command(
+            "View",
+            Icon::TextSize,
+            title,
+            edit_shortcut(key),
+            [Action::Preferences(Config {
+                font_size: size,
+                ..view.config.clone()
+            })],
+        ));
+    }
+    for (theme, name, icon) in [
+        (Theme::Graphite, "Graphite", Icon::Moon),
+        (Theme::Dusk, "Dusk", Icon::Moon),
+        (Theme::Light, "Light", Icon::Sun),
+    ] {
+        if theme != view.config.theme {
+            list.push(command(
+                "Appearance",
+                icon,
+                format!("Use {name} theme"),
+                "",
+                [Action::Preferences(Config {
+                    theme,
+                    ..view.config.clone()
+                })],
+            ));
+        }
+    }
+    list
+}
+
+/// Every word of the query must appear in the title or its group.
+fn matches(command: &Command, query: &str) -> bool {
+    let haystack = format!("{} {}", command.title, command.group).to_lowercase();
+    query
+        .to_lowercase()
+        .split_whitespace()
+        .all(|word| haystack.contains(word))
+}
+
 pub fn show(
     ctx: &egui::Context,
-    query: &mut String,
-    open: &mut bool,
-    pane: Option<PaneId>,
     p: Palette,
+    state: &mut UiState,
+    view: &PaletteView,
     actions: &mut Vec<Action>,
 ) {
-    let mut visible = *open;
-    let modkey = if cfg!(target_os = "macos") {
-        "⌘"
-    } else {
-        "Ctrl+Shift+"
-    };
-    egui::Window::new("Commands")
-        .open(&mut visible)
-        .collapsible(false)
-        .resizable(false)
-        .default_width(470.0)
-        .default_height(0.0)
-        .anchor(Align2::CENTER_TOP, [0.0, 110.0])
-        .show(ctx, |ui| {
-            let r = ui.add(
-                egui::TextEdit::singleline(&mut (*query))
-                    .hint_text("Find a command…")
-                    .desired_width(f32::INFINITY),
-            );
-            if (*query).is_empty() {
-                r.request_focus();
-            }
-            ui.add_space(8.0);
-            let commands = [
-                ("New workspace", "T", Icon::Plus, Action::New),
-                (
-                    "Split right",
-                    "D",
-                    Icon::SplitVertical,
-                    Action::Split(pane.unwrap_or(PaneId::new(0)), Axis::Vertical),
-                ),
-                (
-                    "Split below",
-                    "E",
-                    Icon::SplitHorizontal,
-                    Action::Split(pane.unwrap_or(PaneId::new(0)), Axis::Horizontal),
-                ),
-                ("Find in terminal", "F", Icon::Search, Action::Find),
-                ("Toggle sidebar", "B", Icon::Sidebar, Action::ToggleSidebar),
-                ("Preferences", ",", Icon::Settings, Action::Settings),
-                (
-                    "Clear scrollback",
-                    "",
-                    Icon::Terminal,
-                    Action::Clear(pane.unwrap_or(PaneId::new(0))),
-                ),
-                (
-                    "Restart terminal",
-                    "",
-                    Icon::Terminal,
-                    Action::Restart(pane.unwrap_or(PaneId::new(0))),
-                ),
-                ("Focus terminal", "Enter", Icon::Maximize, Action::Zoom),
-            ];
-            let mut first = true;
-            for (name, key, icon, action) in commands {
-                if !name.to_lowercase().contains(&(*query).to_lowercase()) {
-                    continue;
+    let screen = ctx.content_rect();
+    let commands: Vec<Command> = commands(view)
+        .into_iter()
+        .filter(|command| matches(command, &state.palette_query))
+        .collect();
+    let grouped = state.palette_query.trim().is_empty();
+    let mut chosen = None;
+    let output = sheet(
+        ctx,
+        p,
+        "Commands",
+        560.0,
+        SheetPlacement::Top((screen.height() * 0.14).clamp(24.0, 110.0)),
+        |ui| {
+            // Arrow keys move the highlight; the field keeps typing focus.
+            let mut moved = false;
+            if !commands.is_empty() {
+                let down = ui.input_mut(|input| {
+                    input.count_and_consume_key(Modifiers::NONE, Key::ArrowDown)
+                });
+                let up = ui
+                    .input_mut(|input| input.count_and_consume_key(Modifiers::NONE, Key::ArrowUp));
+                if down + up > 0 {
+                    let count = commands.len() as i64;
+                    let next = state.palette_selected as i64 + down as i64 - up as i64;
+                    state.palette_selected = next.rem_euclid(count) as usize;
+                    moved = true;
                 }
-                let (rect, response) =
-                    ui.allocate_exact_size(Vec2::new(ui.available_width(), 36.0), Sense::click());
+            }
+            state.palette_selected = state.palette_selected.min(commands.len().saturating_sub(1));
+            let run = ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter));
 
-                if response.hovered() {
-                    ui.painter().rect_filled(rect, 7, p.hover);
-                }
-                icons::paint(
-                    ui.painter(),
-                    Rect::from_center_size(
-                        Pos2::new(rect.left() + 18.0, rect.center().y),
-                        Vec2::splat(16.0),
-                    ),
-                    icon,
-                    p.secondary,
-                );
-                ui.painter().text(
-                    Pos2::new(rect.left() + 40.0, rect.center().y),
-                    Align2::LEFT_CENTER,
-                    name,
-                    FontId::proportional(12.0),
-                    p.fg,
-                );
-                if !key.is_empty() {
-                    ui.painter().text(
-                        Pos2::new(rect.right() - 12.0, rect.center().y),
-                        Align2::RIGHT_CENTER,
-                        format!("{modkey}{key}"),
-                        FontId::proportional(10.0),
-                        p.muted,
-                    );
-                }
-                if response.clicked() || (first && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
-                    actions.push(action);
-                    *open = false;
-                }
-                first = false;
+            let (_, field) = ui.allocate_space(vec2(ui.available_width(), 52.0));
+            icons::paint(
+                ui.painter(),
+                Rect::from_center_size(
+                    Pos2::new(field.left() + 24.0, field.center().y),
+                    Vec2::splat(16.0),
+                ),
+                Icon::Search,
+                p.secondary,
+            );
+            let input = Rect::from_min_max(
+                Pos2::new(field.left() + 44.0, field.top()),
+                Pos2::new(field.right() - 16.0, field.bottom()),
+            );
+            let response = place(
+                ui,
+                input,
+                Layout::left_to_right(Align::Center),
+                "palette-field",
+                |ui| {
+                    bare_text_edit(
+                        ui,
+                        Id::new("palette-input"),
+                        &mut state.palette_query,
+                        "Search commands",
+                        15.0,
+                        input.width(),
+                    )
+                },
+            );
+            response
+                .widget_info(|| WidgetInfo::labeled(WidgetType::TextEdit, true, "Command search"));
+            // Requested only when lost: a request interrupts input-method
+            // composition, so it must not repeat every frame.
+            if !response.has_focus() {
+                response.request_focus();
             }
+            if response.changed() {
+                state.palette_selected = 0;
+            }
+            ui.painter()
+                .line_segment([field.left_bottom(), field.right_bottom()], p.hairline());
+
+            let list_height = (screen.height() - 260.0).clamp(120.0, 372.0);
+            egui::ScrollArea::vertical()
+                .id_salt("palette-commands")
+                .max_height(list_height)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    ui.add_space(6.0);
+                    if commands.is_empty() {
+                        let (_, rect) = ui.allocate_space(vec2(ui.available_width(), 64.0));
+                        ui.painter().text(
+                            rect.center(),
+                            Align2::CENTER_CENTER,
+                            "No matching commands",
+                            theme::regular(13.0),
+                            p.muted,
+                        );
+                    }
+                    let mut group = "";
+                    for (index, command) in commands.iter().enumerate() {
+                        if grouped && command.group != group {
+                            group = command.group;
+                            let (_, rect) = ui.allocate_space(vec2(ui.available_width(), 26.0));
+                            ui.painter().text(
+                                Pos2::new(rect.left() + 18.0, rect.center().y + 2.0),
+                                Align2::LEFT_CENTER,
+                                group,
+                                theme::medium(11.0),
+                                p.muted,
+                            );
+                        }
+                        let (_, slot) = ui.allocate_space(vec2(ui.available_width(), 36.0));
+                        let row = slot.shrink2(vec2(6.0, 0.0));
+                        let response = ui.interact(
+                            row,
+                            ui.id()
+                                .with(("palette-command", &command.title, command.target)),
+                            Sense::click(),
+                        );
+                        response.widget_info(|| {
+                            WidgetInfo::labeled(WidgetType::Button, true, &command.title)
+                        });
+                        // The pointer selects only when it moves, so it never
+                        // fights the keyboard highlight.
+                        if response.hovered()
+                            && ui.input(|input| input.pointer.delta() != Vec2::ZERO)
+                        {
+                            state.palette_selected = index;
+                        }
+                        let selected = index == state.palette_selected;
+                        let painter = ui.painter();
+                        let (ink, hint) = if selected {
+                            painter.rect_filled(row, 8, p.accent);
+                            (p.on_accent, p.on_accent)
+                        } else {
+                            (p.fg, p.muted)
+                        };
+                        icons::paint(
+                            painter,
+                            Rect::from_center_size(
+                                Pos2::new(row.left() + 19.0, row.center().y),
+                                Vec2::splat(15.0),
+                            ),
+                            command.icon,
+                            if selected { ink } else { p.secondary },
+                        );
+                        let caps = keycaps(
+                            painter,
+                            Pos2::new(row.right() - 9.0, row.center().y),
+                            &command.shortcut,
+                            hint,
+                        );
+                        galley_at(
+                            painter,
+                            Pos2::new(row.left() + 40.0, row.center().y),
+                            elided(
+                                painter,
+                                &command.title,
+                                theme::regular(13.0),
+                                ink,
+                                row.width() - 58.0 - caps,
+                            ),
+                        );
+                        if selected && moved {
+                            response.scroll_to_me(None);
+                        }
+                        if response.clicked() || (selected && run) {
+                            chosen = Some(index);
+                        }
+                    }
+                    ui.add_space(6.0);
+                });
+
+            let (_, footer) = ui.allocate_space(vec2(ui.available_width(), 32.0));
+            ui.painter()
+                .line_segment([footer.left_top(), footer.right_top()], p.hairline());
+            let mut right = footer.right() - 14.0;
+            for (keys, label) in [("Esc", "Close"), ("Enter", "Run"), ("↑+↓", "Navigate")] {
+                let text = ui.painter().text(
+                    Pos2::new(right, footer.center().y),
+                    Align2::RIGHT_CENTER,
+                    label,
+                    theme::regular(11.0),
+                    p.muted,
+                );
+                right = text.left() - 6.0;
+                right -= keycaps(
+                    ui.painter(),
+                    Pos2::new(right, footer.center().y),
+                    keys,
+                    p.muted,
+                ) + 12.0;
+            }
+        },
+    );
+    if let Some(index) = chosen {
+        // Close first: the command itself may open another overlay.
+        actions.push(Action::CloseOverlay);
+        actions.extend(commands[index].actions.iter().cloned());
+    } else if output.backdrop_clicked {
+        actions.push(Action::CloseOverlay);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn view<'a>(config: &'a Config, workspaces: &'a [WorkspaceView]) -> PaletteView<'a> {
+        PaletteView {
+            pane: None,
+            workspaces,
+            active: None,
+            config,
+            zoomed: false,
+            message: false,
+        }
+    }
+
+    #[test]
+    fn same_named_workspaces_stay_distinct_and_messages_can_be_dismissed() {
+        let config = Config::default();
+        let workspaces: Vec<WorkspaceView> = [1, 2]
+            .into_iter()
+            .map(|id| WorkspaceView {
+                id: WorkspaceId::new(id),
+                name: "app".into(),
+                cwd: "/srv/app".into(),
+                panes: 1,
+                running: true,
+            })
+            .collect();
+        let list = commands(&PaletteView {
+            message: true,
+            ..view(&config, &workspaces)
         });
-    *open = *open && visible;
+        let targets: Vec<u64> = list
+            .iter()
+            .filter(|command| command.title == "Go to app")
+            .map(|command| command.target)
+            .collect();
+        assert_eq!(targets, [1, 2]);
+        assert!(list.iter().any(|command| {
+            command.title == "Dismiss message"
+                && matches!(command.actions[..], [Action::DismissError])
+        }));
+        assert!(
+            !commands(&view(&config, &workspaces))
+                .iter()
+                .any(|command| command.title == "Dismiss message")
+        );
+    }
+
+    #[test]
+    fn terminal_commands_require_a_focused_pane() {
+        let config = Config::default();
+        let without = commands(&view(&config, &[]));
+        assert!(without.iter().all(|command| command.group != "Terminal"));
+        assert!(
+            without
+                .iter()
+                .any(|command| command.title == "New workspace")
+        );
+        let with = commands(&PaletteView {
+            pane: Some(PaneId::new(7)),
+            ..view(&config, &[])
+        });
+        let split = with
+            .iter()
+            .find(|command| command.title == "Split right")
+            .expect("split command");
+        assert!(matches!(
+            split.actions[..],
+            [Action::Split(pane, Axis::Vertical)] if pane == PaneId::new(7)
+        ));
+    }
+
+    #[test]
+    fn query_words_match_in_any_order_and_by_group() {
+        let config = Config::default();
+        let all = commands(&PaletteView {
+            pane: Some(PaneId::new(1)),
+            ..view(&config, &[])
+        });
+        let titles = |query: &str| -> Vec<&str> {
+            all.iter()
+                .filter(|command| matches(command, query))
+                .map(|command| command.title.as_str())
+                .collect()
+        };
+        assert_eq!(titles("right split"), ["Split right"]);
+        assert_eq!(titles("FONT reset"), ["Reset font size"]);
+        assert!(
+            titles("appearance")
+                .iter()
+                .all(|title| title.ends_with("theme"))
+        );
+        assert!(titles("zzz").is_empty());
+        // The active theme is not offered again.
+        assert!(titles("graphite").is_empty());
+        assert_eq!(titles("").len(), all.len());
+    }
 }

@@ -30,6 +30,14 @@ pub enum Icon {
     Sun,
     Moon,
     Copy,
+    Ellipsis,
+    Refresh,
+    Pencil,
+    Clipboard,
+    Warning,
+    Minimize,
+    Eraser,
+    TextSize,
 }
 
 /// Paint an icon into its visual bounds. The caller controls the hit area.
@@ -204,34 +212,114 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
                 [5.0, 15.0],
             ]);
         }
+        Icon::Ellipsis => {
+            for x in [5.5, 12.0, 18.5] {
+                painter.circle_filled(point(x, 12.0), 1.6 * scale, color);
+            }
+        }
+        Icon::Refresh => {
+            // An open ring with an arrowhead at its leading end.
+            let mut ring = Vec::with_capacity(25);
+            for step in 0..=24 {
+                let angle = (-60.0 + step as f32 * 12.5).to_radians();
+                ring.push([12.0 + 8.0 * angle.cos(), 12.0 + 8.0 * angle.sin()]);
+            }
+            line(&ring);
+            line(&[[16.0, 2.5], [16.2, 5.6], [19.4, 5.2]]);
+        }
+        Icon::Pencil => {
+            line(&[
+                [4.0, 20.0],
+                [5.0, 15.5],
+                [16.0, 4.5],
+                [19.5, 8.0],
+                [8.5, 19.0],
+                [4.0, 20.0],
+            ]);
+            line(&[[13.5, 7.0], [17.0, 10.5]]);
+        }
+        Icon::Clipboard => {
+            rectangle(5.0, 5.0, 14.0, 16.0, 2.5);
+            rectangle(9.0, 3.0, 6.0, 4.0, 1.5);
+            line(&[[9.0, 12.0], [15.0, 12.0]]);
+            line(&[[9.0, 16.0], [13.0, 16.0]]);
+        }
+        Icon::Warning => {
+            line(&[[12.0, 4.0], [21.0, 19.5], [3.0, 19.5], [12.0, 4.0]]);
+            line(&[[12.0, 10.0], [12.0, 14.0]]);
+            painter.circle_filled(point(12.0, 16.8), 1.0 * scale, color);
+        }
+        Icon::Minimize => {
+            line(&[[4.0, 9.0], [9.0, 9.0], [9.0, 4.0]]);
+            line(&[[15.0, 4.0], [15.0, 9.0], [20.0, 9.0]]);
+            line(&[[20.0, 15.0], [15.0, 15.0], [15.0, 20.0]]);
+            line(&[[9.0, 20.0], [9.0, 15.0], [4.0, 15.0]]);
+        }
+        Icon::Eraser => {
+            line(&[
+                [8.0, 19.0],
+                [3.5, 14.5],
+                [13.5, 4.5],
+                [20.0, 11.0],
+                [12.0, 19.0],
+                [8.0, 19.0],
+            ]);
+            line(&[[8.5, 9.5], [15.0, 16.0]]);
+            line(&[[12.0, 19.0], [20.0, 19.0]]);
+        }
+        Icon::TextSize => {
+            line(&[[3.0, 19.0], [8.0, 7.0], [13.0, 19.0]]);
+            line(&[[4.8, 15.0], [11.2, 15.0]]);
+            line(&[[15.0, 19.0], [18.0, 12.0], [21.0, 19.0]]);
+            line(&[[16.2, 16.5], [19.8, 16.5]]);
+        }
     }
 }
 
-/// A compact, keyboard-focusable icon button with a circular hover surface.
+/// A compact, keyboard-focusable icon button with a rounded hover surface.
 pub fn button(ui: &mut Ui, icon: Icon, tooltip: &str) -> Response {
+    button_with_hint(ui, icon, tooltip, "")
+}
+
+/// As [`button`], with a keyboard shortcut shown beside the tooltip. The
+/// accessible name stays the plain label.
+pub fn button_with_hint(ui: &mut Ui, icon: Icon, label: &str, shortcut: &str) -> Response {
     let (_, rect) = ui.allocate_space(vec2(28.0, 28.0));
-    let response = ui.interact(rect, ui.id().with(("icon-button", tooltip)), Sense::click());
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), tooltip));
+    let response = ui.interact(rect, ui.id().with(("icon-button", label)), Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), label));
     if ui.is_rect_visible(rect) {
         let visuals = ui.style().interact(&response);
+        let surface = rect.shrink(1.0);
         if response.hovered() || response.is_pointer_button_down_on() {
-            ui.painter()
-                .circle_filled(rect.center(), 13.0, visuals.weak_bg_fill);
+            ui.painter().rect_filled(surface, 7, visuals.weak_bg_fill);
         }
         if response.has_focus() {
-            ui.painter()
-                .circle_stroke(rect.center(), 13.0, ui.visuals().selection.stroke);
+            ui.painter().rect_stroke(
+                surface,
+                7,
+                ui.visuals().selection.stroke,
+                StrokeKind::Inside,
+            );
         }
+        // Pressing settles the glyph slightly, like a physical key.
+        let inset = if response.is_pointer_button_down_on() {
+            6.5
+        } else {
+            6.0
+        };
         paint(
             ui.painter(),
-            rect.shrink(6.0),
+            rect.shrink(inset),
             icon,
             visuals.fg_stroke.color,
         );
     }
-    response
-        .on_hover_cursor(CursorIcon::PointingHand)
-        .on_hover_text(tooltip)
+    let response = response.on_hover_cursor(CursorIcon::PointingHand);
+    if shortcut.is_empty() {
+        response.on_hover_text(label)
+    } else {
+        response.on_hover_text(format!("{label}   {shortcut}"))
+    }
 }
 
 #[cfg(test)]
@@ -286,7 +374,7 @@ mod tests {
     #[test]
     fn rtl_titlebar_icon_retains_identity_and_clicks_on_release() {
         let ctx = egui::Context::default();
-        crate::theme::apply(&ctx, crate::config::Theme::Graphite);
+        crate::theme::apply(&ctx, &crate::config::Config::default());
         let initial = title_controls_frame(&ctx, vec![]);
         let pos = initial.rect.center();
         assert_eq!(initial.rect.size(), vec2(28.0, 28.0));

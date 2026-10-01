@@ -194,6 +194,7 @@ impl App {
         for event in ctx.input(|i| i.events.clone()) {
             let egui::Event::Key {
                 key,
+                physical_key,
                 pressed: true,
                 modifiers: m,
                 ..
@@ -201,12 +202,27 @@ impl App {
             else {
                 continue;
             };
-            if key == egui::Key::Escape
-                && (self.ui.overlay != OverlayState::None || self.ui.search_open)
-            {
-                self.ui.overlay = OverlayState::None;
-                self.ui.search_open = false;
-                self.search_task = None;
+            if key == egui::Key::Escape {
+                // Escape leaves the topmost transient surface. With none open
+                // it belongs to the terminal: a message never takes a key the
+                // shell is waiting for, and is dismissed by Escape only when
+                // there is no terminal to receive it.
+                let search = ui::search::input_id();
+                let searching = self.ui.search_open
+                    && ctx.memory(|memory| {
+                        memory.has_focus(search) || memory.had_focus_last_frame(search)
+                    });
+                if self.ui.overlay != OverlayState::None {
+                    self.ui.overlay = OverlayState::None;
+                } else if searching {
+                    self.ui.search_open = false;
+                    self.search_task = None;
+                } else if self.ui.error.is_some() && self.controller.model().active_pane().is_none()
+                {
+                    self.ui.error = None;
+                } else {
+                    continue;
+                }
                 ctx.input_mut(|i| {
                     i.consume_key(m, key);
                 });
@@ -234,6 +250,13 @@ impl App {
             } else {
                 None
             };
+            // Workspaces are numbered in sidebar order. With Shift held the
+            // logical key is a symbol, so the digit comes from the physical key.
+            let action = action.or_else(|| {
+                let index = workspace_digit(physical_key.unwrap_or(key)).filter(|_| command)?;
+                let workspace = self.controller.model().workspaces().get(index)?;
+                Some(Action::SelectWorkspace(workspace.id()))
+            });
             if let Some(action) = action {
                 actions.push(action);
                 ctx.input_mut(|i| {
@@ -285,4 +308,11 @@ impl App {
             self.action(ctx, action);
         }
     }
+}
+
+fn workspace_digit(key: egui::Key) -> Option<usize> {
+    use egui::Key::*;
+    [Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9]
+        .iter()
+        .position(|digit| *digit == key)
 }

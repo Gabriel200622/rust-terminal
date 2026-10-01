@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub theme: Theme,
+    pub accent: Accent,
     pub font_size: f32,
     pub line_height: f32,
     pub scrollback: usize,
@@ -26,6 +27,36 @@ pub enum Theme {
     Light,
 }
 
+/// The highlight used for focus, selection and the terminal cursor.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Accent {
+    #[default]
+    Blue,
+    Indigo,
+    Purple,
+    Pink,
+    Red,
+    Orange,
+    Yellow,
+    Green,
+    Graphite,
+}
+
+impl Accent {
+    pub const ALL: [(Self, &'static str); 9] = [
+        (Self::Blue, "Blue"),
+        (Self::Indigo, "Indigo"),
+        (Self::Purple, "Purple"),
+        (Self::Pink, "Pink"),
+        (Self::Red, "Red"),
+        (Self::Orange, "Orange"),
+        (Self::Yellow, "Yellow"),
+        (Self::Green, "Green"),
+        (Self::Graphite, "Graphite"),
+    ];
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Cursor {
@@ -39,6 +70,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             theme: Theme::Graphite,
+            accent: Accent::Blue,
             font_size: 14.0,
             line_height: 1.4,
             scrollback: 10_000,
@@ -171,6 +203,15 @@ mod tests {
         let parsed: Config = toml::from_str(&toml::to_string(&c).unwrap()).unwrap();
         assert_eq!(parsed.font_size, 14.0);
         assert_eq!(parsed.theme, Theme::Graphite);
+        assert_eq!(parsed.accent, Accent::Blue);
+    }
+    #[test]
+    fn configuration_saved_before_accents_still_loads() {
+        let parsed: Config = toml::from_str("theme = \"dusk\"\nfont_size = 15.0\n").unwrap();
+        assert_eq!(parsed.theme, Theme::Dusk);
+        assert_eq!(parsed.accent, Accent::Blue);
+        let accent: Config = toml::from_str("accent = \"indigo\"").unwrap();
+        assert_eq!(accent.accent, Accent::Indigo);
     }
     #[test]
     fn saved_config_round_trip_replaces_existing_file() {

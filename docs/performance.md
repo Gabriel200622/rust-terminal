@@ -156,6 +156,38 @@ process CPU and GPU execution. It does not establish an idle distribution or
 other platforms' behavior. The older five-second development artifact is not
 the accepted release observation.
 
+### Native Wayland idle after the interface rebuild
+
+The observation above was taken under XWayland. On native Wayland (GNOME,
+1.5× scale, same GPU) the same quiet window did not sleep: the input method
+answered every cursor-area update with another empty pre-edit event, the
+toolkit repaints for any event and then updates the cursor area again, and the
+window repainted at the display rate. `--diagnostics` frame counters showed
+about 144 frames per second for a build of the commit before the interface
+rebuild, and 2 per second on X11 (the diagnostics timer). The desktop now drops
+pre-edit updates that repeat an already empty composition before the toolkit
+sees them (`input::drop_redundant_preedits`); changes to or from an active
+composition are kept. With that filter the debug build showed 2 frames per
+second on native Wayland as well.
+
+On 2026-09-30 the rebuilt normal release executable was then observed on native
+Wayland with one quiet zsh session, a visible window, cursor blinking disabled
+and no input, output, resize or automation during a five-second warmup and
+twenty-second sample. Window focus was not verified.
+
+| Measurement | Observed value |
+| --- | ---: |
+| Process CPU, as a fraction of one core | 0.7% |
+| Process CPU time over 20.00056 seconds | 0.14 seconds |
+| RSS at end of sample | 219,304 KiB (214.2 MiB) |
+| Application threads | 18 |
+
+The raw record is
+[idle-release-wayland.json](../artifacts/ui-rebuild/idle-release-wayland.json).
+It is one local observation with the same scope limits as above. An input
+method that is actively composing, other compositors and other input-method
+frameworks were not observed.
+
 For very low CPU usage, use a longer `--duration`, since five-second measurements
 are limited by the operating system's CPU tick resolution. Observe both
 cursor-blink settings and both focused/unfocused states before establishing a

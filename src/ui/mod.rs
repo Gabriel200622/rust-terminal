@@ -1,10 +1,12 @@
 //! Widgets consume presentation data and emit targeted actions. Only the controller
 //! may change durable workspace state; renderer caches remain desktop-owned.
 pub mod chrome;
+pub mod controls;
 pub mod dialogs;
 pub mod helpers;
 pub mod palette;
 pub mod preferences;
+pub mod search;
 pub mod workspace;
 use crate::{config::Config, terminal::Cache};
 use pace_model::{Axis, PaneId, SplitId, WorkspaceId};
@@ -30,15 +32,21 @@ pub enum OverlayState {
 pub struct UiState {
     pub overlay: OverlayState,
     pub palette_query: String,
+    /// Highlighted command; reset whenever the query changes.
+    pub palette_selected: usize,
     pub new_name: String,
     pub new_cwd: String,
     pub rename_name: String,
+    /// A dialog field should take keyboard focus on its first frame.
+    pub overlay_focus: bool,
     pub error: Option<String>,
     pub search_open: bool,
     pub search: String,
     pub search_error: Option<String>,
     pub search_focus: bool,
     pub zoomed: bool,
+    /// Width shown while the sidebar edge is dragged; saved on release.
+    pub sidebar_drag: Option<f32>,
 }
 #[derive(Clone)]
 pub enum Action {
@@ -53,7 +61,11 @@ pub enum Action {
     Settings,
     Palette,
     ToggleSidebar,
+    SidebarWidth(f32),
     Find,
+    SearchChanged,
+    FindNext { reverse: bool },
+    CloseSearch,
     Clear(PaneId),
     Restart(PaneId),
     Copy(PaneId),
@@ -65,6 +77,8 @@ pub enum Action {
     Preferences(Config),
     Confirm(Close),
     CancelClose,
+    CloseOverlay,
+    DismissError,
     Resize(PaneId, crate::terminal_view::geometry::ResizeRequest),
     Selection(PaneId, crate::terminal_view::SelectionInteraction),
     ScrollBottom(PaneId),
@@ -74,6 +88,7 @@ pub struct WorkspaceView {
     pub id: WorkspaceId,
     pub name: String,
     pub cwd: PathBuf,
+    pub panes: usize,
     pub running: bool,
 }
 pub struct PaneRender {
