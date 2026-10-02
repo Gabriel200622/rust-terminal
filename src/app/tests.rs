@@ -2038,7 +2038,10 @@ fn group_reordering_uses_the_captured_folder_and_keeps_active_sessions() {
         .unwrap();
     let before = app.controller.model().workspaces().to_owned();
     let active = app.controller.model().active_workspace();
-    app.action(&ctx, Action::MoveGroup(first, 2));
+    app.action(
+        &ctx,
+        Action::MoveSidebarItem(neptune_model::SidebarItem::Group(first), 3),
+    );
     assert_eq!(
         app.controller
             .model()
@@ -2052,7 +2055,10 @@ fn group_reordering_uses_the_captured_folder_and_keeps_active_sessions() {
     assert_eq!(app.controller.model().active_workspace(), active);
     assert!(app.ui.error.is_none());
     app.action(&ctx, Action::RemoveGroup(first));
-    app.action(&ctx, Action::MoveGroup(first, 0));
+    app.action(
+        &ctx,
+        Action::MoveSidebarItem(neptune_model::SidebarItem::Group(first), 1),
+    );
     assert!(app.ui.error.as_ref().unwrap().contains("group"));
     assert_eq!(
         app.controller

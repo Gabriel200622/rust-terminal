@@ -17,6 +17,7 @@ pub enum Error {
     InvalidLayout(&'static str),
     InvalidRatio,
     InvalidIdentity,
+    InvalidSidebarOrder,
     InvalidName,
     InvalidRemote,
     RemoteMismatch,
@@ -39,6 +40,7 @@ impl std::fmt::Display for Error {
             Self::InvalidLayout(reason) => write!(f, "Invalid layout: {reason}"),
             Self::InvalidRatio => f.write_str("Split ratio must be finite and between 0.1 and 0.9"),
             Self::InvalidIdentity => f.write_str("Identities must be nonzero and unique"),
+            Self::InvalidSidebarOrder => f.write_str("Sidebar order must contain every group and ungrouped workspace exactly once"),
             Self::InvalidName => f.write_str("Name cannot be empty"),
             Self::InvalidRemote => f.write_str(
                 "SSH host must be a destination such as user@host, without spaces or a leading dash",
@@ -194,10 +196,18 @@ impl WorkspaceGroup {
     }
 }
 
+/// A top-level sidebar entry. Group children are ordered by `Model::workspaces`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SidebarItem {
+    Workspace(WorkspaceId),
+    Group(WorkspaceGroupId),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Model {
     pub(crate) workspaces: Vec<Workspace>,
     pub(crate) groups: Vec<WorkspaceGroup>,
+    pub(crate) sidebar_order: Vec<SidebarItem>,
     pub(crate) active: Option<WorkspaceId>,
     pub(crate) sidebar: bool,
     pub(crate) next_workspace: u64,
@@ -216,6 +226,7 @@ impl Model {
         Self {
             workspaces: Vec::new(),
             groups: Vec::new(),
+            sidebar_order: Vec::new(),
             active: None,
             sidebar: true,
             next_workspace: 1,
@@ -230,6 +241,9 @@ impl Model {
     }
     pub fn groups(&self) -> &[WorkspaceGroup] {
         &self.groups
+    }
+    pub fn sidebar_order(&self) -> &[SidebarItem] {
+        &self.sidebar_order
     }
     pub fn group(&self, id: WorkspaceGroupId) -> Option<&WorkspaceGroup> {
         self.groups.iter().find(|group| group.id == id)
@@ -433,6 +447,31 @@ impl Model {
             .collect()
     }
 
+    /// Restores a mixed top-level order, or the historical root-first order
+    /// when loading a format that predates sidebar ordering.
+    pub fn restore_ordered(
+        specs: Vec<WorkspaceSpec>,
+        groups: Vec<WorkspaceGroupSpec>,
+        order: Option<Vec<SidebarItem>>,
+        active: Option<WorkspaceId>,
+        sidebar: bool,
+        limits: Limits,
+    ) -> Result<Self, Error> {
+        let mut model = Self::restore_grouped(specs, groups, active, sidebar, limits)?;
+        if let Some(order) = order {
+            let expected: HashSet<_> = model.sidebar_order.iter().copied().collect();
+            if order.len() != expected.len()
+                || order.iter().copied().collect::<HashSet<_>>() != expected
+            {
+                return Err(Error::InvalidSidebarOrder);
+            }
+            model.sidebar_order = order;
+            model.order_workspaces();
+            model.active = active.or_else(|| model.workspaces.first().map(Workspace::id));
+        }
+        Ok(model)
+    }
+
     pub fn group_specs(&self) -> Vec<WorkspaceGroupSpec> {
         self.groups
             .iter()
@@ -450,15 +489,50 @@ impl Model {
             .find(|group| group.id == id)
             .ok_or(Error::UnknownWorkspaceGroup(id))
     }
-    /// Keep navigation indices identical to the visible folder order. Stable
-    /// sorting preserves workspace order within each folder and at the root.
+    /// Reconcile created/closed entries and keep navigation identical to the
+    /// sidebar, including children of collapsed groups. Stable sorting retains
+    /// the order within a group; terminal/session state is untouched.
     pub(crate) fn order_workspaces(&mut self) {
-        let groups = &self.groups;
+        let roots: Vec<_> = self
+            .workspaces
+            .iter()
+            .filter(|w| w.group.is_none())
+            .map(|w| SidebarItem::Workspace(w.id))
+            .collect();
+        let folders: Vec<_> = self
+            .groups
+            .iter()
+            .map(|g| SidebarItem::Group(g.id))
+            .collect();
+        self.sidebar_order
+            .retain(|item| roots.contains(item) || folders.contains(item));
+        for item in roots {
+            if !self.sidebar_order.contains(&item) {
+                // New ungrouped workspaces follow the last ungrouped workspace.
+                let index = self
+                    .sidebar_order
+                    .iter()
+                    .rposition(|entry| matches!(entry, SidebarItem::Workspace(_)))
+                    .map_or(0, |index| index + 1);
+                self.sidebar_order.insert(index, item);
+            }
+        }
+        for item in folders {
+            if !self.sidebar_order.contains(&item) {
+                self.sidebar_order.push(item);
+            }
+        }
+        let order = &self.sidebar_order;
+        self.groups.sort_by_key(|group| {
+            order
+                .iter()
+                .position(|item| *item == SidebarItem::Group(group.id))
+        });
         self.workspaces.sort_by_key(|workspace| {
-            workspace
+            let entry = workspace
                 .group
-                .and_then(|id| groups.iter().position(|group| group.id == id))
-                .map_or(0, |index| index + 1)
+                .map_or(SidebarItem::Workspace(workspace.id), SidebarItem::Group);
+            order.iter().position(|item| *item == entry)
         });
     }
 

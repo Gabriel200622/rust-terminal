@@ -58,10 +58,14 @@ comparison with other terminals. Keep new copy to the same standard.
 ## Hosting
 
 The canonical domain is `https://neptune.rs`; metadata and sharing links use it.
-Vercel must use the `website` root; `vercel.json` selects the Next.js preset,
-frozen Bun install, `bun run build` and `.next` output. Server routes and caching require a Next.js
-runtime; a static-only host cannot serve live channel downloads. The public
-updater trust key is embedded from `../packaging/update-public-key.hex` at build
-time. Enable **Include source files outside of the Root Directory in the Build
-Step** in Vercel's Root Directory settings. No deployment or
-domain change is performed merely by preparing release code.
+Configure Vercel with `website/` as the project root and `main` as the production
+branch. [`vercel.json`](vercel.json) selects the Next.js preset, frozen Bun
+install, `bun run build` and `.next` output. It enables automatic deployments
+only for pushes to `main`, including merged pull requests. Other branches do
+not create preview deployments; the `**` rule covers branch names containing `/`.
+
+Server routes and caching require a Next.js runtime. The public updater trust
+key is embedded from `../packaging/update-public-key.hex` at build time. Enable
+**Include source files outside of the Root Directory in the Build Step** in
+Vercel's Root Directory settings. No domain change is performed merely by
+preparing release code.

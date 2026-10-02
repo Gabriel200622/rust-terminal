@@ -19,4 +19,3 @@ the signed desktop update manifest; do not maintain a second release-notes file.
   and offers verified downloads without interrupting your running shells.
 - Organize independent terminals into workspaces and groups, restore directories
   and layouts with fresh shells, and connect remote workspaces using OpenSSH.
-

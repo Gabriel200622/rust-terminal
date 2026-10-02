@@ -391,8 +391,8 @@ impl App {
                 self.dispatch(ctx, Command::SetWorkspaceGroup { workspace, group })
             }
             Action::RemoveGroup(group) => self.dispatch(ctx, Command::RemoveWorkspaceGroup(group)),
-            Action::MoveGroup(group, index) => {
-                self.dispatch(ctx, Command::MoveWorkspaceGroup { group, index })
+            Action::MoveSidebarItem(item, index) => {
+                self.dispatch(ctx, Command::MoveSidebarItem { item, index })
             }
             Action::SshInGroup(group) => {
                 if self.controller.model().group(group).is_some() {

@@ -10,7 +10,9 @@ pub mod search;
 pub mod updates;
 pub mod workspace;
 use crate::{config::Config, terminal::Cache};
-use neptune_model::{Axis, Destination, PaneId, SplitId, WorkspaceGroupId, WorkspaceId};
+use neptune_model::{
+    Axis, Destination, PaneId, SidebarItem, SplitId, WorkspaceGroupId, WorkspaceId,
+};
 use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,10 +56,10 @@ pub struct UiState {
     pub zoomed: bool,
     /// Width shown while the sidebar edge is dragged; saved on release.
     pub sidebar_drag: Option<f32>,
-    /// A workspace row being dragged to a new place in the sidebar.
+    /// A child workspace row being dragged within its group.
     pub workspace_drag: chrome::WorkspaceDrag,
-    /// A folder and its visible workspaces moving together in the sidebar.
-    pub group_drag: chrome::GroupDrag,
+    /// An ungrouped workspace or folder moving in the top-level sidebar list.
+    pub item_drag: chrome::SidebarDrag,
     /// A sidebar toggle still sliding into place.
     pub sidebar_slide: Option<chrome::SidebarSlide>,
     /// The terminal being carried by its header, as of the last frame.
@@ -81,7 +83,7 @@ pub enum Action {
     RenameGroup(WorkspaceGroupId),
     SetGroupName(WorkspaceGroupId, String),
     SetGroupCollapsed(WorkspaceGroupId, bool),
-    MoveGroup(WorkspaceGroupId, usize),
+    MoveSidebarItem(SidebarItem, usize),
     MoveToGroup(WorkspaceId, Option<WorkspaceGroupId>),
     RemoveGroup(WorkspaceGroupId),
     SshInGroup(WorkspaceGroupId),

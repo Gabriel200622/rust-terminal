@@ -1,6 +1,6 @@
 use crate::{
-    Axis, Edge, Error, Layout, Lifecycle, Model, Pane, PaneId, Remote, SplitId, Workspace,
-    WorkspaceGroup, WorkspaceGroupId, WorkspaceId,
+    Axis, Edge, Error, Layout, Lifecycle, Model, Pane, PaneId, Remote, SidebarItem, SplitId,
+    Workspace, WorkspaceGroup, WorkspaceGroupId, WorkspaceId,
 };
 use std::path::PathBuf;
 
@@ -48,6 +48,12 @@ pub enum Command {
     /// means last. Membership, order within each folder and sessions stay intact.
     MoveWorkspaceGroup {
         group: WorkspaceGroupId,
+        index: usize,
+    },
+    /// Moves a group (with all its children) or ungrouped workspace to a
+    /// top-level sidebar index. A position past the end means last.
+    MoveSidebarItem {
+        item: SidebarItem,
         index: usize,
     },
     SelectWorkspace(WorkspaceId),
@@ -361,6 +367,20 @@ impl Controller {
                     .iter()
                     .position(|folder| folder.id == group)
                     .ok_or(Error::UnknownWorkspaceGroup(group))?;
+                if let Some(index) = self
+                    .model
+                    .sidebar_order
+                    .iter()
+                    .position(|item| *item == SidebarItem::Group(group))
+                {
+                    let children = self
+                        .model
+                        .workspaces
+                        .iter()
+                        .filter(|w| w.group == Some(group))
+                        .map(|w| SidebarItem::Workspace(w.id));
+                    self.model.sidebar_order.splice(index..=index, children);
+                }
                 self.model.groups.remove(position);
                 for workspace in &mut self.model.workspaces {
                     if workspace.group == Some(group) {
@@ -378,10 +398,19 @@ impl Controller {
                     .ok_or(Error::UnknownWorkspaceGroup(group))?;
                 let index = index.min(self.model.groups.len() - 1);
                 if index != position {
-                    let moved = self.model.groups.remove(position);
-                    self.model.groups.insert(index, moved);
+                    let target = SidebarItem::Group(self.model.groups[index].id);
+                    let target_index = self
+                        .model
+                        .sidebar_order
+                        .iter()
+                        .position(|item| *item == target)
+                        .ok_or(Error::InvalidSidebarOrder)?;
+                    self.move_sidebar_item(SidebarItem::Group(group), target_index)?;
                     dirty = true;
                 }
+            }
+            Command::MoveSidebarItem { item, index } => {
+                dirty = self.move_sidebar_item(item, index)?;
             }
             Command::SelectWorkspace(id) => {
                 if self.model.workspace(id).is_none() {
@@ -510,6 +539,19 @@ impl Controller {
                     .ok_or(Error::UnknownWorkspace(workspace))?;
                 let index = index.min(self.model.workspaces.len() - 1);
                 if index != position {
+                    if self.model.workspaces[position].group.is_none() {
+                        let target = &self.model.workspaces[index];
+                        let target = target
+                            .group
+                            .map_or(SidebarItem::Workspace(target.id), SidebarItem::Group);
+                        let target_index = self
+                            .model
+                            .sidebar_order
+                            .iter()
+                            .position(|item| *item == target)
+                            .ok_or(Error::InvalidSidebarOrder)?;
+                        self.move_sidebar_item(SidebarItem::Workspace(workspace), target_index)?;
+                    }
                     let moved = self.model.workspaces.remove(position);
                     self.model.workspaces.insert(index, moved);
                     dirty = true;
@@ -798,6 +840,38 @@ impl Controller {
             ws.active = pane;
         }
         self.model.next_split = next_split;
+        Ok(true)
+    }
+
+    fn move_sidebar_item(&mut self, item: SidebarItem, index: usize) -> Result<bool, Error> {
+        match item {
+            SidebarItem::Workspace(id) => {
+                let workspace = self
+                    .model
+                    .workspace(id)
+                    .ok_or(Error::UnknownWorkspace(id))?;
+                if workspace.group().is_some() {
+                    return Err(Error::InvalidSidebarOrder);
+                }
+            }
+            SidebarItem::Group(id) => {
+                self.model
+                    .group(id)
+                    .ok_or(Error::UnknownWorkspaceGroup(id))?;
+            }
+        }
+        let position = self
+            .model
+            .sidebar_order
+            .iter()
+            .position(|entry| *entry == item)
+            .ok_or(Error::InvalidSidebarOrder)?;
+        let index = index.min(self.model.sidebar_order.len() - 1);
+        if position == index {
+            return Ok(false);
+        }
+        self.model.sidebar_order.remove(position);
+        self.model.sidebar_order.insert(index, item);
         Ok(true)
     }
 
@@ -2080,6 +2154,205 @@ mod tests {
 #[cfg(test)]
 mod group_tests {
     use super::*;
+    use crate::Limits;
+
+    #[test]
+    fn mixed_sidebar_moves_preserve_sessions_and_drive_navigation_and_restoration() {
+        let mut controller = Controller::new(Model::default());
+        for name in ["first", "second"] {
+            controller
+                .dispatch(Command::AddWorkspace {
+                    cwd: "/fake".into(),
+                    name: name.into(),
+                    remote: None,
+                    group: None,
+                })
+                .unwrap();
+        }
+        controller
+            .dispatch(Command::AddWorkspaceGroup {
+                name: "Projects".into(),
+            })
+            .unwrap();
+        let group = controller.model().groups()[0].id();
+        for name in ["client", "server"] {
+            controller
+                .dispatch(Command::AddWorkspace {
+                    cwd: "/fake".into(),
+                    name: name.into(),
+                    remote: None,
+                    group: Some(group),
+                })
+                .unwrap();
+        }
+        controller
+            .dispatch(Command::SetWorkspaceGroupCollapsed {
+                group,
+                collapsed: true,
+            })
+            .unwrap();
+        let before = controller.model().workspaces().to_owned();
+        let active = controller.model().active_workspace();
+        for (index, names) in [
+            (0, ["client", "server", "first", "second"]),
+            (1, ["first", "client", "server", "second"]),
+            (usize::MAX, ["first", "second", "client", "server"]),
+        ] {
+            assert!(matches!(
+                controller
+                    .dispatch(Command::MoveSidebarItem {
+                        item: SidebarItem::Group(group),
+                        index
+                    })
+                    .unwrap()
+                    .as_slice(),
+                [Effect::Persist { .. }]
+            ));
+            assert_eq!(
+                controller
+                    .model()
+                    .workspaces()
+                    .iter()
+                    .map(Workspace::name)
+                    .collect::<Vec<_>>(),
+                names
+            );
+            for workspace in &before {
+                assert_eq!(
+                    controller.model().workspace(workspace.id()),
+                    Some(workspace)
+                );
+            }
+            assert_eq!(controller.model().active_workspace(), active);
+            let restored = Model::restore_ordered(
+                controller.model().specs(),
+                controller.model().group_specs(),
+                Some(controller.model().sidebar_order().to_owned()),
+                active,
+                true,
+                Limits::default(),
+            )
+            .unwrap();
+            assert_eq!(restored.sidebar_order(), controller.model().sidebar_order());
+            assert_eq!(restored.workspaces(), controller.model().workspaces());
+        }
+        let before = controller.model().clone();
+        let generation = controller.generation();
+        assert!(
+            controller
+                .dispatch(Command::MoveSidebarItem {
+                    item: SidebarItem::Group(group),
+                    index: usize::MAX
+                })
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            controller.dispatch(Command::MoveSidebarItem {
+                item: SidebarItem::Workspace(before.workspaces()[2].id()),
+                index: 0
+            }),
+            Err(Error::InvalidSidebarOrder)
+        );
+        assert_eq!(
+            controller.dispatch(Command::MoveSidebarItem {
+                item: SidebarItem::Group(WorkspaceGroupId::new(99)),
+                index: 0
+            }),
+            Err(Error::UnknownWorkspaceGroup(WorkspaceGroupId::new(99)))
+        );
+        assert_eq!(controller.model(), &before);
+        assert_eq!(controller.generation(), generation);
+        let order = before.sidebar_order().to_owned();
+        for invalid in [
+            vec![],
+            vec![order[0]; order.len()],
+            vec![
+                SidebarItem::Workspace(before.workspaces()[2].id()),
+                order[1],
+                order[2],
+            ],
+        ] {
+            assert_eq!(
+                Model::restore_ordered(
+                    before.specs(),
+                    before.group_specs(),
+                    Some(invalid),
+                    active,
+                    true,
+                    Limits::default()
+                ),
+                Err(Error::InvalidSidebarOrder)
+            );
+        }
+    }
+
+    #[test]
+    fn removing_a_mixed_group_replaces_it_with_its_children_in_place() {
+        let mut controller = Controller::new(Model::default());
+        for name in ["first", "second"] {
+            controller
+                .dispatch(Command::AddWorkspace {
+                    cwd: "/fake".into(),
+                    name: name.into(),
+                    remote: None,
+                    group: None,
+                })
+                .unwrap();
+        }
+        controller
+            .dispatch(Command::AddWorkspaceGroup {
+                name: "Projects".into(),
+            })
+            .unwrap();
+        let group = controller.model().groups()[0].id();
+        controller
+            .dispatch(Command::AddWorkspace {
+                cwd: "/fake".into(),
+                name: "child".into(),
+                remote: None,
+                group: Some(group),
+            })
+            .unwrap();
+        controller
+            .dispatch(Command::MoveSidebarItem {
+                item: SidebarItem::Group(group),
+                index: 1,
+            })
+            .unwrap();
+        let pane = controller.model().active_pane();
+        controller
+            .dispatch(Command::RemoveWorkspaceGroup(group))
+            .unwrap();
+        assert_eq!(
+            controller
+                .model()
+                .workspaces()
+                .iter()
+                .map(Workspace::name)
+                .collect::<Vec<_>>(),
+            ["first", "child", "second"]
+        );
+        assert_eq!(controller.model().active_pane(), pane);
+        let first = controller.model().workspaces()[0].id();
+        controller
+            .dispatch(Command::MoveWorkspace {
+                workspace: first,
+                index: 2,
+            })
+            .unwrap();
+        assert_eq!(
+            controller
+                .model()
+                .workspaces()
+                .iter()
+                .map(Workspace::name)
+                .collect::<Vec<_>>(),
+            ["child", "second", "first"]
+        );
+        controller.dispatch(Command::CloseWorkspace(first)).unwrap();
+        assert_eq!(controller.model().sidebar_order().len(), 2);
+    }
 
     #[test]
     fn moving_folders_only_persists_order_and_preserves_their_workspaces() {
