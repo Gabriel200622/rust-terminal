@@ -239,7 +239,9 @@ fn confirm_close(
     let (title, consequence, verb) = close_copy(close);
     let message = match status {
         CloseStatus::General => consequence.to_owned(),
-        CloseStatus::Checking => "Checking for running processes…".to_owned(),
+        // Keep input ownership while checking, but do not flash a sheet or
+        // backdrop for an idle terminal (or an app containing only idle shells).
+        CloseStatus::Checking => return,
         CloseStatus::Unknown => {
             format!("Neptune could not check whether processes are running. {consequence}")
         }
@@ -298,11 +300,7 @@ fn confirm_close(
         });
         ui.add_space(6.0);
         footer(ui, "confirm-close-actions", |ui| {
-            confirm = ui
-                .add_enabled_ui(status != CloseStatus::Checking, |ui| {
-                    button(ui, p, verb, ButtonKind::Destructive).clicked()
-                })
-                .inner;
+            confirm = button(ui, p, verb, ButtonKind::Destructive).clicked();
             cancel = button(ui, p, "Cancel", ButtonKind::Secondary).clicked();
         });
     });
@@ -337,6 +335,63 @@ mod tests {
     use super::*;
     use egui::Pos2;
     use neptune_model::{PaneId, WorkspaceId};
+
+    #[test]
+    fn close_checks_render_nothing_until_confirmation_is_needed() {
+        for close in [
+            Close::Pane(PaneId::new(1)),
+            Close::Workspace(WorkspaceId::new(1)),
+            Close::Connection(WorkspaceId::new(1)),
+            Close::App,
+        ] {
+            for status in [
+                CloseStatus::General,
+                CloseStatus::Running {
+                    terminals: 1,
+                    unknown: 0,
+                },
+                CloseStatus::Unknown,
+            ] {
+                let ctx = egui::Context::default();
+                ctx.set_fonts(crate::platform::fonts::bundled_definitions());
+                let config = crate::config::Config::default();
+                theme::apply(&ctx, &config);
+                let p = Palette::for_config(&config);
+                let mut state = UiState::default();
+                let mut actions = Vec::new();
+                let mut frame = |state: &mut UiState| {
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                Pos2::ZERO,
+                                vec2(640.0, 480.0),
+                            )),
+                            ..Default::default()
+                        },
+                        |ui| show(ui.ctx(), p, state, &mut actions),
+                    );
+                    output.textures_delta.clear();
+                    output.shapes
+                };
+                let empty = frame(&mut state).len();
+                state.overlay = OverlayState::ConfirmClose(close);
+                state.close_status = CloseStatus::Checking;
+                // Hold the asynchronous check pending across visible frames.
+                // Neither the sheet nor its dimming backdrop may flash.
+                for _ in 0..4 {
+                    assert_eq!(frame(&mut state).len(), empty, "{close:?}");
+                }
+                state.close_status = status;
+                for _ in 0..3 {
+                    frame(&mut state);
+                }
+                assert!(frame(&mut state).iter().any(|shape| {
+                    matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text() == close_copy(close).0)
+                }), "{close:?}: {status:?}");
+                assert!(actions.is_empty());
+            }
+        }
+    }
 
     #[test]
     fn rename_gives_its_field_the_keyboard_once_visible() {

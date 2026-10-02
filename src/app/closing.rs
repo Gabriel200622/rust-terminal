@@ -202,6 +202,39 @@ mod tests {
     }
 
     #[test]
+    fn close_idle_app_and_pane_wait_for_checks_and_honor_escape() {
+        for whole_app in [false, true] {
+            for cancel in [false, true] {
+                let (mut app, ctx, _root, pane) = setup();
+                app.config.confirm_close = false;
+                let target = if whole_app {
+                    Close::App
+                } else {
+                    Close::Pane(pane)
+                };
+                let sender = observation(&mut app, target);
+                app.poll_close(&ctx);
+                assert!(!app.exit_approved);
+                assert!(app.controller.model().pane(pane).is_some());
+                assert_eq!(app.ui.close_status, CloseStatus::Checking);
+                sender.send(ProcessActivity::Idle).unwrap();
+                if cancel {
+                    // Escape is applied before polling a completed check.
+                    app.action(&ctx, Action::CloseOverlay);
+                }
+                app.poll_close(&ctx);
+                assert_eq!(app.exit_approved, whole_app && !cancel);
+                assert_eq!(
+                    app.controller.model().pane(pane).is_some(),
+                    whole_app || cancel
+                );
+                assert_eq!(app.ui.overlay, OverlayState::None);
+                assert!(app.pending_close.is_none());
+            }
+        }
+    }
+
+    #[test]
     fn close_process_warning_is_independent_and_idle_results_obey_general_preference() {
         for confirm in [false, true] {
             for result in [
