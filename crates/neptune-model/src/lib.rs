@@ -13,4 +13,4 @@ pub use ids::{PaneId, SessionGeneration, SplitId, WorkspaceGroupId, WorkspaceId}
 pub use layout::{Axis, Edge, FocusDirection, Layout};
 pub use remote::Remote;
 pub use workspace::{Error, Lifecycle, Limits, Model, Pane, PaneSpec, Workspace, WorkspaceSpec};
-pub use workspace::{WorkspaceGroup, WorkspaceGroupSpec};
+pub use workspace::{SidebarItem, WorkspaceGroup, WorkspaceGroupSpec};

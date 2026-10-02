@@ -14,12 +14,15 @@ use eframe::egui::{
     Sense, Shadow, Stroke, StrokeKind, Ui, UiBuilder, Vec2, WidgetInfo, WidgetType,
     emath::GuiRounding as _, style::ScrollAnimation, vec2,
 };
-use neptune_model::{Destination, PaneId, WorkspaceGroup, WorkspaceGroupId, WorkspaceId};
+use neptune_model::{
+    Destination, PaneId, SidebarItem, WorkspaceGroup, WorkspaceGroupId, WorkspaceId,
+};
 
 /// What the chrome needs to know about the frame it surrounds.
 pub struct ChromeView<'a> {
     pub workspaces: &'a [WorkspaceView],
     pub groups: &'a [WorkspaceGroup],
+    pub sidebar_order: &'a [SidebarItem],
     pub active: Option<WorkspaceId>,
     pub pane: Option<PaneId>,
     /// The focused terminal's label and directory.
@@ -64,16 +67,16 @@ pub struct WorkspaceDrag {
     tops: Vec<(WorkspaceId, f32)>,
 }
 
-/// A folder moves with its visible children, so its height can differ from
-/// its neighbours. Keep measured geometry under stable folder identities.
+/// Top-level workspaces and folders share a drag list. A folder moves with its
+/// visible children; measured geometry stays under stable entry identities.
 #[derive(Default)]
-pub struct GroupDrag {
-    lifted: Option<WorkspaceGroupId>,
+pub struct SidebarDrag {
+    lifted: Option<SidebarItem>,
     grip: Option<f32>,
-    positions: Vec<(WorkspaceGroupId, f32, f32)>,
+    positions: Vec<(SidebarItem, f32, f32)>,
 }
 
-fn group_drop_index(top: f32, heights: &[f32], origin: usize) -> usize {
+fn sidebar_drop_index(top: f32, heights: &[f32], origin: usize) -> usize {
     let mut slot = 0.0;
     let mut target = 0;
     for (_, height) in heights
@@ -1298,75 +1301,185 @@ fn workspace_group(
     response
 }
 
-fn group_rows(
+#[expect(
+    clippy::too_many_arguments,
+    reason = "shared top-level drag presentation"
+)]
+fn sidebar_item(
+    ui: &mut Ui,
+    p: Palette,
+    view: &ChromeView,
+    item: SidebarItem,
+    viewport: Rect,
+    workspace_drag: &mut WorkspaceDrag,
+    lift: f32,
+    dragging: bool,
+    actions: &mut Vec<Action>,
+) -> Option<egui::Response> {
+    match item {
+        SidebarItem::Group(id) => {
+            let group = view.groups.iter().find(|g| g.id() == id)?;
+            Some(workspace_group(
+                ui,
+                p,
+                view,
+                group,
+                viewport,
+                workspace_drag,
+                dragging,
+                actions,
+            ))
+        }
+        SidebarItem::Workspace(id) => {
+            let index = view
+                .workspaces
+                .iter()
+                .position(|w| w.id == id && w.group.is_none())?;
+            let workspace = &view.workspaces[index];
+            let machine = view
+                .workspaces
+                .iter()
+                .find(|w| Some(w.id) == view.active)
+                .map(|w| &w.remote);
+            let (rect, _) =
+                ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::hover());
+            Some(workspace_row(
+                ui,
+                p,
+                workspace,
+                view,
+                RowState {
+                    rect,
+                    position: (index, view.workspaces.len()),
+                    selected: Some(id) == view.active,
+                    lift,
+                    dragging,
+                    pane_drag: view.pane_drag,
+                    accepts: Some(&workspace.remote) == machine,
+                },
+                actions,
+            ))
+        }
+    }
+}
+
+fn workspace_list(
     ui: &mut Ui,
     p: Palette,
     view: &ChromeView,
     viewport: Rect,
     workspace_drag: &mut WorkspaceDrag,
-    drag: &mut GroupDrag,
+    drag: &mut SidebarDrag,
     actions: &mut Vec<Action>,
 ) {
+    let items = view.sidebar_order;
+    if workspace_drag.lifted.is_some_and(|id| {
+        !view.workspaces.iter().any(|w| {
+            w.id == id
+                && w.group.is_some_and(|group| {
+                    view.groups
+                        .iter()
+                        .any(|g| g.id() == group && !g.collapsed())
+                })
+        })
+    }) {
+        *workspace_drag = WorkspaceDrag::default();
+    }
     let origin = drag
         .lifted
-        .and_then(|id| view.groups.iter().position(|g| g.id() == id));
+        .and_then(|id| items.iter().position(|item| *item == id));
     if origin.is_none() {
         drag.lifted = None;
         drag.grip = None;
     }
     let spacing = ui.spacing().item_spacing.y;
-    if origin.is_none() {
-        // At rest, let the existing collapse layout place each folder from its
-        // current height. Only a lifted list needs measured, animated positions.
-        let top = ui.cursor().min.y;
-        let mut positions = Vec::with_capacity(view.groups.len());
-        for group in view.groups {
-            let folder = ui.push_id(("group", group.id()), |ui| {
-                workspace_group(ui, p, view, group, viewport, workspace_drag, false, actions)
-            });
-            positions.push((
-                group.id(),
-                folder.response.rect.top() - top,
-                folder.response.rect.height() + spacing,
-            ));
-            if folder.inner.drag_started_by(PointerButton::Primary)
-                && let Some(press) = ui.input(|input| input.pointer.press_origin())
-            {
-                drag.lifted = Some(group.id());
-                drag.grip = Some(press.y - folder.inner.rect.top());
-                *workspace_drag = WorkspaceDrag::default();
-                ui.ctx().request_repaint();
-            }
-        }
-        drag.positions = positions;
-        return;
-    }
-    let heights: Vec<_> = view
-        .groups
+    let trailing_gap = items.last().map_or(0.0, |item| match item {
+        SidebarItem::Workspace(_) => ROW_STEP - ROW_HEIGHT,
+        SidebarItem::Group(_) => spacing,
+    });
+    let heights: Vec<_> = items
         .iter()
-        .map(|group| {
+        .map(|item| {
             drag.positions
                 .iter()
-                .find(|(id, _, _)| *id == group.id())
+                .find(|(id, _, _)| id == item)
                 .map_or_else(
-                    || {
-                        let count = view
-                            .workspaces
+                    || match item {
+                        SidebarItem::Workspace(_) => ROW_STEP,
+                        SidebarItem::Group(id) => view
+                            .groups
                             .iter()
-                            .filter(|w| w.group == Some(group.id()))
-                            .count();
-                        GROUP_HEIGHT
-                            + spacing
-                            + if group.collapsed() {
-                                0.0
-                            } else {
-                                spacing + (count as f32 * ROW_STEP - 2.0).max(28.0)
-                            }
+                            .find(|g| g.id() == *id)
+                            .map_or(GROUP_HEIGHT + spacing, |group| {
+                                let count = view
+                                    .workspaces
+                                    .iter()
+                                    .filter(|w| w.group == Some(*id))
+                                    .count();
+                                GROUP_HEIGHT
+                                    + spacing
+                                    + if group.collapsed() {
+                                        0.0
+                                    } else {
+                                        spacing + (count as f32 * ROW_STEP - 2.0).max(28.0)
+                                    }
+                            }),
                     },
                     |(_, _, height)| *height,
                 )
         })
         .collect();
+    if origin.is_none() {
+        let list_top = ui.cursor().min;
+        let mut next = 0.0;
+        let mut positions = Vec::with_capacity(items.len());
+        for (index, item) in items.iter().copied().enumerate() {
+            let rect = Rect::from_min_size(
+                list_top + vec2(0.0, next),
+                vec2(ui.available_width(), heights[index]),
+            );
+            let mut child = ui.new_child(
+                UiBuilder::new()
+                    .id_salt(("sidebar-item", item))
+                    .max_rect(rect),
+            );
+            let lift = animate(ui.ctx(), child.id().with("group-lift"), false, 0.12);
+            if let Some(response) = sidebar_item(
+                &mut child,
+                p,
+                view,
+                item,
+                viewport,
+                workspace_drag,
+                lift,
+                false,
+                actions,
+            ) {
+                let height = match item {
+                    SidebarItem::Workspace(_) => ROW_STEP,
+                    SidebarItem::Group(_) => child.min_rect().height() + spacing,
+                };
+                positions.push((item, next, height));
+                next += height;
+                if response.drag_started_by(PointerButton::Primary)
+                    && let Some(press) = ui.input(|input| input.pointer.press_origin())
+                {
+                    drag.lifted = Some(item);
+                    drag.grip = Some(press.y - response.rect.top());
+                    *workspace_drag = WorkspaceDrag::default();
+                    ui.ctx().request_repaint();
+                }
+            }
+        }
+        if !positions.is_empty() {
+            ui.allocate_exact_size(
+                vec2(ui.available_width(), (next - trailing_gap).max(0.0)),
+                Sense::hover(),
+            );
+        }
+        drag.positions = positions;
+        return;
+    }
     let list = Rect::from_min_size(
         ui.cursor().min,
         vec2(ui.available_width(), heights.iter().sum::<f32>()),
@@ -1375,7 +1488,14 @@ fn group_rows(
         let pointer = ui.input(|input| input.pointer.latest_pos());
         let low = (viewport.top() - list.top()).max(0.0);
         let high = (list.height() - heights[origin])
-            .min(viewport.bottom() - list.top() - GROUP_HEIGHT)
+            .min(
+                viewport.bottom()
+                    - list.top()
+                    - match items[origin] {
+                        SidebarItem::Workspace(_) => ROW_HEIGHT,
+                        SidebarItem::Group(_) => GROUP_HEIGHT,
+                    },
+            )
             .max(low);
         let top = pointer
             .map_or(0.0, |pos| pos.y - grip - list.top())
@@ -1410,8 +1530,8 @@ fn group_rows(
         held = None;
         ui.ctx().stop_dragging();
     }
-    let target = held.map(|(origin, top)| group_drop_index(top, &heights, origin));
-    let mut order: Vec<_> = (0..view.groups.len()).collect();
+    let target = held.map(|(origin, top)| sidebar_drop_index(top, &heights, origin));
+    let mut order: Vec<_> = (0..items.len()).collect();
     if let Some((origin, target)) = origin.zip(target) {
         order.remove(origin);
         order.insert(target, origin);
@@ -1425,11 +1545,11 @@ fn group_rows(
     let decay = (-ui.input(|input| input.stable_dt).min(0.1) / ROW_SETTLE).exp();
     let mut positions = Vec::new();
     let mut moving = false;
-    for index in (0..view.groups.len())
+    for index in (0..items.len())
         .filter(|index| Some(*index) != origin)
         .chain(origin)
     {
-        let group = &view.groups[index];
+        let item = items[index];
         let rest = rests[index];
         let top = if let Some((_, top)) = held.filter(|(origin, _)| *origin == index) {
             top
@@ -1437,7 +1557,7 @@ fn group_rows(
             let from = drag
                 .positions
                 .iter()
-                .find(|(id, _, _)| *id == group.id())
+                .find(|(id, _, _)| *id == item)
                 .map_or(rest, |(_, top, _)| *top);
             let top = rest + (from - rest) * decay;
             if (top - rest).abs() < 0.5 {
@@ -1454,11 +1574,17 @@ fn group_rows(
                 list.left(),
                 (list.top() + top).round_to_pixels(ui.pixels_per_point()),
             ),
-            vec2(list.width(), heights[index] - spacing),
+            vec2(
+                list.width(),
+                match item {
+                    SidebarItem::Workspace(_) => ROW_HEIGHT,
+                    SidebarItem::Group(_) => heights[index] - spacing,
+                },
+            ),
         );
         let mut child = ui.new_child(
             UiBuilder::new()
-                .id_salt(("group", group.id()))
+                .id_salt(("sidebar-item", item))
                 .max_rect(rect),
         );
         let lift = animate(
@@ -1467,7 +1593,7 @@ fn group_rows(
             Some(index) == origin,
             0.12,
         );
-        if lift > 0.0 {
+        if lift > 0.0 && matches!(item, SidebarItem::Group(_)) {
             let painter = child
                 .painter()
                 .with_clip_rect(ui.clip_rect().expand2(vec2(8.0, 12.0)));
@@ -1488,25 +1614,33 @@ fn group_rows(
             );
         }
         let mut idle = WorkspaceDrag::default();
-        let response = workspace_group(
+        let response = sidebar_item(
             &mut child,
             p,
             view,
-            group,
+            item,
             viewport,
             if held.is_some() {
                 &mut idle
             } else {
                 &mut *workspace_drag
             },
+            lift,
             held.is_some(),
             actions,
         );
-        positions.push((group.id(), top, child.min_rect().height() + spacing));
+        let height = match item {
+            SidebarItem::Workspace(_) => ROW_STEP,
+            SidebarItem::Group(_) => child.min_rect().height() + spacing,
+        };
+        positions.push((item, top, height));
+        let Some(response) = response else {
+            continue;
+        };
         if let Some(target) = target.filter(|_| Some(index) == origin) {
             if response.drag_stopped() {
                 if index != target {
-                    actions.push(Action::MoveGroup(group.id(), target));
+                    actions.push(Action::MoveSidebarItem(item, target));
                 }
                 drag.grip = None;
                 ui.ctx().request_repaint();
@@ -1519,7 +1653,7 @@ fn group_rows(
         } else if response.drag_started_by(PointerButton::Primary)
             && let Some(press) = ui.input(|input| input.pointer.press_origin())
         {
-            drag.lifted = Some(group.id());
+            drag.lifted = Some(item);
             drag.grip = Some(press.y - response.rect.top());
             *workspace_drag = WorkspaceDrag::default();
             ui.ctx().request_repaint();
@@ -1528,7 +1662,7 @@ fn group_rows(
     let height = positions.iter().map(|(_, _, height)| height).sum::<f32>();
     if !positions.is_empty() {
         ui.allocate_exact_size(
-            vec2(list.width(), (height - spacing).max(0.0)),
+            vec2(list.width(), (height - trailing_gap).max(0.0)),
             Sense::hover(),
         );
     }
@@ -1537,38 +1671,9 @@ fn group_rows(
     }
     if held.is_none() && drag.grip.is_none() && !moving {
         drag.lifted = None;
+        positions.clear();
     }
     drag.positions = positions;
-}
-
-fn workspace_list(
-    ui: &mut Ui,
-    p: Palette,
-    view: &ChromeView,
-    viewport: Rect,
-    drag: &mut WorkspaceDrag,
-    groups: &mut GroupDrag,
-    actions: &mut Vec<Action>,
-) {
-    let root: Vec<_> = view
-        .workspaces
-        .iter()
-        .filter(|w| w.group.is_none())
-        .collect();
-    let mut idle = WorkspaceDrag::default();
-    let root_drag = if drag.lifted.is_none_or(|id| root.iter().any(|w| w.id == id)) {
-        &mut *drag
-    } else {
-        &mut idle
-    };
-    workspace_rows(ui, p, view, &root, viewport, root_drag, actions);
-    group_rows(ui, p, view, viewport, drag, groups, actions);
-    if drag
-        .lifted
-        .is_some_and(|id| !view.workspaces.iter().any(|w| w.id == id))
-    {
-        *drag = WorkspaceDrag::default();
-    }
 }
 
 /// The window controls and the sidebar toggle, drawn over the sidebar and the
@@ -1646,7 +1751,7 @@ pub fn sidebar(
                         view,
                         viewport,
                         &mut state.workspace_drag,
-                        &mut state.group_drag,
+                        &mut state.item_drag,
                         actions,
                     );
                 });
@@ -1817,6 +1922,7 @@ mod tests {
         order: Vec<u64>,
         groups: Vec<WorkspaceGroup>,
         membership: Vec<(u64, WorkspaceGroupId)>,
+        sidebar_order: Vec<SidebarItem>,
         /// Window height; a short window makes the list scroll.
         height: f32,
         state: UiState,
@@ -1839,6 +1945,10 @@ mod tests {
                 order: order.into(),
                 groups: Vec::new(),
                 membership: Vec::new(),
+                sidebar_order: order
+                    .iter()
+                    .map(|id| SidebarItem::Workspace(WorkspaceId::new(*id)))
+                    .collect(),
                 height,
                 state: UiState::default(),
                 actions: Vec::new(),
@@ -1860,6 +1970,7 @@ mod tests {
             let view = ChromeView {
                 workspaces: &views,
                 groups: &self.groups,
+                sidebar_order: &self.sidebar_order,
                 active: views.first().map(|workspace| workspace.id),
                 pane: None,
                 subtitle: "",
@@ -1887,43 +1998,82 @@ mod tests {
             );
             output.textures_delta.clear();
             for action in &actions {
-                if let Action::SetGroupCollapsed(group, collapsed) = action {
-                    let specs = self
-                        .groups
-                        .iter()
-                        .map(|folder| neptune_model::WorkspaceGroupSpec {
-                            id: folder.id(),
-                            name: folder.name().into(),
-                            collapsed: if folder.id() == *group {
-                                *collapsed
-                            } else {
-                                folder.collapsed()
-                            },
+                let command = match action {
+                    Action::SetGroupCollapsed(group, collapsed) => {
+                        Some(neptune_model::Command::SetWorkspaceGroupCollapsed {
+                            group: *group,
+                            collapsed: *collapsed,
                         })
+                    }
+                    Action::MoveSidebarItem(item, index) => {
+                        Some(neptune_model::Command::MoveSidebarItem {
+                            item: *item,
+                            index: *index,
+                        })
+                    }
+                    Action::MoveWorkspace(workspace, index) => {
+                        Some(neptune_model::Command::MoveWorkspace {
+                            workspace: *workspace,
+                            index: *index,
+                        })
+                    }
+                    _ => None,
+                };
+                if let Some(command) = command {
+                    let mut controller = neptune_model::Controller::new(self.model());
+                    controller.dispatch(command).unwrap();
+                    self.order = controller
+                        .model()
+                        .workspaces()
+                        .iter()
+                        .map(|w| w.id().get())
                         .collect();
-                    self.groups = neptune_model::Model::restore_grouped(
-                        Vec::new(),
-                        specs,
-                        None,
-                        true,
-                        Default::default(),
-                    )
-                    .unwrap()
-                    .groups()
-                    .to_owned();
-                }
-                if let Action::MoveGroup(id, index) = action {
-                    let from = self.groups.iter().position(|g| g.id() == *id).unwrap();
-                    let moved = self.groups.remove(from);
-                    self.groups.insert(*index, moved);
-                }
-                if let Action::MoveWorkspace(id, index) = action {
-                    let from = self.order.iter().position(|w| *w == id.get()).unwrap();
-                    let moved = self.order.remove(from);
-                    self.order.insert(*index, moved);
+                    self.groups = controller.model().groups().to_owned();
+                    self.sidebar_order = controller.model().sidebar_order().to_owned();
                 }
             }
             self.actions.extend(actions);
+        }
+
+        fn model(&self) -> neptune_model::Model {
+            let specs = self
+                .order
+                .iter()
+                .map(|id| neptune_model::WorkspaceSpec {
+                    id: WorkspaceId::new(*id),
+                    group: self
+                        .membership
+                        .iter()
+                        .find(|(w, _)| w == id)
+                        .map(|(_, g)| *g),
+                    name: format!("workspace {id}"),
+                    cwd: "/srv/app".into(),
+                    remote: None,
+                    panes: vec![neptune_model::PaneSpec {
+                        id: PaneId::new(*id),
+                        cwd: "/srv/app".into(),
+                        remote_cwd: None,
+                    }],
+                    layout: neptune_model::Layout::Leaf(PaneId::new(*id)),
+                    active: PaneId::new(*id),
+                })
+                .collect();
+            neptune_model::Model::restore_ordered(
+                specs,
+                self.groups
+                    .iter()
+                    .map(|g| neptune_model::WorkspaceGroupSpec {
+                        id: g.id(),
+                        name: g.name().into(),
+                        collapsed: g.collapsed(),
+                    })
+                    .collect(),
+                Some(self.sidebar_order.clone()),
+                None,
+                true,
+                Default::default(),
+            )
+            .unwrap()
         }
 
         /// Presses a row and carries it to `to` over several frames.
@@ -1953,6 +2103,19 @@ mod tests {
             .unwrap()
             .groups()
             .to_owned();
+            self.sidebar_order = self
+                .order
+                .iter()
+                .filter(|id| !self.membership.iter().any(|(w, _)| w == *id))
+                .map(|id| SidebarItem::Workspace(WorkspaceId::new(*id)))
+                .chain(self.groups.iter().map(|g| SidebarItem::Group(g.id())))
+                .collect();
+            self.order = self
+                .model()
+                .workspaces()
+                .iter()
+                .map(|w| w.id().get())
+                .collect();
             for _ in 0..20 {
                 self.frame(vec![]);
             }
@@ -1962,7 +2125,9 @@ mod tests {
             self.actions
                 .iter()
                 .filter_map(|a| match a {
-                    Action::MoveGroup(id, index) => Some((id.get(), *index)),
+                    Action::MoveSidebarItem(SidebarItem::Group(id), index) => {
+                        Some((id.get(), *index))
+                    }
                     _ => None,
                 })
                 .collect()
@@ -1971,39 +2136,34 @@ mod tests {
         fn folder(&self, id: u64) -> Pos2 {
             let (_, top, _) = self
                 .state
-                .group_drag
+                .item_drag
                 .positions
                 .iter()
-                .find(|(g, _, _)| g.get() == id)
+                .find(|(g, _, _)| *g == SidebarItem::Group(WorkspaceGroupId::new(id)))
                 .unwrap();
-            let root_count = self
-                .order
-                .iter()
-                .filter(|id| !self.membership.iter().any(|(w, _)| w == *id))
-                .count();
-            let root_height = if root_count == 0 {
-                0.0
-            } else {
-                root_count as f32 * ROW_STEP - 2.0
-            };
             Pos2::new(
                 100.0,
-                metrics::TOOLBAR_HEIGHT + 30.0 + root_height + 4.0 + top + GROUP_HEIGHT * 0.5,
+                metrics::TOOLBAR_HEIGHT + 30.0 + top + GROUP_HEIGHT * 0.5,
             )
         }
 
         fn top(&self, id: u64) -> Option<f32> {
-            let tops = &self.state.workspace_drag.tops;
-            tops.iter()
-                .find(|(row, _)| row.get() == id)
-                .map(|(_, top)| *top)
+            self.state
+                .item_drag
+                .positions
+                .iter()
+                .find(|(item, _, _)| *item == SidebarItem::Workspace(WorkspaceId::new(id)))
+                .map(|(_, top, _)| *top)
         }
 
         fn moves(&self) -> Vec<(u64, usize)> {
             self.actions
                 .iter()
                 .filter_map(|action| match action {
-                    Action::MoveWorkspace(id, index) => Some((id.get(), *index)),
+                    Action::MoveWorkspace(id, index)
+                    | Action::MoveSidebarItem(SidebarItem::Workspace(id), index) => {
+                        Some((id.get(), *index))
+                    }
                     _ => None,
                 })
                 .collect()
@@ -2029,8 +2189,12 @@ mod tests {
         .groups()
         .to_owned();
         sidebar.membership = vec![(2, group)];
+        sidebar.sidebar_order = vec![
+            SidebarItem::Workspace(WorkspaceId::new(1)),
+            SidebarItem::Group(group),
+        ];
         sidebar.frame(vec![]);
-        let header_y = metrics::TOOLBAR_HEIGHT + 30.0 + ROW_HEIGHT + 4.0 + 17.0;
+        let header_y = sidebar.folder(7).y;
         let plus = Pos2::new(216.0 - 8.0 - 17.0, header_y);
         sidebar.frame(vec![Event::PointerMoved(plus)]);
         sidebar.frame(vec![button(plus, true)]);
@@ -2048,6 +2212,115 @@ mod tests {
     }
 
     #[test]
+    fn a_folder_can_be_dragged_above_ungrouped_workspaces() {
+        let mut sidebar = Fixture::new(&[1, 2, 3]);
+        sidebar.membership = vec![(3, WorkspaceGroupId::new(7))];
+        sidebar.folders(&[(7, false)]);
+        let from = sidebar.folder(7);
+        let to = row(0);
+        sidebar.carry(from, to);
+        assert!(sidebar.group_moves().is_empty());
+        sidebar.frame(vec![button(to, false)]);
+        assert_eq!(sidebar.group_moves(), [(7, 0)]);
+        assert_eq!(sidebar.order, [3, 1, 2]);
+        assert_eq!(
+            sidebar.sidebar_order[0],
+            SidebarItem::Group(WorkspaceGroupId::new(7))
+        );
+    }
+
+    #[test]
+    fn mixed_folders_and_workspaces_move_in_both_directions_and_cancel() {
+        let mut sidebar = Fixture::new(&[1, 2, 3, 4]);
+        sidebar.membership = vec![(3, WorkspaceGroupId::new(7)), (4, WorkspaceGroupId::new(7))];
+        sidebar.folders(&[(7, false), (8, true)]);
+        let to = row(1);
+        sidebar.carry(sidebar.folder(7), to);
+        sidebar.frame(vec![button(to, false)]);
+        assert_eq!(
+            sidebar.sidebar_order,
+            [
+                SidebarItem::Workspace(WorkspaceId::new(1)),
+                SidebarItem::Group(WorkspaceGroupId::new(7)),
+                SidebarItem::Workspace(WorkspaceId::new(2)),
+                SidebarItem::Group(WorkspaceGroupId::new(8))
+            ]
+        );
+        assert_eq!(sidebar.order, [1, 3, 4, 2]);
+        for _ in 0..30 {
+            sidebar.frame(vec![]);
+        }
+        let to = sidebar.folder(8) + vec2(0.0, GROUP_HEIGHT);
+        sidebar.carry(row(0), to);
+        sidebar.frame(vec![button(to, false)]);
+        assert_eq!(
+            sidebar.sidebar_order.last(),
+            Some(&SidebarItem::Workspace(WorkspaceId::new(1)))
+        );
+        for _ in 0..30 {
+            sidebar.frame(vec![]);
+        }
+        let from = sidebar.folder(8);
+        sidebar.carry(from, row(0));
+        sidebar.frame(vec![Event::Key {
+            key: Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        }]);
+        sidebar.frame(vec![button(row(0), false)]);
+        assert!(!sidebar.escape_passed);
+        assert_eq!(sidebar.group_moves(), [(7, 1)]);
+        assert!(
+            sidebar
+                .groups
+                .iter()
+                .find(|g| g.id().get() == 8)
+                .unwrap()
+                .collapsed()
+        );
+    }
+
+    #[test]
+    fn grouped_workspace_drag_keeps_membership_and_mixed_sidebar_order() {
+        let mut sidebar = Fixture::new(&[1, 2, 3]);
+        sidebar.membership = vec![(2, WorkspaceGroupId::new(7)), (3, WorkspaceGroupId::new(7))];
+        sidebar.folders(&[(7, false)]);
+        sidebar.sidebar_order.swap(0, 1);
+        sidebar.order = sidebar
+            .model()
+            .workspaces()
+            .iter()
+            .map(|w| w.id().get())
+            .collect();
+        sidebar.frame(vec![]);
+        let before = sidebar.sidebar_order.clone();
+        let from = sidebar.folder(7) + vec2(0.0, GROUP_HEIGHT * 0.5 + 4.0 + ROW_HEIGHT * 0.5);
+        let to = from + vec2(0.0, ROW_STEP);
+        sidebar.carry(from, to);
+        sidebar.frame(vec![button(to, false)]);
+        assert_eq!(sidebar.moves(), [(2, 1)]);
+        assert_eq!(sidebar.order, [3, 2, 1]);
+        assert_eq!(sidebar.sidebar_order, before);
+        assert!(sidebar.group_moves().is_empty());
+    }
+
+    #[test]
+    fn removing_the_held_folder_cancels_its_drag() {
+        let mut sidebar = Fixture::new(&[1, 2]);
+        sidebar.folders(&[(7, true)]);
+        sidebar.carry(sidebar.folder(7), row(0));
+        sidebar.groups.clear();
+        sidebar
+            .sidebar_order
+            .retain(|item| !matches!(item, SidebarItem::Group(_)));
+        sidebar.frame(vec![button(row(0), false)]);
+        assert!(sidebar.group_moves().is_empty());
+        assert!(sidebar.state.item_drag.lifted.is_none());
+    }
+
+    #[test]
     fn expanded_and_collapsed_folders_move_as_blocks_once_on_release() {
         let mut sidebar = Fixture::new(&[1, 2, 3]);
         sidebar.membership = vec![
@@ -2061,8 +2334,8 @@ mod tests {
         sidebar.carry(from, to);
         assert!(sidebar.group_moves().is_empty());
         assert_eq!(
-            sidebar.state.group_drag.lifted,
-            Some(WorkspaceGroupId::new(7))
+            sidebar.state.item_drag.lifted,
+            Some(SidebarItem::Group(WorkspaceGroupId::new(7)))
         );
         sidebar.frame(vec![button(to, false)]);
         assert_eq!(sidebar.group_moves(), [(7, 2)]);
@@ -2074,7 +2347,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [8, 9, 7]
         );
-        assert_eq!(sidebar.order, [1, 2, 3]);
+        assert_eq!(sidebar.order, [3, 1, 2]);
         assert!(sidebar.moves().is_empty());
         assert!(!sidebar.actions.iter().any(|a| matches!(
             a,
@@ -2083,7 +2356,7 @@ mod tests {
         for _ in 0..30 {
             sidebar.frame(vec![]);
         }
-        assert!(sidebar.state.group_drag.lifted.is_none());
+        assert!(sidebar.state.item_drag.lifted.is_none());
         let from = sidebar.folder(7);
         let to = sidebar.folder(8);
         sidebar.carry(from, to);
@@ -2107,7 +2380,7 @@ mod tests {
             modifiers: Modifiers::NONE,
         }]);
         assert!(!sidebar.escape_passed);
-        assert!(sidebar.state.group_drag.grip.is_none());
+        assert!(sidebar.state.item_drag.grip.is_none());
         sidebar.frame(vec![
             Event::PointerMoved(to + vec2(0.0, 15.0)),
             button(to, false),
@@ -2176,8 +2449,8 @@ mod tests {
         let to = row(2) + vec2(0.0, 6.0);
         sidebar.carry(row(0), to);
         assert_eq!(
-            sidebar.state.workspace_drag.lifted,
-            Some(WorkspaceId::new(1))
+            sidebar.state.item_drag.lifted,
+            Some(SidebarItem::Workspace(WorkspaceId::new(1)))
         );
         assert!(sidebar.moves().is_empty(), "nothing moves before release");
         // The held row tracks the pointer; its neighbours ease up to make room.
@@ -2194,8 +2467,8 @@ mod tests {
         for _ in 0..20 {
             sidebar.frame(vec![]);
         }
-        let rest = &sidebar.state.workspace_drag;
-        assert!(rest.lifted.is_none() && rest.grip.is_none() && rest.tops.is_empty());
+        let rest = &sidebar.state.item_drag;
+        assert!(rest.lifted.is_none() && rest.grip.is_none());
         assert_eq!(sidebar.moves().len(), 1);
         assert!(
             !sidebar
@@ -2221,8 +2494,8 @@ mod tests {
         let to = row(1) + vec2(0.0, 20.0);
         sidebar.carry(row(1), to);
         assert_eq!(
-            sidebar.state.workspace_drag.lifted,
-            Some(WorkspaceId::new(2))
+            sidebar.state.item_drag.lifted,
+            Some(SidebarItem::Workspace(WorkspaceId::new(2)))
         );
         sidebar.frame(vec![button(to, false)]);
         assert!(sidebar.moves().is_empty());
@@ -2263,7 +2536,7 @@ mod tests {
         let mut sidebar = Fixture::new(&[1, 2, 3]);
         let to = row(0) + vec2(0.0, 6.0);
         sidebar.carry(row(2), to);
-        assert!(sidebar.state.workspace_drag.grip.is_some());
+        assert!(sidebar.state.item_drag.grip.is_some());
         sidebar.frame(vec![Event::Key {
             key: Key::Escape,
             physical_key: None,
@@ -2272,7 +2545,7 @@ mod tests {
             modifiers: Modifiers::NONE,
         }]);
         assert!(!sidebar.escape_passed, "the shell must not see this Escape");
-        assert!(sidebar.state.workspace_drag.grip.is_none());
+        assert!(sidebar.state.item_drag.grip.is_none());
         sidebar.frame(vec![button(to, false)]);
         assert!(sidebar.moves().is_empty());
         assert_eq!(sidebar.order, [1, 2, 3]);
@@ -2337,6 +2610,11 @@ mod tests {
                         &ChromeView {
                             workspaces: &workspaces,
                             groups: &[],
+                            sidebar_order: &[
+                                SidebarItem::Workspace(WorkspaceId::new(1)),
+                                SidebarItem::Workspace(WorkspaceId::new(2)),
+                                SidebarItem::Workspace(WorkspaceId::new(3)),
+                            ],
                             active: Some(WorkspaceId::new(1)),
                             pane: Some(pane),
                             subtitle: "",

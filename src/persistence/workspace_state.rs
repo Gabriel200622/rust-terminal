@@ -1,6 +1,6 @@
 use neptune_model::{
-    Axis, Layout, Limits, Model, PaneId, PaneSpec, SplitId, WorkspaceGroupId, WorkspaceGroupSpec,
-    WorkspaceId, WorkspaceSpec,
+    Axis, Layout, Limits, Model, PaneId, PaneSpec, SidebarItem, SplitId, WorkspaceGroupId,
+    WorkspaceGroupSpec, WorkspaceId, WorkspaceSpec,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -9,10 +9,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Version 4 adds workspace folders and membership. Version 3 introduced each
-/// pane's remote directory; versions 1–3 remain readable. Older builds refuse
-/// to replace version 4 state with the new organization.
-pub const SCHEMA_VERSION: u32 = 4;
+/// Version 5 adds mixed ordering of groups and ungrouped workspaces. Versions
+/// 1–4 remain readable; older builds refuse to replace the new organization.
+pub const SCHEMA_VERSION: u32 = 5;
 const MAX_STATE_BYTES: u64 = 8 * 1024 * 1024;
 
 /// This DTO is the disk contract. Runtime layout serialization cannot change it.
@@ -23,8 +22,35 @@ pub struct StateSnapshot {
     pub workspaces: Vec<SavedWorkspace>,
     #[serde(default)]
     pub groups: Vec<SavedWorkspaceGroup>,
+    #[serde(default)]
+    pub sidebar_order: Option<Vec<SavedSidebarItem>>,
     pub active: Option<WorkspaceId>,
     pub sidebar: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SavedSidebarItem {
+    Workspace { workspace: WorkspaceId },
+    Group { group: WorkspaceGroupId },
+}
+
+impl From<SavedSidebarItem> for SidebarItem {
+    fn from(item: SavedSidebarItem) -> Self {
+        match item {
+            SavedSidebarItem::Workspace { workspace } => Self::Workspace(workspace),
+            SavedSidebarItem::Group { group } => Self::Group(group),
+        }
+    }
+}
+
+impl From<SidebarItem> for SavedSidebarItem {
+    fn from(item: SidebarItem) -> Self {
+        match item {
+            SidebarItem::Workspace(workspace) => Self::Workspace { workspace },
+            SidebarItem::Group(group) => Self::Group { group },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -130,13 +156,21 @@ impl StateSnapshot {
                 .collect(),
             active: model.active_workspace(),
             sidebar: model.sidebar(),
+            sidebar_order: Some(
+                model
+                    .sidebar_order()
+                    .iter()
+                    .copied()
+                    .map(Into::into)
+                    .collect(),
+            ),
         }
     }
 
     /// Conversion enforces the same invariants as new commands without checking
     /// directories; callers can use it for headless snapshots and round trips.
     pub fn into_model(self, limits: Limits) -> Result<Model, neptune_model::Error> {
-        Model::restore_grouped(
+        Model::restore_ordered(
             self.workspaces
                 .into_iter()
                 .map(SavedWorkspace::into_spec)
@@ -145,6 +179,8 @@ impl StateSnapshot {
                 .into_iter()
                 .map(SavedWorkspaceGroup::into_spec)
                 .collect(),
+            self.sidebar_order
+                .map(|items| items.into_iter().map(Into::into).collect()),
             self.active,
             self.sidebar,
             limits,
@@ -434,8 +470,47 @@ fn restore_versioned(snapshot: StateSnapshot, limits: Limits, report: &mut LoadR
                 .into(),
         );
     }
-    match Model::restore_grouped(specs, groups, active, snapshot.sidebar, limits) {
-        Ok(model) => report.model = Some(model),
+    match Model::restore_grouped(
+        specs.clone(),
+        groups.clone(),
+        active,
+        snapshot.sidebar,
+        limits,
+    ) {
+        Ok(model) => {
+            let order = snapshot.sidebar_order.map(|saved| {
+                let mut order = Vec::new();
+                for item in saved.into_iter().map(SidebarItem::from) {
+                    if model.sidebar_order().contains(&item) && !order.contains(&item) {
+                        order.push(item);
+                    } else {
+                        report.diagnostics.push(format!(
+                            "Skipped unavailable or duplicate sidebar entry {item:?}"
+                        ));
+                    }
+                }
+                for item in model.sidebar_order() {
+                    if !order.contains(item) {
+                        report
+                            .diagnostics
+                            .push(format!("Restored missing sidebar entry {item:?}"));
+                        order.push(*item);
+                    }
+                }
+                order
+            });
+            if snapshot.version == SCHEMA_VERSION && order.is_none() {
+                report
+                    .diagnostics
+                    .push("Missing sidebar order; restored the historical workspace order".into());
+            }
+            match Model::restore_ordered(specs, groups, order, active, snapshot.sidebar, limits) {
+                Ok(model) => report.model = Some(model),
+                Err(error) => report
+                    .diagnostics
+                    .push(format!("Sidebar order validation failed: {error}")),
+            }
+        }
         Err(error) => report
             .diagnostics
             .push(format!("Workspace state validation failed: {error}")),
@@ -654,7 +729,7 @@ mod tests {
             )
             .into_bytes()
     }
-    fn sample(directory: &Path) -> StateSnapshot {
+    pub(super) fn sample(directory: &Path) -> StateSnapshot {
         let mut controller = Controller::new(Model::default());
         controller
             .dispatch(Command::AddWorkspace {
@@ -1020,6 +1095,109 @@ mod tests {
 mod group_tests {
     use super::*;
     use neptune_model::{Command, Controller};
+
+    #[test]
+    fn mixed_sidebar_order_round_trips_and_version_four_keeps_its_original_order() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("workspaces.json");
+        let mut controller = Controller::new(Model::default());
+        for name in ["first", "second"] {
+            controller
+                .dispatch(Command::AddWorkspace {
+                    cwd: root.path().into(),
+                    name: name.into(),
+                    remote: None,
+                    group: None,
+                })
+                .unwrap();
+        }
+        controller
+            .dispatch(Command::AddWorkspaceGroup {
+                name: "Projects".into(),
+            })
+            .unwrap();
+        let group = controller.model().groups()[0].id();
+        controller
+            .dispatch(Command::AddWorkspace {
+                cwd: root.path().into(),
+                name: "child".into(),
+                remote: None,
+                group: Some(group),
+            })
+            .unwrap();
+        controller
+            .dispatch(Command::AddWorkspaceGroup {
+                name: "Empty".into(),
+            })
+            .unwrap();
+        for index in [0, 1, 3] {
+            controller
+                .dispatch(Command::MoveSidebarItem {
+                    item: SidebarItem::Group(group),
+                    index,
+                })
+                .unwrap();
+            let snapshot = StateSnapshot::from_model(controller.model());
+            std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+            let report = load_state(&path, Limits::default());
+            assert!(report.can_write && !report.migrated);
+            assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+            let restored = report.model.unwrap();
+            assert_eq!(restored.sidebar_order(), controller.model().sidebar_order());
+            assert_eq!(restored.workspaces(), controller.model().workspaces());
+        }
+        let mut saved =
+            serde_json::to_value(StateSnapshot::from_model(controller.model())).unwrap();
+        saved["version"] = 4.into();
+        saved.as_object_mut().unwrap().remove("sidebar_order");
+        std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let report = load_state(&path, Limits::default());
+        assert!(report.can_write && report.migrated && report.diagnostics.is_empty());
+        let restored = report.model.unwrap();
+        assert_eq!(
+            restored
+                .workspaces()
+                .iter()
+                .map(|w| w.name())
+                .collect::<Vec<_>>(),
+            ["first", "second", "child"]
+        );
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn damaged_sidebar_order_is_repaired_only_after_preserving_original_bytes() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("workspaces.json");
+        let mut snapshot = super::tests::sample(root.path());
+        let item = snapshot.sidebar_order.as_ref().unwrap()[0];
+        snapshot.sidebar_order = Some(vec![
+            item,
+            item,
+            SavedSidebarItem::Group {
+                group: WorkspaceGroupId::new(99),
+            },
+        ]);
+        let bytes = serde_json::to_vec(&snapshot).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        let report = load_state(&path, Limits::default());
+        assert!(report.can_write);
+        assert_eq!(report.model.unwrap().sidebar_order().len(), 1);
+        assert_eq!(
+            report
+                .diagnostics
+                .iter()
+                .filter(|message| message.contains("sidebar entry"))
+                .count(),
+            2
+        );
+        let recovery = std::fs::read_dir(root.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|file| file != &path)
+            .unwrap();
+        assert_eq!(std::fs::read(recovery).unwrap(), bytes);
+    }
 
     #[test]
     fn folder_order_membership_and_collapsed_state_survive_disk_restoration() {
