@@ -417,7 +417,7 @@ before accepting them. The design choices and corrections are recorded in
 | Text and desktop integration | Mixed DPI/display changes, non-US layouts and AltGr, IME/composition, installed/missing CJK and symbol fallbacks, complex scripts, accessibility navigation with a screen reader, and host window controls |
 | Sustained behavior | Long output runs, bounded maximum-history memory, many independent panes, hidden-session output, rapid split/resize/close, exited processes, and visible error recovery |
 | Performance | Repeated release measurements of PTY-to-screen throughput, keyboard-to-display latency, frame-time percentiles, startup, split-pane scaling, focused/unfocused idle with both blink settings, CPU/RSS, and GPU memory |
-| Distribution | Test downloaded archives on clean machines; verify dependency/font notices and checksums, desktop integration, macOS signing/notarization, Windows signing, installer/update decisions, and versioned rollback behavior |
+| Distribution | Test downloaded installers on clean machines; verify dependency/font notices, signed metadata, checksums/attestations, desktop integration and macOS signing/notarization. Verify the explicit unsigned Windows limitation, native Stable/Beta download/handoff behavior, and no automatic downgrades. Follow [the release guide](releases.md); Windows signing is deferred to SignPath OSS by product decision. |
 
 The parser benchmark and Linux CPU/RSS probe are documented in
 [performance.md](performance.md). They do not measure GPU presentation or prove

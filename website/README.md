@@ -1,16 +1,26 @@
 # Neptune website
 
-The landing page for [Neptune](https://neptune.rs): a static Next.js site styled with
-Tailwind CSS. It uses [Bun](https://bun.sh) for dependencies and scripts.
+The landing page and release downloads for [Neptune](https://neptune.rs): Next.js
+with server-cached GitHub release discovery, styled with Tailwind CSS. It uses
+[Bun](https://bun.sh) for dependencies and scripts and is hosted on Vercel.
 
 ```sh
-bun install
+bun install --frozen-lockfile
 bun run dev      # http://localhost:3000
 bun run lint
-bun run build    # static export in out/
+bun run test
+bun run build    # Next.js output in .next/
+bun run start    # production server
 ```
 
-`out/` holds plain files and can be served by any static host.
+`/download` resolves published stable releases; `/download/beta` resolves the
+newest published prerelease. Server-only discovery verifies signed metadata,
+caches success for five minutes and empty/failure states for one minute. Native
+binaries remain on GitHub. All five packages, architecture/format, version,
+notes, release/source and hashes stay visible. Ambiguous Mac architectures get
+explicit Apple Silicon/Intel choices; unsupported platforms get no guessed binary.
+See [the release guide](../docs/releases.md#website-downloads) for routing,
+optional server read-token configuration, trust keys and troubleshooting.
 
 ## Staying consistent with the app
 
@@ -49,13 +59,13 @@ comparison with other terminals. Keep new copy to the same standard.
 
 The canonical domain is `https://neptune.rs`; metadata and sharing links use it.
 Configure Vercel with `website/` as the project root and `main` as the production
-branch.
-[`vercel.json`](vercel.json) enables automatic deployments only for pushes to
-`main`, including merged pull requests. Other branches do not create preview
-deployments. The `**` rule covers branch names containing `/`.
-Existing branches need to merge or rebase onto `main` after this configuration
-lands so their commits include it.
+branch. [`vercel.json`](vercel.json) selects the Next.js preset, frozen Bun
+install, `bun run build` and `.next` output. It enables automatic deployments
+only for pushes to `main`, including merged pull requests. Other branches do
+not create preview deployments; the `**` rule covers branch names containing `/`.
 
-The export assumes it is served from the root of a domain. To host it under a
-subpath, such as a GitHub Pages project site, set `basePath` in
-`next.config.ts`.
+Server routes and caching require a Next.js runtime. The public updater trust
+key is embedded from `../packaging/update-public-key.hex` at build time. Enable
+**Include source files outside of the Root Directory in the Build Step** in
+Vercel's Root Directory settings. No domain change is performed merely by
+preparing release code.

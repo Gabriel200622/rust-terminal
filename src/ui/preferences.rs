@@ -154,7 +154,12 @@ fn accent_dots(ui: &mut Ui, p: Palette, current: &mut Accent) {
     }
 }
 
-pub fn show(ctx: &egui::Context, current: &Config, actions: &mut Vec<Action>) {
+pub fn show(
+    ctx: &egui::Context,
+    current: &Config,
+    updates: &crate::runtime::updates::Updates,
+    actions: &mut Vec<Action>,
+) {
     let mut config = current.clone();
     let p = Palette::for_config(&config);
     let before = toml::to_string(&config).unwrap_or_default();
@@ -353,6 +358,19 @@ pub fn show(ctx: &egui::Context, current: &Config, actions: &mut Vec<Action>) {
                         p,
                         "Restoring reopens folders and layouts with fresh shells.",
                     );
+                    ui.add_space(14.0);
+                    section_label(ui, p, "Updates");
+                    group(ui, p, |ui, rows| {
+                        rows.row(ui, "Check automatically", |ui| {
+                            toggle(ui, p, &mut config.check_updates, "Check for updates automatically");
+                        });
+                        rows.row(ui, "Release channel", |ui| {
+                            use crate::runtime::updates::ReleaseChannel;
+                            segmented(ui, p, "release-channel", &mut config.release_channel, &[(ReleaseChannel::Stable, "Stable"), (ReleaseChannel::Beta, "Beta")], 150.0);
+                        });
+                    });
+                    caption(ui, p, "Beta includes previews and newer stable releases. Updates are installed only when you choose.");
+                    crate::ui::updates::preferences_status(ui, p, updates, actions);
                     ui.add_space(18.0);
                 });
             });

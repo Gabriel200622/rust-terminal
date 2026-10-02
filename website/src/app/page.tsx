@@ -22,7 +22,7 @@ function Nav() {
             GitHub
           </a>
           <a
-            href="#install"
+            href="/download"
             className="flex h-[30px] items-center rounded-control bg-control px-3 text-[13px] font-medium text-fg transition-colors duration-100 hover:bg-pressed"
           >
             Get Neptune
@@ -54,10 +54,10 @@ function Hero() {
       </p>
       <div className="mt-8 flex animate-rise flex-wrap items-center justify-center gap-2.5 [animation-delay:120ms]">
         <a
-          href="#install"
+          href="/download"
           className="flex h-10 items-center gap-2 rounded-pane bg-accent pr-4 pl-[18px] text-[14px] font-medium text-on-accent transition-[filter] duration-100 hover:brightness-110 active:brightness-90"
         >
-          Build from source
+          Download Neptune
           <Icon name="arrowDown" size={14} />
         </a>
         <a

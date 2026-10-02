@@ -7,6 +7,7 @@ pub mod helpers;
 pub mod palette;
 pub mod preferences;
 pub mod search;
+pub mod updates;
 pub mod workspace;
 use crate::{config::Config, terminal::Cache};
 use neptune_model::{
@@ -27,6 +28,7 @@ pub enum OverlayState {
     #[default]
     None,
     Settings,
+    Update,
     Palette,
     Rename(WorkspaceId),
     RenameGroup(WorkspaceGroupId),
@@ -116,6 +118,12 @@ pub enum Action {
     Create(PathBuf, Option<String>),
     SetName(WorkspaceId, String),
     Preferences(Config),
+    CheckUpdates,
+    ReviewUpdate,
+    DownloadUpdate(String),
+    OpenUpdate(String),
+    CancelUpdate,
+    DismissUpdate,
     Confirm(Close),
     CancelClose,
     CloseOverlay,
