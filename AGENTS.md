@@ -125,8 +125,8 @@ these repository constraints also apply when following a skill.
 - Body: describe the problem in a sentence or two, then how you fixed it. End
   with the model and harness that did the work.
 - UI changes need before/after images. Motion or timing needs a short video.
-- Upload PR evidence to GitHub. Never commit PR-only screenshots or assets such
-  as `.github/pr-assets/`.
+- Upload PR evidence to GitHub using [the browser attachment workflow](docs/agents/issue-tracker.md#pr-attachments).
+  Never commit PR-only screenshots or assets such as `.github/pr-assets/`.
 - One concern per PR. If the description says "also", split it.
 - When babysitting: poll checks and comments newer than the last push, verify
   each bot finding against the source, fix real ones, and dismiss false positives

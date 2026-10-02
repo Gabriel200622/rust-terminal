@@ -24,6 +24,24 @@ For every change, including hotfixes:
 3. Check CI for the latest PR head with `gh pr checks <number> --watch --fail-fast`. CI must be green before merge; pending, failed or cancelled checks block it. Repeat this check after any new commits.
 4. Merge through the PR with `gh pr merge <number>` only after CI is green and branch protection requirements are satisfied. Do not use `--admin` to bypass these gates.
 
+## PR attachments
+
+Use the user's browser to attach screenshots, videos and other evidence files
+to a PR.
+
+1. Open the PR description editor, or the creation form when creating a PR was
+   requested. Preserve the existing description.
+2. Use GitHub's attachment control with the browser's local-file upload capability.
+   Transfer files directly; keep binary/base64 data out of tool output.
+3. Wait for uploads to finish, retain GitHub's generated attachment links in the
+   evidence section, and save the description.
+4. Reopen the rendered description and verify that images display and file links
+   open.
+
+If GitHub requires sign-in, ask the user to sign in in that browser and continue
+there. If the browser tools cannot upload local files, report the missing
+capability and provide the exact file paths for the user to attach.
+
 ## Pull requests as a triage surface
 
 Use issues for requests and specs; use PRs to deliver changes.
