@@ -90,8 +90,8 @@ icon buttons keep a 28-point target around a 16-point glyph.
   menu offers "Disconnect from SSH" where a local one offers "Connect over
   SSH…". Double-click renames.
   Secondary-click the heading or empty list space for "New workspace", "New SSH
-  workspace", and "New workspace group". Ungrouped workspaces appear first,
-  followed by folder groups. A folder row shows a disclosure chevron, an outline
+  workspace", and "New workspace group". Ungrouped workspaces and folder groups
+  share an ordered list. A folder row shows a disclosure chevron, an outline
   folder and its name; its count yields to a plus control on hover or focus.
   Clicking the row reveals or hides indented workspaces with the native 120 ms
   ease-out collapse animation and a matching fade. Double-click renames; the
@@ -101,7 +101,9 @@ icon buttons keep a 28-point target around a 16-point glyph.
   state restore, and shortcut/palette selection reveals the selected workspace.
   Dragging a folder row reorders groups as blocks with their visible workspaces,
   using the same lift, neighbor movement, edge scrolling and cancellation as
-  workspace rows. Ungrouped workspaces remain first.
+  workspace rows. Groups can sit at the top or between ungrouped workspaces;
+  ungrouped rows can move around groups. The mixed order restores and determines
+  workspace navigation and shortcut hints, including children of collapsed groups.
   Dragging a workspace row reorders the workspaces within its group: the row lifts onto the elevated
   material and follows the pointer, its neighbours ease aside to show where it
   will land, and it settles into that gap on release. Holding it at the list's

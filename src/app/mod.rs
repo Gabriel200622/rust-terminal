@@ -645,7 +645,7 @@ impl eframe::App for App {
             // is leaving.
             self.ui.sidebar_drag = None;
             self.ui.workspace_drag = Default::default();
-            self.ui.group_drag = Default::default();
+            self.ui.item_drag = Default::default();
         }
         let sidebar_width = self
             .ui
@@ -661,6 +661,7 @@ impl eframe::App for App {
         let chrome = ui::chrome::ChromeView {
             workspaces: &views,
             groups: self.controller.model().groups(),
+            sidebar_order: self.controller.model().sidebar_order(),
             active,
             pane: active_pane,
             subtitle: &subtitle,

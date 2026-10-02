@@ -74,8 +74,8 @@ def endpoint_open():
 
 def state():
     snapshot = json.loads((args.data_root / 'workspaces.json').read_text())
-    if snapshot.get('version') != 4:
-        raise RuntimeError(f'Expected workspace schema version 4, found {snapshot.get("version")}')
+    if snapshot.get('version') != 5:
+        raise RuntimeError(f'Expected workspace schema version 5, found {snapshot.get("version")}')
     return snapshot
 
 def active_workspace(snapshot):
