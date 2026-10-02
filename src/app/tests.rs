@@ -2187,6 +2187,7 @@ fn custom_theme_preferences_survive_writer_shutdown_and_reopen() {
             colors: crate::terminal_theme::bundled("Dracula").unwrap().colors,
         });
     configured.theme = config::Theme::Palette("custom:1".into());
+    configured.favorite_themes = vec![configured.theme.clone(), config::Theme::Dusk];
     app.action(&ctx, Action::Preferences(configured.clone()));
     eframe::App::on_exit(&mut app);
     let saved = Config::load(&app.config_path).unwrap();
@@ -2206,6 +2207,8 @@ fn custom_theme_preferences_survive_writer_shutdown_and_reopen() {
     let saved = Config::load(&reopened.config_path).unwrap();
     assert!(saved.custom_themes.is_empty());
     assert_eq!(saved.theme, config::Theme::Graphite);
+    // The deleted theme took its star with it.
+    assert_eq!(saved.favorite_themes, [config::Theme::Dusk]);
 }
 
 #[test]

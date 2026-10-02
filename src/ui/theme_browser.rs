@@ -11,7 +11,7 @@ use crate::{
     config::{Accent, Config, Theme},
     icons::{self, Icon},
     terminal_theme::{
-        BUNDLED, BundledTheme, CustomTheme, HexColor, MAX_CUSTOM_THEMES, ThemeColors,
+        BUNDLED, BundledTheme, CustomTheme, HexColor, MAX_CUSTOM_THEMES, ThemeColors, bundled,
     },
     theme::{self, Palette, metrics},
 };
@@ -54,6 +54,7 @@ enum Filter {
     Dark,
     Light,
     Custom,
+    Favorites,
 }
 
 impl State {
@@ -136,9 +137,54 @@ enum Source<'a> {
 struct Entry<'a> {
     name: &'a str,
     source: Source<'a>,
+    /// Listed among the favorites, apart from its place of origin.
+    pinned: bool,
 }
 
-impl Entry<'_> {
+impl<'a> Entry<'a> {
+    fn neptune((theme, name): (Theme, &'a str)) -> Self {
+        Self {
+            name,
+            source: Source::Neptune(theme),
+            pinned: false,
+        }
+    }
+
+    fn custom(custom: &'a CustomTheme) -> Self {
+        Self {
+            name: &custom.name,
+            source: Source::Custom(custom),
+            pinned: false,
+        }
+    }
+
+    fn bundled(bundled: &'static BundledTheme) -> Self {
+        Self {
+            name: bundled.name,
+            source: Source::Bundled(bundled),
+            pinned: false,
+        }
+    }
+
+    /// A favorite, when its theme still exists.
+    fn favorite(config: &'a Config, theme: &Theme) -> Option<Self> {
+        let entry = match theme {
+            Theme::Palette(id) => match id.strip_prefix("iterm:") {
+                Some(name) => Self::bundled(bundled(name)?),
+                None => Self::custom(config.custom_themes.iter().find(|t| &t.id == id)?),
+            },
+            own => Self::neptune(
+                Theme::BUILTINS
+                    .into_iter()
+                    .find(|(theme, _)| theme == own)?,
+            ),
+        };
+        Some(Self {
+            pinned: true,
+            ..entry
+        })
+    }
+
     fn theme(&self) -> Theme {
         match &self.source {
             Source::Neptune(theme) => theme.clone(),
@@ -164,12 +210,26 @@ impl Entry<'_> {
         }
     }
 
-    fn id(&self) -> Id {
+    fn is_dark(&self) -> bool {
         match &self.source {
+            Source::Neptune(theme) => theme != &Theme::Light,
+            Source::Custom(custom) => custom.colors.is_dark(),
+            Source::Bundled(bundled) => bundled.colors.is_dark(),
+        }
+    }
+
+    fn is_favorite(&self, config: &Config) -> bool {
+        config.favorite_themes.iter().any(|theme| self.is(theme))
+    }
+
+    /// A favorite is listed twice while browsing; each card is its own widget.
+    fn id(&self) -> Id {
+        let id = match &self.source {
             Source::Neptune(theme) => Id::new(("theme-card", theme.id())),
             Source::Custom(custom) => Id::new(("theme-card", &custom.id)),
             Source::Bundled(bundled) => Id::new(("theme-card", "iterm", bundled.name)),
-        }
+        };
+        if self.pinned { id.with("favorite") } else { id }
     }
 }
 
@@ -221,6 +281,8 @@ impl<'a> Sections<'a> {
 /// What a card or its menu asked for; applied once the catalog is drawn.
 enum Command {
     Use(Theme),
+    /// Adds a theme to the favorites or removes it, from a pinned card or not.
+    Star(Theme, bool),
     Edit(String),
     Copy(String, ThemeColors),
     Delete(String),
@@ -592,6 +654,7 @@ fn catalog(
     };
     let list = sections(config, state, columns);
     let mut command = None;
+    let mut scrolled = None;
     if list.entries.is_empty() {
         let (_, area) = ui.allocate_space(vec2(width, list_height));
         nothing_found(ui.painter(), p, area, state);
@@ -615,7 +678,7 @@ fn catalog(
             });
         }
         let card_width = (inner - (columns - 1) as f32 * CARD_GAP) / columns as f32;
-        scroll.show_viewport(ui, |ui, viewport| {
+        let output = scroll.show_viewport(ui, |ui, viewport| {
             let origin = ui.cursor().min + vec2(GUTTER, 0.0);
             ui.allocate_space(vec2(ui.available_width(), list.height));
             // Only the rows in view are laid out and painted.
@@ -643,7 +706,9 @@ fn catalog(
                 }
             }
         });
+        scrolled = Some((output.id, output.state));
     }
+    let height = list.height;
     drop(list);
     // Revealing waits for the first laid-out frame; the sizing pass has no scroll.
     if !ui.is_sizing_pass() {
@@ -655,6 +720,20 @@ fn catalog(
         Some(Command::Use(theme)) => {
             config.theme = theme;
             state.deleting = None;
+        }
+        Some(Command::Star(theme, pinned)) => {
+            if let Some(index) = config.favorite_themes.iter().position(|t| t == &theme) {
+                config.favorite_themes.remove(index);
+            } else {
+                config.favorite_themes.push(theme);
+            }
+            // A card starred where it stands stays under the pointer while
+            // the favorites above it grow or shrink.
+            if !pinned && let Some((id, mut scroll)) = scrolled {
+                let grown = sections(config, state, columns).height - height;
+                scroll.offset.y = (scroll.offset.y + grown).max(0.0);
+                scroll.store(ui.ctx(), id);
+            }
         }
         Some(Command::Edit(id)) => {
             state.draft = config
@@ -684,8 +763,8 @@ fn catalog(
 fn toolbar(ui: &mut Ui, p: Palette, state: &mut State) -> (bool, f32) {
     let width = ui.available_width();
     let inner = width - GUTTER * 2.0;
-    let stacked = inner < 430.0;
-    let filter_width = if stacked { inner } else { 236.0 };
+    let stacked = inner < 550.0;
+    let filter_width = if stacked { inner } else { 364.0 };
     let height = if stacked { 68.0 } else { 30.0 };
     let (_, bar) = ui.allocate_space(vec2(width, height));
     let bar = bar.shrink2(vec2(GUTTER, 0.0));
@@ -739,6 +818,7 @@ fn toolbar(ui: &mut Ui, p: Palette, state: &mut State) -> (bool, f32) {
                     (Filter::Dark, "Dark"),
                     (Filter::Light, "Light"),
                     (Filter::Custom, "Custom"),
+                    (Filter::Favorites, "Favorites"),
                 ],
                 filter_width,
             )
@@ -747,16 +827,17 @@ fn toolbar(ui: &mut Ui, p: Palette, state: &mut State) -> (bool, f32) {
     (field.changed() || filtered, height)
 }
 
-/// The themes that match the search and filter, grouped by where they come from.
+/// The themes that match the search and filter, grouped by where they come
+/// from. Favorites lead while browsing; a search lists each theme once.
 fn sections<'a>(config: &'a Config, state: &State, columns: usize) -> Sections<'a> {
     let query = state.query.trim().to_lowercase();
-    let shown = |name: &str, dark: bool, custom: bool| {
+    let shown = |entry: &Entry| {
         (match state.filter {
-            Filter::All => true,
-            Filter::Dark => dark,
-            Filter::Light => !dark,
-            Filter::Custom => custom,
-        }) && (query.is_empty() || name.to_lowercase().contains(&query))
+            Filter::All | Filter::Favorites => true,
+            Filter::Dark => entry.is_dark(),
+            Filter::Light => !entry.is_dark(),
+            Filter::Custom => matches!(entry.source, Source::Custom(_)),
+        }) && (query.is_empty() || entry.name.to_lowercase().contains(&query))
     };
     let mut list = Sections {
         entries: Vec::new(),
@@ -764,36 +845,34 @@ fn sections<'a>(config: &'a Config, state: &State, columns: usize) -> Sections<'
         height: 0.0,
         columns,
     };
+    let favorites = state.filter == Filter::Favorites;
+    if favorites || query.is_empty() {
+        list.push(
+            "Favorites",
+            config
+                .favorite_themes
+                .iter()
+                .filter_map(|theme| Entry::favorite(config, theme))
+                .filter(shown),
+        );
+    }
+    if favorites {
+        return list;
+    }
     list.push(
         "Your themes",
-        config
-            .custom_themes
-            .iter()
-            .filter(|t| shown(&t.name, t.colors.is_dark(), true))
-            .map(|t| Entry {
-                name: &t.name,
-                source: Source::Custom(t),
-            }),
+        config.custom_themes.iter().map(Entry::custom).filter(shown),
     );
     list.push(
         "Neptune",
         Theme::BUILTINS
             .into_iter()
-            .filter(|(theme, name)| shown(name, theme != &Theme::Light, false))
-            .map(|(theme, name)| Entry {
-                name,
-                source: Source::Neptune(theme),
-            }),
+            .map(Entry::neptune)
+            .filter(shown),
     );
     list.push(
         "iTerm2 collection",
-        BUNDLED
-            .iter()
-            .filter(|t| shown(t.name, t.colors.is_dark(), false))
-            .map(|t| Entry {
-                name: t.name,
-                source: Source::Bundled(t),
-            }),
+        BUNDLED.iter().map(Entry::bundled).filter(shown),
     );
     list
 }
@@ -816,18 +895,22 @@ fn section_heading(painter: &Painter, p: Palette, origin: Pos2, title: &str, cou
 
 /// What the list says when nothing matches.
 fn nothing_found(painter: &Painter, p: Palette, area: Rect, state: &State) {
-    let (icon, title, hint) = if state.filter == Filter::Custom && state.query.trim().is_empty() {
-        (
+    let (icon, title, hint) = match state.filter {
+        Filter::Custom if state.query.trim().is_empty() => (
             Icon::Pencil,
             "No custom themes yet",
             "New theme starts one from the colors in use.",
-        )
-    } else {
-        (
+        ),
+        Filter::Favorites if state.query.trim().is_empty() => (
+            Icon::Star,
+            "No favorites yet",
+            "Star a theme to keep it here.",
+        ),
+        _ => (
             Icon::Search,
             "No themes found",
             "Try another name or filter.",
-        )
+        ),
     };
     let center = area.center();
     icons::paint(
@@ -927,8 +1010,9 @@ fn footer(ui: &mut Ui, p: Palette, config: &mut Config, state: &mut State) -> bo
     false
 }
 
-/// A theme of the catalog: its preview, its name and, on hover or focus, a
-/// control for the same menu as a secondary click.
+/// A theme of the catalog: its preview, its name and, for a favorite, its
+/// star in the accent. On hover or focus it shows a control for the same menu
+/// as a secondary click, and the star of a theme that is not yet a favorite.
 fn card(
     ui: &mut Ui,
     p: Palette,
@@ -961,6 +1045,18 @@ fn card(
             format!("Actions for {} theme", entry.name),
         )
     });
+    let favorite = entry.is_favorite(config);
+    let line = tile.bottom() + 17.0;
+    let star_rect = Rect::from_center_size(Pos2::new(rect.right() - 10.0, line), Vec2::splat(22.0));
+    let star = ui.interact(star_rect, id.with("star"), Sense::click());
+    star.widget_info(|| {
+        WidgetInfo::selected(
+            WidgetType::Checkbox,
+            true,
+            favorite,
+            format!("Favorite {} theme", entry.name),
+        )
+    });
     let menu_open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&more))
         || response.context_menu_opened();
     let hovered = ui.rect_contains_pointer(rect) || menu_open;
@@ -983,7 +1079,7 @@ fn card(
         if response.has_focus() {
             focus_ring(painter, tile.expand(3.0), TILE_RADIUS + 3, p);
         }
-        let line = tile.bottom() + 17.0;
+        // The star keeps its room, so a name reads the same hovered or not.
         let name = elided(
             painter,
             entry.name,
@@ -993,12 +1089,32 @@ fn card(
             } else {
                 p.secondary
             },
-            rect.width() - 4.0 - if selected { 24.0 } else { 0.0 },
+            rect.width() - 28.0 - if selected { 22.0 } else { 0.0 },
         );
         truncated = name.elided;
         galley_at(painter, Pos2::new(rect.left() + 2.0, line), name);
+        if favorite || hovered || star.has_focus() {
+            if star.hovered() {
+                painter.rect_filled(star_rect.shrink(1.0), 6, p.hover);
+            }
+            if star.has_focus() {
+                focus_ring(painter, star_rect.shrink(1.0), 6, p);
+            }
+            icons::paint(
+                painter,
+                Rect::from_center_size(star_rect.center(), Vec2::splat(14.0)),
+                Icon::Star,
+                if favorite {
+                    p.accent
+                } else if star.hovered() || star.has_focus() {
+                    p.fg
+                } else {
+                    p.secondary
+                },
+            );
+        }
         if selected {
-            let badge = Pos2::new(rect.right() - 10.0, line);
+            let badge = Pos2::new(rect.right() - 34.0, line);
             painter.circle_filled(badge, 8.0, p.accent);
             icons::paint(
                 painter,
@@ -1031,10 +1147,17 @@ fn card(
     }
     egui::Popup::menu(&more).show(|ui| card_menu(ui, p, entry, config, command));
     response.context_menu(|ui| card_menu(ui, p, entry, config, command));
-    if response.gained_focus() || more.gained_focus() {
+    if response.gained_focus() || more.gained_focus() || star.gained_focus() {
         response.scroll_to_me(None);
     }
     more.on_hover_cursor(CursorIcon::PointingHand);
+    if star
+        .on_hover_cursor(CursorIcon::PointingHand)
+        .on_hover_text(favorite_label(favorite))
+        .clicked()
+    {
+        *command = Some(Command::Star(entry.theme(), entry.pinned));
+    }
     let response = response.on_hover_cursor(CursorIcon::PointingHand);
     let response = if truncated {
         response.on_hover_text(entry.name)
@@ -1043,6 +1166,14 @@ fn card(
     };
     if response.clicked() {
         *command = Some(Command::Use(entry.theme()));
+    }
+}
+
+fn favorite_label(favorite: bool) -> &'static str {
+    if favorite {
+        "Remove from favorites"
+    } else {
+        "Add to favorites"
     }
 }
 
@@ -1061,6 +1192,11 @@ fn card_menu(
     };
     if !entry.is(&config.theme) && menu_item(ui, p, Icon::Check, "Use theme", "", false) {
         *command = Some(Command::Use(entry.theme()));
+        ui.close();
+    }
+    let favorite = entry.is_favorite(config);
+    if menu_item(ui, p, Icon::Star, favorite_label(favorite), "", false) {
+        *command = Some(Command::Star(entry.theme(), entry.pinned));
         ui.close();
     }
     if let Some(custom) = custom
@@ -1148,11 +1284,7 @@ mod tests {
     }
 
     fn bundled_card(name: &'static str) -> Id {
-        Entry {
-            name,
-            source: Source::Bundled(crate::terminal_theme::bundled(name).unwrap()),
-        }
-        .id()
+        Entry::bundled(bundled(name).unwrap()).id()
     }
 
     #[test]
@@ -1162,11 +1294,7 @@ mod tests {
         let mut state = State::default();
         state.browse();
         frame(&ctx, vec![], &mut config, &mut state);
-        let dusk = Entry {
-            name: "Dusk",
-            source: Source::Neptune(Theme::Dusk),
-        }
-        .id();
+        let dusk = Entry::neptune((Theme::Dusk, "Dusk")).id();
         let target = ctx.read_response(dusk).expect("Dusk is in view").rect;
         assert!(
             ctx.read_response(bundled_card("Zenburn")).is_none(),
@@ -1188,6 +1316,93 @@ mod tests {
         assert!(ctx.read_response(dusk).is_none());
         click(&ctx, target.center(), &mut config, &mut state);
         assert_eq!(config.theme, Theme::Palette("iterm:Zenburn".into()));
+    }
+
+    #[test]
+    fn a_star_keeps_a_theme_without_applying_it_and_the_card_stays_put() {
+        let ctx = context();
+        let mut config = Config::default();
+        let mut state = State::default();
+        state.browse();
+        frame(&ctx, vec![], &mut config, &mut state);
+        let dusk = Entry::neptune((Theme::Dusk, "Dusk")).id();
+        let pinned = Entry::favorite(&config, &Theme::Dusk).unwrap().id();
+        let card = ctx.read_response(dusk).unwrap().rect;
+        let star = ctx.read_response(dusk.with("star")).unwrap().rect;
+        click(&ctx, star.center(), &mut config, &mut state);
+        assert_eq!(config.favorite_themes, [Theme::Dusk]);
+        assert_eq!(config.theme, Theme::Graphite, "a star does not choose");
+
+        // The favorites now lead the catalog, above a card that has not moved.
+        frame(&ctx, vec![], &mut config, &mut state);
+        assert_eq!(ctx.read_response(dusk).unwrap().rect, card);
+        assert!(ctx.read_response(pinned).is_none(), "scrolled out above");
+
+        // The filter lists them alone; the star there lets one go.
+        state.filter = Filter::Favorites;
+        frame(&ctx, vec![], &mut config, &mut state);
+        frame(&ctx, vec![], &mut config, &mut state);
+        assert!(ctx.read_response(dusk).is_none());
+        let star = ctx.read_response(pinned.with("star")).unwrap().rect;
+        click(&ctx, star.center(), &mut config, &mut state);
+        assert!(config.favorite_themes.is_empty());
+        frame(&ctx, vec![], &mut config, &mut state);
+        frame(&ctx, vec![], &mut config, &mut state);
+        assert!(ctx.read_response(pinned).is_none());
+    }
+
+    #[test]
+    fn favorites_lead_while_browsing_and_a_search_lists_each_theme_once() {
+        let mut config = Config {
+            favorite_themes: vec![
+                Theme::Palette("iterm:Zenburn".into()),
+                Theme::Light,
+                // Left behind by a theme that no longer exists.
+                Theme::Palette("custom:9".into()),
+            ],
+            ..Config::default()
+        };
+        let mut state = State::default();
+        let names = |config: &Config, state: &State| -> Vec<(String, bool)> {
+            sections(config, state, 3)
+                .entries
+                .iter()
+                .map(|entry| (entry.name.to_owned(), entry.pinned))
+                .collect()
+        };
+        let all = names(&config, &state);
+        assert_eq!(all.len(), 2 + 3 + BUNDLED.len());
+        assert_eq!(
+            all[..3],
+            [
+                ("Zenburn".into(), true),
+                ("Light".into(), true),
+                ("Graphite".into(), false)
+            ]
+        );
+        let list = sections(&config, &state, 3);
+        assert!(matches!(list.rows[0].1, Row::Label("Favorites", 2)));
+        // The theme in use is revealed among the favorites when it is one.
+        assert_eq!(list.row_of(&Theme::Light), Some(LABEL_HEIGHT));
+
+        state.filter = Filter::Light;
+        assert_eq!(
+            names(&config, &state)[..2],
+            [("Light".into(), true), ("Light".into(), false)]
+        );
+        state.filter = Filter::All;
+        state.query = "zenburn".into();
+        assert_eq!(
+            names(&config, &state),
+            [("Zenburn".into(), false), ("Zenburned".into(), false)]
+        );
+
+        state.filter = Filter::Favorites;
+        assert_eq!(names(&config, &state), [("Zenburn".into(), true)]);
+        state.query.clear();
+        assert_eq!(names(&config, &state).len(), 2);
+        config.favorite_themes.clear();
+        assert!(names(&config, &state).is_empty());
     }
 
     #[test]

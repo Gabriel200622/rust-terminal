@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 pub struct Config {
     pub theme: Theme,
     pub custom_themes: Vec<crate::terminal_theme::CustomTheme>,
+    /// Themes starred in the catalog, in the order they were starred.
+    pub favorite_themes: Vec<Theme>,
     pub accent: Accent,
     /// Scale of terminal content and window chrome, independent of font size.
     pub window_zoom: f32,
@@ -26,7 +28,7 @@ pub struct Config {
     pub release_channel: crate::runtime::updates::ReleaseChannel,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub enum Theme {
     #[default]
@@ -114,6 +116,7 @@ impl Default for Config {
         Self {
             theme: Theme::Graphite,
             custom_themes: Vec::new(),
+            favorite_themes: Vec::new(),
             accent: Accent::Blue,
             window_zoom: 1.0,
             font_size: 14.0,
@@ -157,7 +160,7 @@ impl Config {
         Ok(config)
     }
     pub fn validate(&mut self) -> Result<()> {
-        use crate::terminal_theme::{MAX_CUSTOM_THEMES, bundled};
+        use crate::terminal_theme::MAX_CUSTOM_THEMES;
         anyhow::ensure!(
             self.custom_themes.len() <= MAX_CUSTOM_THEMES,
             "At most 128 custom themes are allowed"
@@ -172,13 +175,17 @@ impl Config {
                 "Custom theme names must be unique"
             );
         }
-        if let Theme::Palette(id) = &self.theme {
-            anyhow::ensure!(
-                id.strip_prefix("iterm:").and_then(bundled).is_some()
-                    || self.custom_themes.iter().any(|theme| &theme.id == id),
-                "Unknown theme: {id}"
-            );
-        }
+        anyhow::ensure!(
+            self.has_theme(&self.theme),
+            "Unknown theme: {}",
+            self.theme.id()
+        );
+        // Favorites follow the themes that exist: one whose theme is gone is
+        // dropped rather than refused, and none is listed twice.
+        let mut seen = std::collections::HashSet::new();
+        let mut favorites = std::mem::take(&mut self.favorite_themes);
+        favorites.retain(|theme| self.has_theme(theme) && seen.insert(theme.clone()));
+        self.favorite_themes = favorites;
         anyhow::ensure!(
             self.window_zoom.is_finite() && Self::WINDOW_ZOOM_RANGE.contains(&self.window_zoom),
             "window_zoom must be between 0.2 and 5"
@@ -204,6 +211,17 @@ impl Config {
         }
         Ok(())
     }
+    /// Whether `theme` is built in, bundled or a saved custom theme.
+    fn has_theme(&self, theme: &Theme) -> bool {
+        let Theme::Palette(id) = theme else {
+            return true;
+        };
+        id.strip_prefix("iterm:")
+            .and_then(crate::terminal_theme::bundled)
+            .is_some()
+            || self.custom_themes.iter().any(|custom| &custom.id == id)
+    }
+
     pub fn theme_colors(&self) -> Option<crate::terminal_theme::ThemeColors> {
         let Theme::Palette(id) = &self.theme else {
             return None;
@@ -373,8 +391,51 @@ mod tests {
                 colors: crate::terminal_theme::bundled("Dracula").unwrap().colors,
             });
         legacy.theme = Theme::Palette("custom:1".into());
+        legacy.favorite_themes = vec![
+            Theme::Palette("iterm:Dracula".into()),
+            Theme::Light,
+            Theme::Palette("custom:1".into()),
+        ];
         legacy.save(&path).unwrap();
         assert_eq!(Config::load(&path).unwrap(), legacy);
+    }
+
+    #[test]
+    fn favorites_follow_the_themes_that_exist() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("config.toml");
+        // A favorite outlives neither its theme nor a second mention, and
+        // never keeps the rest of the settings from loading.
+        std::fs::write(
+            &path,
+            r#"favorite_themes = ["dusk", "iterm:missing", "custom:7", "iterm:Dracula", "dusk"]
+font_size = 15.0
+"#,
+        )
+        .unwrap();
+        let mut config = Config::load(&path).unwrap();
+        assert_eq!(config.font_size, 15.0);
+        assert_eq!(
+            config.favorite_themes,
+            [Theme::Dusk, Theme::Palette("iterm:Dracula".into())]
+        );
+        // Custom IDs are reused, so a deleted theme takes its star with it.
+        let custom = crate::terminal_theme::CustomTheme {
+            id: "custom:7".into(),
+            name: "My colors".into(),
+            colors: crate::terminal_theme::bundled("Dracula").unwrap().colors,
+        };
+        config
+            .favorite_themes
+            .push(Theme::Palette(custom.id.clone()));
+        config.custom_themes.push(custom);
+        config.validate().unwrap();
+        assert_eq!(config.favorite_themes.len(), 3);
+        config.custom_themes.clear();
+        config.validate().unwrap();
+        assert_eq!(config.favorite_themes.len(), 2);
+        // Only a theme ID can be a favorite.
+        assert!(toml::from_str::<Config>("favorite_themes = [\"dracula\"]").is_err());
     }
 
     #[test]
