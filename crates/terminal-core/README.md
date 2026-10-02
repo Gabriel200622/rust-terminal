@@ -127,3 +127,26 @@ the repaint callback only increments an atomic counter. Reported callbacks are
 requests rather than rendered frames. GUI scheduling, shaping, GPU work, and
 screen/input latency are outside this benchmark. Non-Unix hosts report that the
 fixture is unsupported.
+
+
+### Close-time process checks
+
+`TerminalSession::check_process_activity` returns a bounded, one-result receiver.
+The existing engine worker services one coalesced pending request; it performs
+no periodic process scan, reads no command lines/environment, and forces a wake
+when the result is ready. A superseded request disconnects. Callers must bound
+their wait and treat timeout/disconnection as `Unknown`, never as idle.
+
+Linux and macOS compare the PTY foreground process group with the session
+process group, then inspect children and the executable. Linux checks each
+thread's `/proc/.../children` with thread/time bounds; macOS uses libproc.
+Windows uses a bounded Tool Help process snapshot. A recognized shell with no
+children is `Idle`; a different executable (including `exec` replacements),
+foreground job or child is `Running`. Unavailable metadata is `Unknown`.
+Observations are advisory: jobs can start/exit between inspection and close,
+shell builtins have no separate process, and reparented/detached jobs are outside
+the child tree. The desktop conservatively treats SSH as active.
+
+Native contracts: `cargo test -p terminal-core --test session process_activity --locked`
+on Linux/macOS; `cargo test -p terminal-core --test windows_conpty process_activity --locked`
+on Windows. Linux execution alone does not validate macOS or ConPTY behavior.

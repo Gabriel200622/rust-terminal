@@ -95,6 +95,17 @@ pub enum SessionStatus {
     Error(String),
 }
 
+/// An on-demand OS observation, independent of terminal output and titles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessActivity {
+    /// Only a recognized shell remains, with no foreground or child job.
+    Idle,
+    /// A foreground job, child process, or non-shell program is running.
+    Running,
+    /// The operating system could not establish whether the session is idle.
+    Unknown,
+}
+
 #[derive(Debug, Clone)]
 pub struct SessionMetadata {
     pub title: String,
@@ -142,6 +153,21 @@ pub struct TerminalSession {
 }
 
 impl TerminalSession {
+    /// Ask the session worker to inspect processes without blocking a frame.
+    /// Only one pending request is retained; a newer request disconnects the
+    /// previous receiver. Callers must treat disconnection/timeouts as unknown.
+    pub fn check_process_activity(&self) -> Receiver<ProcessActivity> {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        if matches!(self.metadata().status, SessionStatus::Exited { .. }) {
+            let _ = sender.try_send(ProcessActivity::Idle);
+        } else if self.shared.stopped.load(Ordering::Acquire) {
+            let _ = sender.try_send(ProcessActivity::Unknown);
+        } else {
+            *self.shared.process_check.lock() = Some(sender);
+        }
+        receiver
+    }
+
     pub fn spawn(
         options: SessionOptions,
         repaint: Repaint,

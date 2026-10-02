@@ -18,6 +18,8 @@ pub struct Config {
     pub sidebar_width: f32,
     pub restore_workspaces: bool,
     pub confirm_close: bool,
+    /// Independent protection for sessions with active or unknown jobs.
+    pub warn_running_processes: bool,
     /// Update checks use only public release metadata, never terminal contents.
     pub check_updates: bool,
     pub release_channel: crate::runtime::updates::ReleaseChannel,
@@ -86,6 +88,7 @@ impl Default for Config {
             sidebar_width: 216.0,
             restore_workspaces: true,
             confirm_close: true,
+            warn_running_processes: true,
             check_updates: true,
             release_channel: Default::default(),
         }
@@ -521,6 +524,27 @@ mod tests {
         assert!(c.validate().is_err());
         assert!(toml::from_str::<Config>("font_szie = 14").is_err());
     }
+    #[test]
+    fn close_preferences_migrate_and_round_trip_independently() {
+        let old: Config = toml::from_str("confirm_close = false").unwrap();
+        assert!(!old.confirm_close);
+        assert!(old.warn_running_processes);
+        for confirm in [false, true] {
+            for warn in [false, true] {
+                let config = Config {
+                    confirm_close: confirm,
+                    warn_running_processes: warn,
+                    ..Config::default()
+                };
+                let restored: Config = toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
+                assert_eq!(
+                    (restored.confirm_close, restored.warn_running_processes),
+                    (confirm, warn)
+                );
+            }
+        }
+    }
+
     #[test]
     fn config_round_trip() {
         let c = Config::default();

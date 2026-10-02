@@ -293,6 +293,23 @@ pub(super) fn engine_loop(
         if exit.is_some() && eof {
             break;
         }
+        let check = shared.process_check.lock().take();
+        if let Some(reply) = check {
+            // This worker owns/reaps the child. Never inspect a PID after it
+            // has been reaped and could have been reused by the OS.
+            let activity = if exit.is_some() {
+                ProcessActivity::Unknown
+            } else {
+                let pid = shared.metadata.lock().process_id;
+                let master = master.lock();
+                match (pid, master.as_ref()) {
+                    (Some(pid), Some(master)) => platform::process_activity(pid, &**master),
+                    _ => ProcessActivity::Unknown,
+                }
+            };
+            let _ = reply.try_send(activity);
+            shared.force_repaint();
+        }
         if last_cwd.elapsed() >= Duration::from_secs(1) {
             let pid = shared.metadata.lock().process_id;
             if let Some(pid) = pid
@@ -342,6 +359,9 @@ pub(super) fn engine_loop(
         };
     }
     shared.stopped.store(true, Ordering::Release);
+    if let Some(reply) = shared.process_check.lock().take() {
+        let _ = reply.try_send(ProcessActivity::Idle);
+    }
     let mut shutdown_started = shared.shutdown_started.lock();
     if shutdown_started.is_none() {
         *shutdown_started = Some(Instant::now());

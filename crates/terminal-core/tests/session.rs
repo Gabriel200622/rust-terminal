@@ -468,3 +468,64 @@ RPROMPT=
     session.shutdown();
     wait_for(|| session.metrics().active_workers == 0);
 }
+
+fn activity(session: &TerminalSession) -> terminal_core::ProcessActivity {
+    session
+        .check_process_activity()
+        .recv_timeout(Duration::from_secs(3))
+        .unwrap()
+}
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn process_activity_distinguishes_idle_foreground_background_and_stopped_jobs() {
+    use terminal_core::ProcessActivity::{Idle, Running};
+    let session = TerminalSession::spawn(
+        SessionOptions {
+            shell: Some("/bin/sh".into()),
+            env: vec![("PS1".into(), "ACTIVITY_READY> ".into())],
+            ..SessionOptions::default()
+        },
+        Arc::new(|| {}),
+    )
+    .unwrap();
+    wait_for(|| screen(&session).contains("ACTIVITY_READY>"));
+    assert_eq!(activity(&session), Idle);
+    session.write(b"sleep 30\r").unwrap();
+    wait_for(|| activity(&session) == Running);
+    session.write(b"\x03").unwrap();
+    wait_for(|| activity(&session) == Idle);
+    // Wait for the marker rather than echoed input; the child is in place.
+    session
+        .write(b"sleep 30 & job=$!; printf 'BACKGROUND_%s\\n' ready\r")
+        .unwrap();
+    wait_for(|| screen(&session).contains("BACKGROUND_ready"));
+    assert_eq!(activity(&session), Running);
+    session
+        .write(b"kill -STOP $job; printf 'STOPPED_%s\\n' ready\r")
+        .unwrap();
+    wait_for(|| screen(&session).contains("STOPPED_ready"));
+    assert_eq!(activity(&session), Running);
+    session
+        .write(b"kill -KILL $job; wait $job; printf 'FINISHED_%s\\n' ready\r")
+        .unwrap();
+    wait_for(|| screen(&session).contains("FINISHED_ready"));
+    wait_for(|| activity(&session) == Idle);
+    session.write(b"exit\r").unwrap();
+    wait_for(|| matches!(session.metadata().status, SessionStatus::Exited { .. }));
+    assert_eq!(activity(&session), Idle);
+    wait_for(|| session.metrics().active_workers == 0);
+}
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn process_activity_detects_exec_replacing_the_shell_and_jobs_without_job_control() {
+    use terminal_core::ProcessActivity::Running;
+    for script in ["exec sleep 30", "sleep 30 & wait"] {
+        let session = shell(script);
+        wait_for(|| activity(&session) == Running);
+        session.write(b"\x03").unwrap();
+        session.shutdown();
+        wait_for(|| session.metrics().active_workers == 0);
+    }
+}

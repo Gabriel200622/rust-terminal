@@ -12,7 +12,7 @@ mod view;
 pub use error::{SessionError, SessionErrorKind};
 pub use search::{SearchBudget, SearchProgress, SearchQuery, SearchTask};
 pub use session::{
-    MAX_GRID_CELLS, Repaint, SessionMetadata, SessionMetrics, SessionOptions, SessionStatus,
-    ShutdownCompletion, TRANSPORT_BUFFER_BUDGET, TerminalSession,
+    MAX_GRID_CELLS, ProcessActivity, Repaint, SessionMetadata, SessionMetrics, SessionOptions,
+    SessionStatus, ShutdownCompletion, TRANSPORT_BUFFER_BUDGET, TerminalSession,
 };
 pub use view::*;

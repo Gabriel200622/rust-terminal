@@ -2,7 +2,7 @@
 use super::helpers::{
     ButtonKind, SheetPlacement, button, padded, place, sheet, sheet_header, text_field, toast,
 };
-use super::{Action, Close, OverlayState, UiState};
+use super::{Action, Close, CloseStatus, OverlayState, UiState};
 use crate::theme::{self, Palette};
 use eframe::egui::{self, Align, Id, Layout, Ui, vec2};
 
@@ -229,8 +229,48 @@ pub fn close_copy(close: Close) -> (&'static str, &'static str, &'static str) {
     }
 }
 
-fn confirm_close(ctx: &egui::Context, p: Palette, close: Close, actions: &mut Vec<Action>) {
-    let (title, message, verb) = close_copy(close);
+fn confirm_close(
+    ctx: &egui::Context,
+    p: Palette,
+    close: Close,
+    status: CloseStatus,
+    actions: &mut Vec<Action>,
+) {
+    let (title, consequence, verb) = close_copy(close);
+    let message = match status {
+        CloseStatus::General => consequence.to_owned(),
+        CloseStatus::Checking => "Checking for running processes…".to_owned(),
+        CloseStatus::Unknown => {
+            format!("Neptune could not check whether processes are running. {consequence}")
+        }
+        CloseStatus::Running { terminals, unknown } => {
+            let detected = if matches!(close, Close::Pane(_)) {
+                "A process is still running in this terminal.".to_owned()
+            } else if terminals == 1 {
+                "A process is still running in one terminal.".to_owned()
+            } else {
+                format!("Processes are still running in {terminals} terminals.")
+            };
+            let consequence = match close {
+                Close::Pane(_) => "Closing this terminal will stop the process.",
+                Close::Workspace(_) => {
+                    "Closing this workspace will close its terminals and stop their processes."
+                }
+                Close::Connection(_) => {
+                    "Disconnecting will stop these connections and restart the terminals as local shells."
+                }
+                Close::App => {
+                    "Quitting will stop running processes. Workspaces reopen with fresh shells."
+                }
+            };
+            let uncertainty = if unknown > 0 {
+                " Other terminals could not be checked."
+            } else {
+                ""
+            };
+            format!("{detected}{uncertainty} {consequence}")
+        }
+    };
     let mut confirm = false;
     let mut cancel = false;
     let output = sheet(ctx, p, title, 360.0, SheetPlacement::Center, |ui| {
@@ -258,7 +298,11 @@ fn confirm_close(ctx: &egui::Context, p: Palette, close: Close, actions: &mut Ve
         });
         ui.add_space(6.0);
         footer(ui, "confirm-close-actions", |ui| {
-            confirm = button(ui, p, verb, ButtonKind::Destructive).clicked();
+            confirm = ui
+                .add_enabled_ui(status != CloseStatus::Checking, |ui| {
+                    button(ui, p, verb, ButtonKind::Destructive).clicked()
+                })
+                .inner;
             cancel = button(ui, p, "Cancel", ButtonKind::Secondary).clicked();
         });
     });
@@ -276,7 +320,9 @@ pub fn show(ctx: &egui::Context, p: Palette, state: &mut UiState, actions: &mut 
         | OverlayState::NewGroup) => rename(ctx, p, state, target, actions),
         OverlayState::Ssh(workspace) => ssh(ctx, p, state, workspace, None, actions),
         OverlayState::SshInGroup(group) => ssh(ctx, p, state, None, Some(group), actions),
-        OverlayState::ConfirmClose(close) => confirm_close(ctx, p, close, actions),
+        OverlayState::ConfirmClose(close) => {
+            confirm_close(ctx, p, close, state.close_status, actions)
+        }
         _ => {}
     }
     if let Some(error) = &state.error
