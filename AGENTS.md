@@ -120,7 +120,10 @@ these repository constraints also apply when following a skill.
 ## Desktop releases
 
 For version/changelog preparation, tags, packaging/signing, update channels,
-website downloads or release failures, read [the release guide](docs/releases.md).
+website downloads, acceptance failures or stable promotion, read
+[the release guide](docs/releases.md#release-candidate-policy).
+Every stable release, including hotfixes, requires accepted `X.Y.Z-rc.N`
+installers first. Acceptance fixes increment `N`, keeping `X.Y.Z` fixed.
 Releases are deliberate SemVer tags and end as private drafts; `main` merges
 never release. **AI agents must not create/push release tags or create/publish
 Neptune releases unless explicitly asked to release that version.**
