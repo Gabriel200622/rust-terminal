@@ -1,3 +1,5 @@
+import Image from "next/image";
+
 // Neptune's own icon set, ported from `src/icons.rs`: a 24-point grid, a
 // 1.5-point stroke that does not scale with the glyph, and rounded ends.
 
@@ -213,20 +215,18 @@ export function Icon({
   );
 }
 
-/** The application icon, `assets/neptune.svg`. */
+/** The supplied logo, exported from `assets/branding/neptune-logo.png`. */
 export function NeptuneMark({ size = 28 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 128 128" aria-hidden="true">
-      <rect width="128" height="128" rx="30" fill="#171719" />
-      <path
-        d="m35 37 25 27-25 27m38 0h22"
-        fill="none"
-        stroke="#b9acf2"
-        strokeWidth="9"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+    <Image
+      src="/neptune-logo.png"
+      width={size}
+      height={size}
+      alt=""
+      aria-hidden="true"
+      className="shrink-0"
+      unoptimized
+    />
   );
 }
 
