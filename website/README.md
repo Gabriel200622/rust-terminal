@@ -26,10 +26,13 @@ so it follows the app's own sources:
 
 When the app's look or behaviour changes, update the matching file here.
 
-Branding comes from [`assets/branding/neptune-logo.png`](../assets/branding/neptune-logo.png).
+Website branding uses the supplied `Icon.png`, stored as
+[`assets/branding/neptune-icon.png`](../assets/branding/neptune-icon.png).
 Run `python3 scripts/export-logo.py` from the repository root to refresh the
 navigation/footer logo, favicon and touch icon. The same logo is used in sharing
-metadata. Keep the window demo free of logos, as in the desktop app.
+metadata. Native app icons use the separate platform logos documented in
+[`assets/README.md`](../assets/README.md). Keep the window demo free of logos, as
+in the desktop app.
 
 The window answers a few typed commands through a stand-in shell
 (`src/components/neptune/shell.ts`). It demonstrates the interface; it is not
