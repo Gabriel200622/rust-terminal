@@ -645,6 +645,7 @@ impl eframe::App for App {
             // is leaving.
             self.ui.sidebar_drag = None;
             self.ui.workspace_drag = Default::default();
+            self.ui.group_drag = Default::default();
         }
         let sidebar_width = self
             .ui

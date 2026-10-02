@@ -1022,7 +1022,7 @@ mod group_tests {
     use neptune_model::{Command, Controller};
 
     #[test]
-    fn folders_membership_and_collapsed_state_survive_disk_restoration() {
+    fn folder_order_membership_and_collapsed_state_survive_disk_restoration() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("workspaces.json");
         let mut controller = Controller::new(Model::default());
@@ -1050,6 +1050,9 @@ mod group_tests {
             .dispatch(Command::AddWorkspaceGroup {
                 name: "Empty".into(),
             })
+            .unwrap();
+        controller
+            .dispatch(Command::MoveWorkspaceGroup { group, index: 1 })
             .unwrap();
         let snapshot = StateSnapshot::from_model(controller.model());
         std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();

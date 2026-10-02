@@ -45,6 +45,7 @@ const DEFAULT_SIDEBAR_WIDTH: f32 = 216.0;
 const ROW_HEIGHT: f32 = 46.0;
 /// The distance between the tops of neighbouring workspace rows.
 const ROW_STEP: f32 = ROW_HEIGHT + 2.0;
+const GROUP_HEIGHT: f32 = 34.0;
 /// Time constant of a displaced row easing into place; it lands within 160 ms.
 const ROW_SETTLE: f32 = 0.035;
 /// Holding a dragged row this close to the list's edge scrolls the list.
@@ -61,6 +62,32 @@ pub struct WorkspaceDrag {
     grip: Option<f32>,
     /// Row tops relative to the list while a row is lifted; empty at rest.
     tops: Vec<(WorkspaceId, f32)>,
+}
+
+/// A folder moves with its visible children, so its height can differ from
+/// its neighbours. Keep measured geometry under stable folder identities.
+#[derive(Default)]
+pub struct GroupDrag {
+    lifted: Option<WorkspaceGroupId>,
+    grip: Option<f32>,
+    positions: Vec<(WorkspaceGroupId, f32, f32)>,
+}
+
+fn group_drop_index(top: f32, heights: &[f32], origin: usize) -> usize {
+    let mut slot = 0.0;
+    let mut target = 0;
+    for (_, height) in heights
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| *index != origin)
+    {
+        if top < slot + height * 0.5 {
+            break;
+        }
+        slot += height;
+        target += 1;
+    }
+    target
 }
 
 /// The position a row would take if dropped with its top at `top`.
@@ -1035,9 +1062,10 @@ fn group_row(
     view: &ChromeView,
     group: &WorkspaceGroup,
     openness: f32,
+    dragging: bool,
     actions: &mut Vec<Action>,
-) {
-    let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
+) -> egui::Response {
+    let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), GROUP_HEIGHT), Sense::hover());
     let plus = Rect::from_center_size(
         Pos2::new(row.right() - 17.0, row.center().y),
         Vec2::splat(28.0),
@@ -1045,14 +1073,14 @@ fn group_row(
     let response = ui.interact(
         row,
         ui.id().with(("workspace-group", group.id())),
-        Sense::click(),
+        Sense::click_and_drag(),
     );
     let create = ui.interact(
         plus,
         ui.id().with(("group-create", group.id())),
         Sense::click(),
     );
-    let hovered = ui.rect_contains_pointer(row) || response.context_menu_opened();
+    let hovered = !dragging && (ui.rect_contains_pointer(row) || response.context_menu_opened());
     let selected = view
         .workspaces
         .iter()
@@ -1106,7 +1134,7 @@ fn group_row(
     let reveal = animate(
         ui.ctx(),
         create.id.with("reveal"),
-        hovered || create.has_focus(),
+        !dragging && (hovered || create.has_focus()),
         0.12,
     );
     if reveal > 0.0 {
@@ -1175,6 +1203,7 @@ fn group_row(
         actions.push(Action::NewInGroup(group.id()));
     }
     response
+        .clone()
         .on_hover_cursor(CursorIcon::PointingHand)
         .context_menu(|ui| {
             creation_menu(ui, p, Some(group.id()), actions);
@@ -1188,6 +1217,328 @@ fn group_row(
                 ui.close();
             }
         });
+    response
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "folder presentation and row drag state stay separate"
+)]
+fn workspace_group(
+    ui: &mut Ui,
+    p: Palette,
+    view: &ChromeView,
+    group: &WorkspaceGroup,
+    viewport: Rect,
+    drag: &mut WorkspaceDrag,
+    dragging: bool,
+    actions: &mut Vec<Action>,
+) -> egui::Response {
+    let mut collapse = egui::collapsing_header::CollapsingState::load_with_default_open(
+        ui.ctx(),
+        ui.id().with("body"),
+        !group.collapsed(),
+    );
+    collapse.set_open(!group.collapsed());
+    let openness = collapse.openness(ui.ctx());
+    let response = group_row(ui, p, view, group, openness, dragging, actions);
+    if group.collapsed()
+        && drag.lifted.is_some_and(|id| {
+            view.workspaces
+                .iter()
+                .any(|w| w.id == id && w.group == Some(group.id()))
+        })
+    {
+        *drag = WorkspaceDrag::default();
+    }
+    collapse.show_body_unindented(ui, |ui| {
+        ui.set_opacity(openness);
+        // A folder's children keep the row's full height and a quiet indent.
+        ui.scope_builder(
+            UiBuilder::new().max_rect(Rect::from_min_max(
+                ui.cursor().min + vec2(16.0, 0.0),
+                ui.max_rect().max,
+            )),
+            |ui| {
+                let rows: Vec<_> = view
+                    .workspaces
+                    .iter()
+                    .filter(|w| w.group == Some(group.id()))
+                    .collect();
+                let mut idle = WorkspaceDrag::default();
+                let child_drag = if drag.lifted.is_none_or(|id| rows.iter().any(|w| w.id == id)) {
+                    &mut *drag
+                } else {
+                    &mut idle
+                };
+                if rows.is_empty() {
+                    let (rect, _) =
+                        ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
+                    ui.painter().text(
+                        rect.left_center() + vec2(9.0, 0.0),
+                        Align2::LEFT_CENTER,
+                        "No workspaces",
+                        theme::regular(11.5),
+                        p.muted,
+                    );
+                } else {
+                    workspace_rows(
+                        ui,
+                        p,
+                        view,
+                        &rows,
+                        viewport.intersect(ui.clip_rect()),
+                        child_drag,
+                        actions,
+                    );
+                }
+            },
+        );
+    });
+    response
+}
+
+fn group_rows(
+    ui: &mut Ui,
+    p: Palette,
+    view: &ChromeView,
+    viewport: Rect,
+    workspace_drag: &mut WorkspaceDrag,
+    drag: &mut GroupDrag,
+    actions: &mut Vec<Action>,
+) {
+    let origin = drag
+        .lifted
+        .and_then(|id| view.groups.iter().position(|g| g.id() == id));
+    if origin.is_none() {
+        drag.lifted = None;
+        drag.grip = None;
+    }
+    let spacing = ui.spacing().item_spacing.y;
+    if origin.is_none() {
+        // At rest, let the existing collapse layout place each folder from its
+        // current height. Only a lifted list needs measured, animated positions.
+        let top = ui.cursor().min.y;
+        let mut positions = Vec::with_capacity(view.groups.len());
+        for group in view.groups {
+            let folder = ui.push_id(("group", group.id()), |ui| {
+                workspace_group(ui, p, view, group, viewport, workspace_drag, false, actions)
+            });
+            positions.push((
+                group.id(),
+                folder.response.rect.top() - top,
+                folder.response.rect.height() + spacing,
+            ));
+            if folder.inner.drag_started_by(PointerButton::Primary)
+                && let Some(press) = ui.input(|input| input.pointer.press_origin())
+            {
+                drag.lifted = Some(group.id());
+                drag.grip = Some(press.y - folder.inner.rect.top());
+                *workspace_drag = WorkspaceDrag::default();
+                ui.ctx().request_repaint();
+            }
+        }
+        drag.positions = positions;
+        return;
+    }
+    let heights: Vec<_> = view
+        .groups
+        .iter()
+        .map(|group| {
+            drag.positions
+                .iter()
+                .find(|(id, _, _)| *id == group.id())
+                .map_or_else(
+                    || {
+                        let count = view
+                            .workspaces
+                            .iter()
+                            .filter(|w| w.group == Some(group.id()))
+                            .count();
+                        GROUP_HEIGHT
+                            + spacing
+                            + if group.collapsed() {
+                                0.0
+                            } else {
+                                spacing + (count as f32 * ROW_STEP - 2.0).max(28.0)
+                            }
+                    },
+                    |(_, _, height)| *height,
+                )
+        })
+        .collect();
+    let list = Rect::from_min_size(
+        ui.cursor().min,
+        vec2(ui.available_width(), heights.iter().sum::<f32>()),
+    );
+    let mut held = origin.zip(drag.grip).map(|(origin, grip)| {
+        let pointer = ui.input(|input| input.pointer.latest_pos());
+        let low = (viewport.top() - list.top()).max(0.0);
+        let high = (list.height() - heights[origin])
+            .min(viewport.bottom() - list.top() - GROUP_HEIGHT)
+            .max(low);
+        let top = pointer
+            .map_or(0.0, |pos| pos.y - grip - list.top())
+            .clamp(low, high);
+        if let Some(pointer) = pointer {
+            let over = if list.top() < viewport.top() - 0.5 {
+                (viewport.top() + SCROLL_REACH - pointer.y).max(0.0)
+            } else {
+                0.0
+            } - if list.bottom() > viewport.bottom() + 0.5 {
+                (pointer.y - viewport.bottom() + SCROLL_REACH).max(0.0)
+            } else {
+                0.0
+            };
+            if over != 0.0 {
+                ui.scroll_with_delta_animation(
+                    vec2(
+                        0.0,
+                        over.clamp(-2.0 * SCROLL_REACH, 2.0 * SCROLL_REACH)
+                            * 12.0
+                            * ui.input(|input| input.stable_dt).min(0.1),
+                    ),
+                    ScrollAnimation::none(),
+                );
+                ui.ctx().request_repaint();
+            }
+        }
+        (origin, top)
+    });
+    if held.is_some() && ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape)) {
+        drag.grip = None;
+        held = None;
+        ui.ctx().stop_dragging();
+    }
+    let target = held.map(|(origin, top)| group_drop_index(top, &heights, origin));
+    let mut order: Vec<_> = (0..view.groups.len()).collect();
+    if let Some((origin, target)) = origin.zip(target) {
+        order.remove(origin);
+        order.insert(target, origin);
+    }
+    let mut rests = vec![0.0; heights.len()];
+    let mut next = 0.0;
+    for index in order {
+        rests[index] = next;
+        next += heights[index];
+    }
+    let decay = (-ui.input(|input| input.stable_dt).min(0.1) / ROW_SETTLE).exp();
+    let mut positions = Vec::new();
+    let mut moving = false;
+    for index in (0..view.groups.len())
+        .filter(|index| Some(*index) != origin)
+        .chain(origin)
+    {
+        let group = &view.groups[index];
+        let rest = rests[index];
+        let top = if let Some((_, top)) = held.filter(|(origin, _)| *origin == index) {
+            top
+        } else if origin.is_some() {
+            let from = drag
+                .positions
+                .iter()
+                .find(|(id, _, _)| *id == group.id())
+                .map_or(rest, |(_, top, _)| *top);
+            let top = rest + (from - rest) * decay;
+            if (top - rest).abs() < 0.5 {
+                rest
+            } else {
+                moving = true;
+                top
+            }
+        } else {
+            rest
+        };
+        let rect = Rect::from_min_size(
+            Pos2::new(
+                list.left(),
+                (list.top() + top).round_to_pixels(ui.pixels_per_point()),
+            ),
+            vec2(list.width(), heights[index] - spacing),
+        );
+        let mut child = ui.new_child(
+            UiBuilder::new()
+                .id_salt(("group", group.id()))
+                .max_rect(rect),
+        );
+        let lift = animate(
+            ui.ctx(),
+            child.id().with("group-lift"),
+            Some(index) == origin,
+            0.12,
+        );
+        if lift > 0.0 {
+            let painter = child
+                .painter()
+                .with_clip_rect(ui.clip_rect().expand2(vec2(8.0, 12.0)));
+            let shadow = p.popup_shadow();
+            painter.add(
+                Shadow {
+                    color: shadow.color.gamma_multiply(lift),
+                    ..shadow
+                }
+                .as_shape(rect, metrics::ROW_RADIUS),
+            );
+            painter.rect_filled(rect, metrics::ROW_RADIUS, p.elevated.gamma_multiply(lift));
+            painter.rect_stroke(
+                rect,
+                metrics::ROW_RADIUS,
+                Stroke::new(1.0, p.border.gamma_multiply(lift)),
+                StrokeKind::Inside,
+            );
+        }
+        let mut idle = WorkspaceDrag::default();
+        let response = workspace_group(
+            &mut child,
+            p,
+            view,
+            group,
+            viewport,
+            if held.is_some() {
+                &mut idle
+            } else {
+                &mut *workspace_drag
+            },
+            held.is_some(),
+            actions,
+        );
+        positions.push((group.id(), top, child.min_rect().height() + spacing));
+        if let Some(target) = target.filter(|_| Some(index) == origin) {
+            if response.drag_stopped() {
+                if index != target {
+                    actions.push(Action::MoveGroup(group.id(), target));
+                }
+                drag.grip = None;
+                ui.ctx().request_repaint();
+            } else if response.dragged() {
+                ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
+            } else {
+                drag.grip = None;
+                ui.ctx().request_repaint();
+            }
+        } else if response.drag_started_by(PointerButton::Primary)
+            && let Some(press) = ui.input(|input| input.pointer.press_origin())
+        {
+            drag.lifted = Some(group.id());
+            drag.grip = Some(press.y - response.rect.top());
+            *workspace_drag = WorkspaceDrag::default();
+            ui.ctx().request_repaint();
+        }
+    }
+    let height = positions.iter().map(|(_, _, height)| height).sum::<f32>();
+    if !positions.is_empty() {
+        ui.allocate_exact_size(
+            vec2(list.width(), (height - spacing).max(0.0)),
+            Sense::hover(),
+        );
+    }
+    if moving {
+        ui.ctx().request_repaint();
+    }
+    if held.is_none() && drag.grip.is_none() && !moving {
+        drag.lifted = None;
+    }
+    drag.positions = positions;
 }
 
 fn workspace_list(
@@ -1196,6 +1547,7 @@ fn workspace_list(
     view: &ChromeView,
     viewport: Rect,
     drag: &mut WorkspaceDrag,
+    groups: &mut GroupDrag,
     actions: &mut Vec<Action>,
 ) {
     let root: Vec<_> = view
@@ -1210,74 +1562,7 @@ fn workspace_list(
         &mut idle
     };
     workspace_rows(ui, p, view, &root, viewport, root_drag, actions);
-    for group in view.groups {
-        ui.push_id(("group", group.id()), |ui| {
-            let mut collapse = egui::collapsing_header::CollapsingState::load_with_default_open(
-                ui.ctx(),
-                ui.id().with("body"),
-                !group.collapsed(),
-            );
-            collapse.set_open(!group.collapsed());
-            let openness = collapse.openness(ui.ctx());
-            group_row(ui, p, view, group, openness, actions);
-            if group.collapsed()
-                && drag.lifted.is_some_and(|id| {
-                    view.workspaces
-                        .iter()
-                        .any(|w| w.id == id && w.group == Some(group.id()))
-                })
-            {
-                *drag = WorkspaceDrag::default();
-            }
-            collapse.show_body_unindented(ui, |ui| {
-                ui.set_opacity(openness);
-                // A folder's children keep the row's full height and a quiet indent.
-                ui.scope_builder(
-                    UiBuilder::new().max_rect(Rect::from_min_max(
-                        ui.cursor().min + vec2(16.0, 0.0),
-                        ui.max_rect().max,
-                    )),
-                    |ui| {
-                        let rows: Vec<_> = view
-                            .workspaces
-                            .iter()
-                            .filter(|w| w.group == Some(group.id()))
-                            .collect();
-                        let mut idle = WorkspaceDrag::default();
-                        let child_drag =
-                            if drag.lifted.is_none_or(|id| rows.iter().any(|w| w.id == id)) {
-                                &mut *drag
-                            } else {
-                                &mut idle
-                            };
-                        if rows.is_empty() {
-                            let (rect, _) = ui.allocate_exact_size(
-                                vec2(ui.available_width(), 28.0),
-                                Sense::hover(),
-                            );
-                            ui.painter().text(
-                                rect.left_center() + vec2(9.0, 0.0),
-                                Align2::LEFT_CENTER,
-                                "No workspaces",
-                                theme::regular(11.5),
-                                p.muted,
-                            );
-                        } else {
-                            workspace_rows(
-                                ui,
-                                p,
-                                view,
-                                &rows,
-                                viewport.intersect(ui.clip_rect()),
-                                child_drag,
-                                actions,
-                            );
-                        }
-                    },
-                );
-            });
-        });
-    }
+    group_rows(ui, p, view, viewport, drag, groups, actions);
     if drag
         .lifted
         .is_some_and(|id| !view.workspaces.iter().any(|w| w.id == id))
@@ -1355,7 +1640,15 @@ pub fn sidebar(
                 .id_salt("workspaces")
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    workspace_list(ui, p, view, viewport, &mut state.workspace_drag, actions);
+                    workspace_list(
+                        ui,
+                        p,
+                        view,
+                        viewport,
+                        &mut state.workspace_drag,
+                        &mut state.group_drag,
+                        actions,
+                    );
                 });
         },
     );
@@ -1619,6 +1912,11 @@ mod tests {
                     .groups()
                     .to_owned();
                 }
+                if let Action::MoveGroup(id, index) = action {
+                    let from = self.groups.iter().position(|g| g.id() == *id).unwrap();
+                    let moved = self.groups.remove(from);
+                    self.groups.insert(*index, moved);
+                }
                 if let Action::MoveWorkspace(id, index) = action {
                     let from = self.order.iter().position(|w| *w == id.get()).unwrap();
                     let moved = self.order.remove(from);
@@ -1635,6 +1933,63 @@ mod tests {
             for step in 1..=6 {
                 self.frame(vec![Event::PointerMoved(from.lerp(to, step as f32 / 6.0))]);
             }
+        }
+
+        fn folders(&mut self, folders: &[(u64, bool)]) {
+            self.groups = neptune_model::Model::restore_grouped(
+                Vec::new(),
+                folders
+                    .iter()
+                    .map(|(id, collapsed)| neptune_model::WorkspaceGroupSpec {
+                        id: WorkspaceGroupId::new(*id),
+                        name: format!("group {id}"),
+                        collapsed: *collapsed,
+                    })
+                    .collect(),
+                None,
+                true,
+                Default::default(),
+            )
+            .unwrap()
+            .groups()
+            .to_owned();
+            for _ in 0..20 {
+                self.frame(vec![]);
+            }
+        }
+
+        fn group_moves(&self) -> Vec<(u64, usize)> {
+            self.actions
+                .iter()
+                .filter_map(|a| match a {
+                    Action::MoveGroup(id, index) => Some((id.get(), *index)),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        fn folder(&self, id: u64) -> Pos2 {
+            let (_, top, _) = self
+                .state
+                .group_drag
+                .positions
+                .iter()
+                .find(|(g, _, _)| g.get() == id)
+                .unwrap();
+            let root_count = self
+                .order
+                .iter()
+                .filter(|id| !self.membership.iter().any(|(w, _)| w == *id))
+                .count();
+            let root_height = if root_count == 0 {
+                0.0
+            } else {
+                root_count as f32 * ROW_STEP - 2.0
+            };
+            Pos2::new(
+                100.0,
+                metrics::TOOLBAR_HEIGHT + 30.0 + root_height + 4.0 + top + GROUP_HEIGHT * 0.5,
+            )
         }
 
         fn top(&self, id: u64) -> Option<f32> {
@@ -1690,6 +2045,113 @@ mod tests {
             matches!(sidebar.actions.as_slice(), [Action::SetGroupCollapsed(id, true)] if *id == group)
         );
         assert!(sidebar.groups[0].collapsed());
+    }
+
+    #[test]
+    fn expanded_and_collapsed_folders_move_as_blocks_once_on_release() {
+        let mut sidebar = Fixture::new(&[1, 2, 3]);
+        sidebar.membership = vec![
+            (1, WorkspaceGroupId::new(7)),
+            (2, WorkspaceGroupId::new(7)),
+            (3, WorkspaceGroupId::new(8)),
+        ];
+        sidebar.folders(&[(7, false), (8, true), (9, false)]);
+        let from = sidebar.folder(7);
+        let to = sidebar.folder(9);
+        sidebar.carry(from, to);
+        assert!(sidebar.group_moves().is_empty());
+        assert_eq!(
+            sidebar.state.group_drag.lifted,
+            Some(WorkspaceGroupId::new(7))
+        );
+        sidebar.frame(vec![button(to, false)]);
+        assert_eq!(sidebar.group_moves(), [(7, 2)]);
+        assert_eq!(
+            sidebar
+                .groups
+                .iter()
+                .map(|g| g.id().get())
+                .collect::<Vec<_>>(),
+            [8, 9, 7]
+        );
+        assert_eq!(sidebar.order, [1, 2, 3]);
+        assert!(sidebar.moves().is_empty());
+        assert!(!sidebar.actions.iter().any(|a| matches!(
+            a,
+            Action::SetGroupCollapsed(..) | Action::SelectWorkspace(..) | Action::NewInGroup(..)
+        )));
+        for _ in 0..30 {
+            sidebar.frame(vec![]);
+        }
+        assert!(sidebar.state.group_drag.lifted.is_none());
+        let from = sidebar.folder(7);
+        let to = sidebar.folder(8);
+        sidebar.carry(from, to);
+        sidebar.frame(vec![button(to, false)]);
+        assert_eq!(sidebar.group_moves(), [(7, 2), (7, 0)]);
+        assert!(sidebar.groups[1].collapsed());
+    }
+
+    #[test]
+    fn cancelling_a_folder_drag_or_dropping_in_place_keeps_order() {
+        let mut sidebar = Fixture::new(&[]);
+        sidebar.folders(&[(7, true), (8, true), (9, true)]);
+        let from = sidebar.folder(9);
+        let to = sidebar.folder(7);
+        sidebar.carry(from, to);
+        sidebar.frame(vec![Event::Key {
+            key: Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        }]);
+        assert!(!sidebar.escape_passed);
+        assert!(sidebar.state.group_drag.grip.is_none());
+        sidebar.frame(vec![
+            Event::PointerMoved(to + vec2(0.0, 15.0)),
+            button(to, false),
+        ]);
+        for _ in 0..30 {
+            sidebar.frame(vec![]);
+        }
+        assert!(sidebar.group_moves().is_empty());
+        let from = sidebar.folder(8);
+        let to = from + vec2(0.0, 8.0);
+        sidebar.carry(from, to);
+        sidebar.frame(vec![button(to, false)]);
+        assert!(sidebar.group_moves().is_empty());
+        assert_eq!(
+            sidebar
+                .groups
+                .iter()
+                .map(|g| g.id().get())
+                .collect::<Vec<_>>(),
+            [7, 8, 9]
+        );
+    }
+
+    #[test]
+    fn holding_a_folder_at_the_edge_scrolls_to_hidden_groups() {
+        let mut sidebar = Fixture::with_height(&[], 300.0);
+        sidebar.folders(&[
+            (1, true),
+            (2, true),
+            (3, true),
+            (4, true),
+            (5, true),
+            (6, true),
+            (7, true),
+            (8, true),
+        ]);
+        let from = sidebar.folder(1);
+        let edge = Pos2::new(100.0, 300.0 - 54.0);
+        sidebar.carry(from, edge);
+        for _ in 0..120 {
+            sidebar.frame(vec![]);
+        }
+        sidebar.frame(vec![button(edge, false)]);
+        assert_eq!(sidebar.group_moves(), [(1, 7)]);
     }
 
     #[test]

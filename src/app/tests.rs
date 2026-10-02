@@ -2017,6 +2017,54 @@ fn remote_splits_follow_their_source_pane_after_focus_and_directory_changes() {
 }
 
 #[test]
+fn group_reordering_uses_the_captured_folder_and_keeps_active_sessions() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    app.startup = None;
+    for name in ["First", "Second", "Third"] {
+        app.action(&ctx, Action::CreateGroup(name.into()));
+    }
+    let first = app.controller.model().groups()[0].id();
+    let second = app.controller.model().groups()[1].id();
+    app.controller
+        .dispatch(Command::AddWorkspace {
+            cwd: root.path().into(),
+            name: "app".into(),
+            remote: None,
+            group: Some(second),
+        })
+        .unwrap();
+    let before = app.controller.model().workspaces().to_owned();
+    let active = app.controller.model().active_workspace();
+    app.action(&ctx, Action::MoveGroup(first, 2));
+    assert_eq!(
+        app.controller
+            .model()
+            .groups()
+            .iter()
+            .map(|g| g.name())
+            .collect::<Vec<_>>(),
+        ["Second", "Third", "First"]
+    );
+    assert_eq!(app.controller.model().workspaces(), before);
+    assert_eq!(app.controller.model().active_workspace(), active);
+    assert!(app.ui.error.is_none());
+    app.action(&ctx, Action::RemoveGroup(first));
+    app.action(&ctx, Action::MoveGroup(first, 0));
+    assert!(app.ui.error.as_ref().unwrap().contains("group"));
+    assert_eq!(
+        app.controller
+            .model()
+            .groups()
+            .iter()
+            .map(|g| g.name())
+            .collect::<Vec<_>>(),
+        ["Second", "Third"]
+    );
+}
+
+#[test]
 fn group_creation_and_ssh_dialog_keep_the_captured_group_target() {
     let root = tempfile::tempdir().unwrap();
     let (mut app, _sender) = fixture(root.path());

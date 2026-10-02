@@ -99,7 +99,10 @@ icon buttons keep a 28-point target around a 16-point glyph.
   while retaining its workspaces. Workspace menus offer "Move to group" and
   "Ungrouped". Collapse never suspends output. Group organization and collapsed
   state restore, and shortcut/palette selection reveals the selected workspace.
-  Dragging a row reorders the workspaces within its group: the row lifts onto the elevated
+  Dragging a folder row reorders groups as blocks with their visible workspaces,
+  using the same lift, neighbor movement, edge scrolling and cancellation as
+  workspace rows. Ungrouped workspaces remain first.
+  Dragging a workspace row reorders the workspaces within its group: the row lifts onto the elevated
   material and follows the pointer, its neighbours ease aside to show where it
   will land, and it settles into that gap on release. Holding it at the list's
   edge scrolls a long list, Escape puts it back, and nothing is saved before
