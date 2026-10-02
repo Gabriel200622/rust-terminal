@@ -19,3 +19,12 @@ the signed desktop update manifest; do not maintain a second release-notes file.
   and offers verified downloads without interrupting your running shells.
 - Organize independent terminals into workspaces and groups, restore directories
   and layouts with fresh shells, and connect remote workspaces using OpenSSH.
+
+### Known limitations
+
+- The Windows installer is unsigned while SignPath OSS setup is pending; Windows
+  may show an unverified-publisher or SmartScreen warning.
+- Workspace restoration starts fresh shells and SSH connections. Running commands
+  and process memory are not restored.
+- Kitty graphics and comprehensive complex-script shaping are not supported.
+  Keypad identity and some keyboard-layout information depend on the window backend.
