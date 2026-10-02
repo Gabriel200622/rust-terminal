@@ -1,21 +1,24 @@
 # Terminal notifications
 
 Programs can ask for attention by writing OSC 9, OSC 99 or OSC 777 to their
-Neptune terminal. Neptune shows an amber ring inside the pane, unread counts on
-workspace and folder rows, and a dot on the toolbar bell. The bell and the
-**Notifications** palette command open the notification popover. Selecting a
-notification opens its workspace and pane, including panes hidden by zoom or a
-collapsed folder. Focusing a pane or typing in it acknowledges its alerts.
-Opening the popover alone does not mark them read. It also offers **Mark all
-read**, individual dismissal and **Clear all**.
+Neptune terminal. Neptune rings the pane in amber, shows the latest alert and an
+unread count on its workspace row (a collapsed folder sums its workspaces), and
+puts a dot on the toolbar bell. The bell and the **Notifications** palette
+command open the notification popover, which lists alerts newest first with
+their workspace, program and age. Selecting a notification opens its workspace
+and pane, including panes hidden by zoom or a collapsed folder. The Up and Down
+arrow keys move through the list, Enter opens the highlighted alert and Delete
+dismisses it. Focusing a pane or typing in it acknowledges its alerts. Opening
+the popover alone does not mark them read. It also offers **Mark all read**,
+individual dismissal and **Clear all**.
 
 History is memory-only, capped at 128 entries across the application. Closing or
 restarting a pane discards its old session's alerts. Moving a pane carries its
 alerts with it. Exited processes retain their alerts until acknowledged or
 closed. Notification text is not written to workspace files or diagnostics.
 
-Desktop banners are enabled by default; **Preferences → Sessions → Desktop
-notifications** or `desktop_notifications = false` disables just OS delivery.
+Desktop banners are enabled by default; **Preferences → Notifications → Desktop
+banners** or `desktop_notifications = false` disables just OS delivery.
 Delivery runs on a bounded background worker, with at most one banner submitted
 per second globally. Floods still update the bounded in-app history. OS privacy,
 permission, Do Not Disturb and notification-service settings can suppress banners.

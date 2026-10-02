@@ -58,13 +58,7 @@ fn command(
 /// Commands that apply now. Pane commands exist only with a focused terminal,
 /// and each captures its target when the palette is drawn.
 fn commands(view: &PaletteView) -> Vec<Command> {
-    let mut list = vec![command(
-        "Application",
-        Icon::Bell,
-        "Notifications",
-        "",
-        [Action::Notifications],
-    )];
+    let mut list = Vec::new();
     if let Some(pane) = view.pane {
         list.extend([
             command(
@@ -380,6 +374,13 @@ fn commands(view: &PaletteView) -> Vec<Command> {
         ),
         command(
             "View",
+            Icon::Bell,
+            "Notifications",
+            "",
+            [Action::Notifications],
+        ),
+        command(
+            "View",
             Icon::Settings,
             "Preferences",
             edit_shortcut(","),
@@ -658,6 +659,7 @@ mod tests {
             .into_iter()
             .map(|id| WorkspaceView {
                 unread: 0,
+                alert: None,
                 group: None,
                 id: WorkspaceId::new(id),
                 name: "app".into(),
@@ -695,6 +697,7 @@ mod tests {
             .into_iter()
             .map(|id| WorkspaceView {
                 unread: 0,
+                alert: None,
                 group: None,
                 id: WorkspaceId::new(id),
                 name: "app".into(),
@@ -736,6 +739,7 @@ mod tests {
             .into_iter()
             .map(|(id, remote): (u64, Option<&str>)| WorkspaceView {
                 unread: 0,
+                alert: None,
                 group: None,
                 id: WorkspaceId::new(id),
                 name: "app".into(),
@@ -783,6 +787,7 @@ mod tests {
                 .into_iter()
                 .map(|(id, remote): (u64, Option<&str>)| WorkspaceView {
                     unread: 0,
+                    alert: None,
                     group: None,
                     id: WorkspaceId::new(id),
                     name: "app".into(),

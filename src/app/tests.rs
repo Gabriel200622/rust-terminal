@@ -2179,25 +2179,39 @@ fn notifications_navigate_to_the_captured_pane_and_ignore_restarted_sessions() {
     let first = add_workspace(&mut app, root.path(), None);
     let pane = app.controller.model().workspace(first).unwrap().active();
     let generation = app.controller.model().pane(pane).unwrap().generation();
+    app.controller
+        .dispatch(Command::SplitPane {
+            workspace: first,
+            pane,
+            axis: neptune_model::Axis::Vertical,
+            cwd: root.path().into(),
+        })
+        .unwrap();
+    let sibling = app.controller.model().workspace(first).unwrap().active();
+    assert_ne!(sibling, pane);
     let second = add_workspace(&mut app, root.path(), None);
     let ctx = egui::Context::default();
-    app.notifications.push(
-        pane,
-        generation,
-        terminal_core::Notification {
-            title: "Review".into(),
-            ..Default::default()
-        },
-    );
-    assert_eq!(
-        app.views().iter().find(|w| w.id == first).unwrap().unread,
-        1
-    );
+    for (target, title) in [(pane, "Review"), (sibling, "Build complete")] {
+        app.notifications.push(
+            target,
+            app.controller.model().pane(target).unwrap().generation(),
+            terminal_core::Notification {
+                title: title.into(),
+                ..Default::default()
+            },
+        );
+    }
+    let view = app.views().into_iter().find(|w| w.id == first).unwrap();
+    assert_eq!(view.unread, 2);
+    assert_eq!(view.alert.as_deref(), Some("Build complete"));
     app.ui.overlay = OverlayState::Notifications;
     app.ui.zoomed = true;
     app.action(&ctx, Action::OpenNotification(pane, generation));
     assert_eq!(app.controller.model().active_pane(), Some(pane));
-    assert_eq!(app.notifications.unread(None), 0);
+    // Its workspace's other pane was never focused, so it stays unread.
+    assert_eq!(app.notifications.unread(Some(pane)), 0);
+    assert_eq!(app.notifications.unread(Some(sibling)), 1);
+    assert_eq!(app.ui.overlay, OverlayState::None);
     assert!(!app.ui.zoomed);
     app.controller.dispatch(Command::RestartPane(pane)).unwrap();
     app.controller
@@ -2205,8 +2219,14 @@ fn notifications_navigate_to_the_captured_pane_and_ignore_restarted_sessions() {
         .unwrap();
     app.action(&ctx, Action::OpenNotification(pane, generation));
     assert_eq!(app.controller.model().active_workspace(), Some(second));
+    // Only the restarted session's alert is discarded.
     app.notifications.retain_sessions(app.controller.model());
-    assert_eq!(app.notifications.entries().count(), 0);
+    assert!(
+        app.notifications
+            .entries()
+            .all(|entry| entry.pane == sibling)
+    );
+    assert_eq!(app.notifications.entries().count(), 1);
 }
 
 #[test]

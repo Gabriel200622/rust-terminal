@@ -429,22 +429,27 @@ impl App {
             .model()
             .workspaces()
             .iter()
-            .map(|w| WorkspaceView {
-                id: w.id(),
-                group: w.group(),
-                name: w.name().into(),
-                cwd: w.cwd().into(),
-                remote: w.remote().map(|remote| remote.destination().to_owned()),
-                panes: w.panes().len(),
-                unread: w
-                    .panes()
-                    .iter()
-                    .map(|p| self.notifications.unread(Some(p.id())))
-                    .sum(),
-                running: w
-                    .panes()
-                    .iter()
-                    .any(|p| matches!(p.lifecycle(), Lifecycle::Starting | Lifecycle::Running)),
+            .map(|w| {
+                let (unread, latest) = self
+                    .notifications
+                    .attention(|pane| w.panes().iter().any(|p| p.id() == pane));
+                WorkspaceView {
+                    id: w.id(),
+                    group: w.group(),
+                    name: w.name().into(),
+                    cwd: w.cwd().into(),
+                    remote: w.remote().map(|remote| remote.destination().to_owned()),
+                    panes: w.panes().len(),
+                    unread,
+                    // A row shows one line; the popover has the whole alert.
+                    alert: latest
+                        .map(|entry| entry.headline().chars().take(120).collect::<String>())
+                        .filter(|headline| !headline.is_empty()),
+                    running: w
+                        .panes()
+                        .iter()
+                        .any(|p| matches!(p.lifecycle(), Lifecycle::Starting | Lifecycle::Running)),
+                }
             })
             .collect()
     }
@@ -664,8 +669,12 @@ impl eframe::App for App {
         let menu_open = egui::Popup::is_any_open(&ctx);
         // Tab and the arrow keys move focus only inside sheets and menus.
         // Everywhere else they belong to the terminal or the focused field,
-        // so the toolkit must not walk focus into the chrome.
-        let sheet_open = !matches!(self.ui.overlay, OverlayState::None | OverlayState::Palette);
+        // so the toolkit must not walk focus into the chrome. The palette and
+        // the notification popover move their own highlight.
+        let sheet_open = !matches!(
+            self.ui.overlay,
+            OverlayState::None | OverlayState::Palette | OverlayState::Notifications
+        );
         if !sheet_open && !menu_open {
             ctx.memory_mut(|memory| memory.move_focus(egui::FocusDirection::None));
         }
@@ -888,12 +897,42 @@ impl eframe::App for App {
         let message = self.ui.error.is_some();
         match self.ui.overlay {
             OverlayState::Notifications => {
+                let model = self.controller.model();
+                let mut programs = BTreeMap::new();
+                let items: Vec<_> = self
+                    .notifications
+                    .entries()
+                    .rev()
+                    .map(|entry| {
+                        let workspace = model
+                            .workspace_for_pane(entry.pane)
+                            .and_then(|id| model.workspace(id));
+                        ui::notifications::NotificationItem {
+                            sequence: entry.sequence,
+                            pane: entry.pane,
+                            generation: entry.generation,
+                            identity: workspace.map_or(0, |w| w.id().get()),
+                            workspace: workspace.map_or("Terminal", |w| w.name()),
+                            program: programs
+                                .entry(entry.pane)
+                                .or_insert_with(|| {
+                                    self.sessions.get(entry.pane).map_or_else(String::new, |s| {
+                                        ui::workspace::pane_label(&s.metadata())
+                                    })
+                                })
+                                .clone(),
+                            title: &entry.notification.title,
+                            body: &entry.notification.body,
+                            unread: entry.unread,
+                            age: entry.received.elapsed(),
+                        }
+                    })
+                    .collect();
                 ui::notifications::show(
                     &ctx,
                     p,
                     ui::notifications::NotificationView {
-                        history: &self.notifications,
-                        model: self.controller.model(),
+                        items: &items,
                         unavailable: self.desktop_notifier.unavailable,
                         first_frame: &mut self.ui.overlay_focus,
                     },

@@ -336,9 +336,6 @@ pub fn show(
                     ui.add_space(14.0);
                     section_label(ui, p, "Sessions");
                     group(ui, p, |ui, rows| {
-                        rows.row(ui, "Desktop notifications", |ui| {
-                            toggle(ui, p, &mut config.desktop_notifications, "Desktop notifications");
-                        });
                         rows.row(ui, "Restore workspaces on launch", |ui| {
                             toggle(
                                 ui,
@@ -360,6 +357,23 @@ pub fn show(
                         ui,
                         p,
                         "Restoring reopens folders and layouts with fresh shells.",
+                    );
+                    ui.add_space(14.0);
+                    section_label(ui, p, "Notifications");
+                    group(ui, p, |ui, rows| {
+                        rows.row(ui, "Desktop banners", |ui| {
+                            toggle(
+                                ui,
+                                p,
+                                &mut config.desktop_notifications,
+                                "Desktop banners",
+                            );
+                        });
+                    });
+                    caption(
+                        ui,
+                        p,
+                        "Show a system banner when a terminal asks for attention. Pane rings, unread counts and history stay on.",
                     );
                     ui.add_space(14.0);
                     section_label(ui, p, "Updates");

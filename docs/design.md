@@ -61,7 +61,9 @@ buttons, switches, focus rings, search matches and the terminal cursor. Text on
 the accent uses `on_accent`, which flips to dark ink for light accents. Terminal
 selection is an opaque mix of accent and surface, so selected cells keep an
 exact colour under any glyph. Red is reserved for destructive actions and
-stopped terminals.
+stopped terminals. Amber (`attention`) is reserved for unread terminal alerts:
+the pane ring, the bell's dot and unread counts. It turns yellow when the accent
+itself is orange, so an alert never reads as focus.
 
 Workspace tiles take a stable identity colour from their workspace id: tinted
 when idle, solid when selected. The identity colour is decoration only; state is
@@ -155,13 +157,24 @@ icon buttons keep a 28-point target around a 16-point glyph.
   exit is stated plainly; only failures use the problem colour. A remote
   terminal offers "Reconnect" where a local one offers "Restart". "Back to
   bottom" appears at the bottom trailing corner while scrolled into history.
-- **Notifications.** Explicit OSC alerts add a steady amber ring inset from the
-  pane edge, including a single pane. Workspace and folder rows show unread
-  count pills; the toolbar bell carries a dot. Its popover lists bounded session
-  history and opens the originating pane, with mark-read and dismiss actions.
-  The popover does not resize shells or dim the window. Desktop banners are
-  optional; [notification behavior and agent setup](notifications.md) describes
-  acknowledgement, lifetime and protocol limits.
+- **Notifications.** An unread OSC alert rings its pane in amber: a crisp edge
+  with a soft inner glow that fades in over 160 ms and takes the focus ring's
+  place rather than doubling it; a single pane shows it too. The workspace row
+  brightens its name, shows the latest alert beside a small bell in place of
+  the path, and carries a tinted count pill; a collapsed folder sums its
+  workspaces. The toolbar bell carries a dot cut out of the glyph and stays
+  pressed while its popover is open. The popover floats in the top trailing
+  corner where messages do, without dimming the window or resizing shells.
+  Its header counts unread alerts and offers "Mark all read" and "Clear all".
+  Rows are newest first: the workspace's identity tile (with the unread dot),
+  the alert in up to two lines each of title and body, its workspace and
+  program, and its age, which yields to a dismiss control under the pointer.
+  The whole row opens the originating pane. Nothing is highlighted until an
+  arrow key is pressed; then Up and Down move through the alerts, Enter opens
+  one and Delete dismisses it. An empty history says so plainly. Desktop
+  banners are optional; [notification behavior and agent
+  setup](notifications.md) describes acknowledgement, lifetime and protocol
+  limits.
 - **Workspace creation.** New workspace immediately opens and selects a fresh
   shell in the home directory (`~`). Its name can be changed afterward from the
   sidebar or command palette. A new SSH workspace asks only for its host and

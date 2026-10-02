@@ -558,8 +558,11 @@ impl App {
                     self.ui.overlay = OverlayState::None;
                     self.ui.zoomed = false;
                     if let Some(workspace) = self.controller.model().workspace_for_pane(pane) {
-                        self.dispatch(ctx, Command::SelectWorkspace(workspace));
+                        // Focus the pane before revealing its workspace, so the
+                        // workspace's previous pane is never focused in passing
+                        // and keeps its own unread alerts.
                         self.action(ctx, Action::Focus(pane));
+                        self.dispatch(ctx, Command::SelectWorkspace(workspace));
                     }
                 }
             }

@@ -150,6 +150,8 @@ pub struct WorkspaceView {
     pub remote: Option<String>,
     pub panes: usize,
     pub unread: usize,
+    /// The newest unread alert, shown in place of the path.
+    pub alert: Option<String>,
     pub running: bool,
 }
 pub struct PaneRender {
