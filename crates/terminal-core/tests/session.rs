@@ -501,6 +501,12 @@ fn notification_query_reply_precedes_the_device_attributes_reply() {
         r"stty raw -echo; printf '\033]99;i=probe:p=?;\033\\\033[c'; dd bs=1 count=10 2>/dev/null | od -An -tx1",
     );
     wait_for(|| matches!(session.metadata().status, SessionStatus::Exited { .. }));
-    assert!(screen(&session).contains("1b 5d 39 39 3b 69 3d 70 72 6f"));
+    let output = screen(&session);
+    // GNU and BSD od use different spacing; compare the actual reply bytes.
+    let bytes: Vec<u8> = output
+        .split_whitespace()
+        .filter_map(|word| u8::from_str_radix(word, 16).ok())
+        .collect();
+    assert_eq!(bytes, b"\x1b]99;i=pro", "Unexpected first reply: {output}");
     wait_for(|| session.metrics().active_workers == 0);
 }
