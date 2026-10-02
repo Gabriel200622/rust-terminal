@@ -62,6 +62,37 @@ fn loaded(config: Config, model: Model) -> Startup {
 }
 
 #[test]
+fn explicit_startup_commands_replace_agent_restoration_with_a_shell() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    let mut controller = Controller::new(Model::default());
+    controller
+        .dispatch(Command::AddWorkspace {
+            cwd: root.path().into(),
+            name: "agent".into(),
+            remote: None,
+            group: None,
+        })
+        .unwrap();
+    let pane = controller.model().active_pane().unwrap();
+    controller
+        .dispatch(Command::PaneAgentChanged {
+            pane,
+            generation: 1,
+            agent: Some(neptune_model::AgentSession {
+                kind: neptune_model::AgentKind::Claude,
+                session_id: Some("019a1234-5678-7000-8000-123456789abc".into()),
+                cwd: root.path().into(),
+            }),
+        })
+        .unwrap();
+    app.complete_startup(&ctx, loaded(app.config.clone(), controller.model().clone()));
+    assert!(app.controller.model().pane(pane).unwrap().agent().is_none());
+    assert_eq!(app.command_target, Some((pane, 1)));
+}
+
+#[test]
 fn window_corners_follow_native_window_state() {
     let root = tempfile::tempdir().unwrap();
     let (mut app, _sender) = fixture(root.path());

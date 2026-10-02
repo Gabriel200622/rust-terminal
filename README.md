@@ -58,6 +58,15 @@ Secondary-click the **Workspaces** heading or empty sidebar space for **New work
 
 Use **Move to group** in a workspace's menu to organize existing workspaces, or choose **Ungrouped** to move one out. Workspaces can be reordered within their group by dragging or with **Move up** and **Move down**. Drag a group by its folder row to place it at the top, between ungrouped workspaces, or beside another group; its workspaces move with it. Ungrouped workspace rows can also be dragged around groups. Escape cancels the drag, and the new order is saved on release. Group commands are also available in the palette. Collapsing or removing a group keeps its shells running; removing it leaves its workspaces ungrouped in the folder's former position. Names, membership, empty groups, mixed sidebar order, and collapsed state are saved with the workspace organization. Groups do not nest.
 
+### Coding agent sessions
+
+Local Unix terminals can reopen Claude Code and Codex in their original panes
+when Neptune restarts, using each CLI's own saved session ID. Start `claude` or
+`codex` normally. Codex asks you to review Neptune's SessionStart hook before it
+can report IDs. Exiting the CLI or restarting its terminal clears the resume
+reference; closing Neptune retains it. See [agent sessions](docs/agent-sessions.md)
+for setup, exact-session requirements and platform limitations.
+
 ### SSH workspaces
 
 A workspace can be connected to another machine over SSH. Every terminal in it, including new splits and restarted terminals, then opens on that host instead of in a local shell. Secondary-click a workspace and choose **Connect over SSH…** to move all of its terminals to a host, or run **New SSH workspace** from the command palette. **Disconnect from SSH** returns the workspace to local shells. Connecting or disconnecting replaces the workspace's terminals, so processes running in them stop. A terminal keeps its session when it is moved, so it can be moved only between workspaces on the same machine.
@@ -80,7 +89,7 @@ neptune --no-restore
 neptune --help
 ```
 
-[config.example.toml](config.example.toml) documents the supported settings: three themes, nine accent colours, window zoom, font size and line height, scrollback limit, shell executable, cursor style/blink, sidebar width, workspace restoration, and close confirmation. Window zoom is available in Preferences under Appearance; changes there or through zoom shortcuts are saved and restored on the next launch, including with workspace restoration disabled. Settings are validated; unknown keys are rejected. Workspace restoration restores directories, split positions, and focused panes, and launches fresh shell processes; a remote workspace opens new SSH connections to its host. Commands and process memory are never serialized.
+[config.example.toml](config.example.toml) documents the supported settings: three themes, nine accent colours, window zoom, font size and line height, scrollback limit, shell executable, cursor style/blink, sidebar width, workspace restoration, and close confirmation. Window zoom is available in Preferences under Appearance; changes there or through zoom shortcuts are saved and restored on the next launch, including with workspace restoration disabled. Settings are validated; unknown keys are rejected. Workspace restoration restores directories, split positions, and focused panes, and launches fresh shell processes; a remote workspace opens new SSH connections to its host. Recognized coding agents can resume their provider-owned conversations through saved session references; arbitrary commands and process memory are never serialized.
 
 Default storage is `~/.config/neptune` on Linux (or `$XDG_CONFIG_HOME/neptune`),
 `~/Library/Application Support/rs.Neptune.neptune` on macOS, and

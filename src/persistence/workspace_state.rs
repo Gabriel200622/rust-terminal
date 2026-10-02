@@ -9,9 +9,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Version 5 adds mixed ordering of groups and ungrouped workspaces. Versions
-/// 1–4 remain readable; older builds refuse to replace the new organization.
-pub const SCHEMA_VERSION: u32 = 5;
+/// Version 6 adds per-pane agent resume references. Versions 1–5 remain readable.
+pub const SCHEMA_VERSION: u32 = 6;
 const MAX_STATE_BYTES: u64 = 8 * 1024 * 1024;
 
 /// This DTO is the disk contract. Runtime layout serialization cannot change it.
@@ -93,6 +92,8 @@ pub struct SavedPane {
     pub cwd: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote_cwd: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<neptune_model::AgentSession>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,6 +140,7 @@ impl StateSnapshot {
                             id: pane.id(),
                             cwd: pane.cwd().into(),
                             remote_cwd: pane.remote_cwd().map(Path::to_path_buf),
+                            agent: pane.agent().cloned(),
                         })
                         .collect(),
                     layout: SavedLayout::from_layout(workspace.layout()),
@@ -203,6 +205,7 @@ impl SavedWorkspace {
                     id: pane.id,
                     cwd: pane.cwd,
                     remote_cwd: pane.remote_cwd,
+                    agent: pane.agent,
                 })
                 .collect(),
             layout: self.layout.into_layout(),
@@ -438,6 +441,17 @@ fn restore_versioned(snapshot: StateSnapshot, limits: Limits, report: &mut LoadR
             continue;
         }
         for pane in &mut workspace.panes {
+            if pane
+                .agent
+                .as_ref()
+                .is_some_and(|a| !a.is_valid() || !a.cwd.is_dir() || workspace.ssh.is_some())
+            {
+                report.diagnostics.push(format!(
+                    "Pane {}: unavailable agent resume reference; opening a shell",
+                    pane.id
+                ));
+                pane.agent = None;
+            }
             if !pane.cwd.is_dir() {
                 report.diagnostics.push(format!(
                     "Pane {} in {:?}: missing directory {}; using {}",
@@ -584,6 +598,7 @@ fn restore_legacy(legacy: LegacyState, limits: Limits, report: &mut LoadReport) 
                 id: pane_id,
                 cwd,
                 remote_cwd: None,
+                agent: None,
             });
         }
         if panes.is_empty() {
@@ -598,6 +613,7 @@ fn restore_legacy(legacy: LegacyState, limits: Limits, report: &mut LoadReport) 
                 id: PaneId::new(next_pane),
                 cwd: workspace.cwd.clone(),
                 remote_cwd: None,
+                agent: None,
             });
             next_pane += 1;
         }
@@ -753,6 +769,48 @@ mod tests {
     }
 
     #[test]
+    fn agent_references_round_trip_and_invalid_references_preserve_recovery_bytes() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("workspaces.json");
+        let mut snapshot = sample(root.path());
+        let reference = neptune_model::AgentSession {
+            kind: neptune_model::AgentKind::Codex,
+            session_id: Some("019a1234-5678-7000-8000-123456789abc".into()),
+            cwd: root.path().into(),
+        };
+        snapshot.workspaces[0].panes[0].agent = Some(reference.clone());
+        std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+        let report = load_state(&path, Limits::default());
+        assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+        assert_eq!(
+            report.model.unwrap().workspaces()[0].panes()[0].agent(),
+            Some(&reference)
+        );
+        snapshot.workspaces[0].panes[0]
+            .agent
+            .as_mut()
+            .unwrap()
+            .session_id = Some("--last; evil".into());
+        let original = serde_json::to_vec(&snapshot).unwrap();
+        std::fs::write(&path, &original).unwrap();
+        let report = load_state(&path, Limits::default());
+        assert!(report.can_write);
+        assert!(
+            report.model.unwrap().workspaces()[0].panes()[0]
+                .agent()
+                .is_none()
+        );
+        assert!(!report.diagnostics.is_empty());
+        assert!(
+            std::fs::read_dir(root.path())
+                .unwrap()
+                .flatten()
+                .filter(|entry| entry.path() != path)
+                .any(|entry| std::fs::read(entry.path()).unwrap() == original)
+        );
+    }
+
+    #[test]
     fn current_unversioned_fixture_migrates_without_losing_layout_or_selection() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("workspaces.json");
@@ -862,7 +920,7 @@ mod tests {
     fn earlier_schema_versions_are_read_without_loss_and_saved_as_the_current_version() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("workspaces.json");
-        for version in [1, 2, 3] {
+        for version in [1, 2, 3, 4, 5] {
             let mut saved = serde_json::to_value(sample(directory.path())).unwrap();
             saved["version"] = version.into();
             saved.as_object_mut().unwrap().remove("groups");
@@ -1016,6 +1074,7 @@ mod tests {
             id: PaneId::new(3),
             cwd: directory.path().into(),
             remote_cwd: None,
+            agent: None,
         }];
         second.layout = SavedLayout::Pane {
             pane: PaneId::new(3),

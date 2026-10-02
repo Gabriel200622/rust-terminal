@@ -116,11 +116,38 @@ impl App {
                         remote.as_ref(),
                         remote_cwd.as_deref(),
                     );
+                    // A --command launch targets a shell, never a restored agent prompt.
+                    if self.command.is_some() && self.controller.model().active_pane() == Some(pane)
+                    {
+                        self.dispatch(
+                            ctx,
+                            Command::PaneAgentChanged {
+                                pane,
+                                generation,
+                                agent: None,
+                            },
+                        );
+                    }
+                    let launch = crate::runtime::sessions::SessionLaunch {
+                        terminal: options,
+                        agent: if remote.is_none() {
+                            crate::runtime::sessions::AgentLaunch::Local {
+                                resume: self
+                                    .controller
+                                    .model()
+                                    .pane(pane)
+                                    .and_then(|pane| pane.agent())
+                                    .cloned(),
+                            }
+                        } else {
+                            crate::runtime::sessions::AgentLaunch::Disabled
+                        },
+                    };
                     if let Err(error) = self.sessions.start(
                         pane,
                         generation,
                         replacement,
-                        options,
+                        launch,
                         Arc::new(move || wake.request_repaint()),
                     ) {
                         self.diagnostics

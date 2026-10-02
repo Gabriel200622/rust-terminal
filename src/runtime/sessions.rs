@@ -39,10 +39,29 @@ pub struct ResourceUsage {
     pub queue_capacity_bytes: usize,
     pub cache_budget_bytes: usize,
 }
+/// Desktop launch intent; terminal-core receives only PTY options.
+pub struct SessionLaunch {
+    pub terminal: SessionOptions,
+    pub agent: AgentLaunch,
+}
+pub enum AgentLaunch {
+    Disabled,
+    Local {
+        resume: Option<neptune_model::AgentSession>,
+    },
+}
+impl From<SessionOptions> for SessionLaunch {
+    fn from(terminal: SessionOptions) -> Self {
+        Self {
+            terminal,
+            agent: AgentLaunch::Disabled,
+        }
+    }
+}
 struct Request {
     pane: PaneId,
     generation: u64,
-    options: SessionOptions,
+    launch: SessionLaunch,
     wake: Wake,
 }
 struct Completion {
@@ -89,6 +108,7 @@ pub struct SessionManager {
     workers: Vec<thread::JoinHandle<()>>,
     in_flight: BTreeMap<(PaneId, u64), Instant>,
     diagnostics: bool,
+    agents: Arc<super::agents::AgentBridge>,
 }
 impl SessionManager {
     pub fn new(policy: ResourcePolicy, diagnostics: bool) -> Self {
@@ -101,9 +121,11 @@ impl SessionManager {
         ));
         let (sender, completions) = mpsc::sync_channel(policy.max_sessions.max(1));
         let mut workers = Vec::new();
+        let agents = Arc::new(super::agents::AgentBridge::default());
         for index in 0..policy.concurrent_spawns.max(1) {
             let jobs = jobs.clone();
             let sender = sender.clone();
+            let agents = agents.clone();
             if let Ok(worker) = thread::Builder::new()
                 .name(format!("neptune-spawn-{index}"))
                 .spawn(move || {
@@ -124,12 +146,25 @@ impl SessionManager {
                             }
                             state.pending.pop_front()
                         };
-                        let Some(request) = request else {
+                        let Some(mut request) = request else {
                             continue;
                         };
                         let tick = Instant::now();
-                        let result = TerminalSession::spawn(request.options, request.wake.clone())
-                            .map_err(|error| format!("{error:#}"));
+                        let result = (|| {
+                            if let AgentLaunch::Local { resume } = &request.launch.agent {
+                                agents
+                                    .prepare(
+                                        request.pane,
+                                        request.generation,
+                                        &mut request.launch.terminal,
+                                        resume.as_ref(),
+                                        request.wake.clone(),
+                                    )
+                                    .map_err(|_| "Agent integration could not start".to_owned())?;
+                            }
+                            TerminalSession::spawn(request.launch.terminal, request.wake.clone())
+                                .map_err(|error| format!("{error:#}"))
+                        })();
                         if sender
                             .send(Completion {
                                 pane: request.pane,
@@ -159,6 +194,7 @@ impl SessionManager {
             workers,
             in_flight: BTreeMap::new(),
             diagnostics,
+            agents,
         }
     }
     pub fn policy(&self) -> &ResourcePolicy {
@@ -204,10 +240,12 @@ impl SessionManager {
         pane: PaneId,
         generation: u64,
         replacement: bool,
-        mut options: SessionOptions,
+        launch: impl Into<SessionLaunch>,
         wake: Wake,
     ) -> Result<(), String> {
         self.reap();
+        let mut launch = launch.into();
+        let options = &mut launch.terminal;
         if self.workers.is_empty() {
             return Err("Shell startup worker could not be created".into());
         }
@@ -242,7 +280,7 @@ impl SessionManager {
         let request = Request {
             pane,
             generation,
-            options,
+            launch,
             wake,
         };
         if count >= self.policy.max_sessions || self.in_flight.keys().any(|(id, _)| *id == pane) {
@@ -279,7 +317,11 @@ impl SessionManager {
             });
         }
     }
+    pub fn agent_changes(&self) -> Vec<(PaneId, u64, Option<neptune_model::AgentSession>)> {
+        self.agents.drain()
+    }
     pub fn close(&mut self, pane: PaneId) {
+        self.agents.close(pane);
         self.desired.remove(&pane);
         self.cancel_pending(pane);
         if let Some(entry) = self.live.remove(&pane) {
@@ -306,6 +348,8 @@ impl SessionManager {
             self.in_flight
                 .remove(&(completion.pane, completion.generation));
             if self.desired.get(&completion.pane) != Some(&completion.generation) {
+                self.agents
+                    .close_generation(completion.pane, completion.generation);
                 if let Ok(session) = completion.result {
                     session.shutdown();
                     self.closing.push(Closing {
@@ -332,11 +376,15 @@ impl SessionManager {
                         elapsed: completion.elapsed,
                     });
                 }
-                Err(message) => events.push(SessionCompletion::Failed {
-                    pane: completion.pane,
-                    generation: completion.generation,
-                    message,
-                }),
+                Err(message) => {
+                    self.agents
+                        .close_generation(completion.pane, completion.generation);
+                    events.push(SessionCompletion::Failed {
+                        pane: completion.pane,
+                        generation: completion.generation,
+                        message,
+                    });
+                }
             }
         }
         let available = self
