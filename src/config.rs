@@ -19,6 +19,8 @@ pub struct Config {
     pub sidebar_width: f32,
     pub restore_workspaces: bool,
     pub confirm_close: bool,
+    /// Allow terminal programs to send native OS notifications.
+    pub desktop_notifications: bool,
     /// Update checks use only public release metadata, never terminal contents.
     pub check_updates: bool,
     pub release_channel: crate::runtime::updates::ReleaseChannel,
@@ -123,6 +125,7 @@ impl Default for Config {
             sidebar_width: 216.0,
             restore_workspaces: true,
             confirm_close: true,
+            desktop_notifications: true,
             check_updates: true,
             release_channel: Default::default(),
         }

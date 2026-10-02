@@ -44,6 +44,8 @@ fn fixture(root: &std::path::Path) -> (App, mpsc::SyncSender<Startup>) {
         _font_shortcut_monitor: Default::default(),
         diagnostics: diagnostics::Diagnostics::new(false),
         link_opener: Default::default(),
+        notifications: Default::default(),
+        desktop_notifier: Default::default(),
         updates: Default::default(),
     };
     (app, sender)
@@ -2297,6 +2299,64 @@ fn preferences_reopen_on_the_general_settings_and_themes_on_the_catalog() {
     app.action(&ctx, Action::Settings);
     assert_eq!(app.ui.overlay, OverlayState::Settings);
     assert!(!app.ui.preferences.open);
+}
+
+#[test]
+fn notifications_navigate_to_the_captured_pane_and_ignore_restarted_sessions() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _) = fixture(root.path());
+    app.startup = None;
+    let first = add_workspace(&mut app, root.path(), None);
+    let pane = app.controller.model().workspace(first).unwrap().active();
+    let generation = app.controller.model().pane(pane).unwrap().generation();
+    app.controller
+        .dispatch(Command::SplitPane {
+            workspace: first,
+            pane,
+            axis: neptune_model::Axis::Vertical,
+            cwd: root.path().into(),
+        })
+        .unwrap();
+    let sibling = app.controller.model().workspace(first).unwrap().active();
+    assert_ne!(sibling, pane);
+    let second = add_workspace(&mut app, root.path(), None);
+    let ctx = egui::Context::default();
+    for (target, title) in [(pane, "Review"), (sibling, "Build complete")] {
+        app.notifications.push(
+            target,
+            app.controller.model().pane(target).unwrap().generation(),
+            terminal_core::Notification {
+                title: title.into(),
+                ..Default::default()
+            },
+        );
+    }
+    let view = app.views().into_iter().find(|w| w.id == first).unwrap();
+    assert_eq!(view.unread, 2);
+    assert_eq!(view.alert.as_deref(), Some("Build complete"));
+    app.ui.overlay = OverlayState::Notifications;
+    app.ui.zoomed = true;
+    app.action(&ctx, Action::OpenNotification(pane, generation));
+    assert_eq!(app.controller.model().active_pane(), Some(pane));
+    // Its workspace's other pane was never focused, so it stays unread.
+    assert_eq!(app.notifications.unread(Some(pane)), 0);
+    assert_eq!(app.notifications.unread(Some(sibling)), 1);
+    assert_eq!(app.ui.overlay, OverlayState::None);
+    assert!(!app.ui.zoomed);
+    app.controller.dispatch(Command::RestartPane(pane)).unwrap();
+    app.controller
+        .dispatch(Command::SelectWorkspace(second))
+        .unwrap();
+    app.action(&ctx, Action::OpenNotification(pane, generation));
+    assert_eq!(app.controller.model().active_workspace(), Some(second));
+    // Only the restarted session's alert is discarded.
+    app.notifications.retain_sessions(app.controller.model());
+    assert!(
+        app.notifications
+            .entries()
+            .all(|entry| entry.pane == sibling)
+    );
+    assert_eq!(app.notifications.entries().count(), 1);
 }
 
 #[test]

@@ -164,12 +164,16 @@ impl App {
                     }
                 }
                 Effect::StopSession { pane, .. } => {
+                    self.desktop_notifier.cancel(pane);
                     if !replacements.contains(&pane) {
                         self.sessions.close(pane);
                     }
                     self.renders.remove(&pane);
                 }
                 Effect::Focus { old, new } => {
+                    if let Some(pane) = new {
+                        self.notifications.acknowledge(Some(pane));
+                    }
                     if let Some(id) = old
                         && let Some(session) = self.sessions.get(id)
                     {
@@ -493,11 +497,19 @@ impl App {
                     );
                 }
             }
-            Action::SelectWorkspace(id) => self.dispatch(ctx, Command::SelectWorkspace(id)),
+            Action::SelectWorkspace(id) => {
+                self.dispatch(ctx, Command::SelectWorkspace(id));
+                if self.controller.model().active_workspace() == Some(id)
+                    && let Some(pane) = self.controller.model().active_pane()
+                {
+                    self.notifications.acknowledge(Some(pane));
+                }
+            }
             Action::MoveWorkspace(workspace, index) => {
                 self.dispatch(ctx, Command::MoveWorkspace { workspace, index })
             }
             Action::Focus(pane) => {
+                self.notifications.acknowledge(Some(pane));
                 if let Some(workspace) = self.controller.model().workspace_for_pane(pane) {
                     self.dispatch(ctx, Command::FocusPane { workspace, pane });
                 }
@@ -528,6 +540,35 @@ impl App {
             Action::SetName(workspace, name) => {
                 self.dispatch(ctx, Command::RenameWorkspace { workspace, name })
             }
+            Action::Notifications => {
+                self.ui.overlay = if self.ui.overlay == OverlayState::Notifications {
+                    OverlayState::None
+                } else {
+                    OverlayState::Notifications
+                };
+                self.ui.overlay_focus = true;
+            }
+            Action::OpenNotification(pane, generation) => {
+                if self
+                    .controller
+                    .model()
+                    .pane(pane)
+                    .is_some_and(|p| p.generation() == generation)
+                {
+                    self.ui.overlay = OverlayState::None;
+                    self.ui.zoomed = false;
+                    if let Some(workspace) = self.controller.model().workspace_for_pane(pane) {
+                        // Focus the pane before revealing its workspace, so the
+                        // workspace's previous pane is never focused in passing
+                        // and keeps its own unread alerts.
+                        self.action(ctx, Action::Focus(pane));
+                        self.dispatch(ctx, Command::SelectWorkspace(workspace));
+                    }
+                }
+            }
+            Action::DismissNotification(sequence) => self.notifications.dismiss(sequence),
+            Action::ReadNotifications => self.notifications.acknowledge(None),
+            Action::ClearNotifications => self.notifications.clear(),
             Action::Settings => {
                 if self.ui.overlay == OverlayState::Settings {
                     // A changed theme draft asks before the sheet closes.
@@ -651,10 +692,11 @@ impl App {
             }
             Action::Paste(pane) => match crate::platform::clipboard::read() {
                 Ok(text) => {
-                    if let Some(session) = self.sessions.get(pane)
-                        && let Err(error) = session.paste(&text)
-                    {
-                        self.ui.error = Some(error.to_string());
+                    if let Some(session) = self.sessions.get(pane) {
+                        match session.paste(&text) {
+                            Ok(()) => self.notifications.acknowledge(Some(pane)),
+                            Err(error) => self.ui.error = Some(error.to_string()),
+                        }
                     }
                 }
                 Err(error) => self.ui.error = Some(error),
@@ -663,6 +705,9 @@ impl App {
                 if let Err(error) = config.validate() {
                     self.ui.error = Some(error.to_string());
                     return;
+                }
+                if !config.desktop_notifications {
+                    self.desktop_notifier.cancel_all();
                 }
                 self.config = config;
                 self.updates.configure(self.config.release_channel);

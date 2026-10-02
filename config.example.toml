@@ -51,3 +51,6 @@ confirm_close = true
 # Beta includes prereleases and stable releases; neither channel downgrades.
 check_updates = true
 release_channel = "stable" # stable | beta
+
+# Native desktop banners for OSC notifications. Pane rings and history stay enabled.
+desktop_notifications = true

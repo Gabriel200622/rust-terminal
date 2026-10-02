@@ -7,6 +7,7 @@ use eframe::egui::{
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Icon {
+    Bell,
     Terminal,
     Plus,
     Close,
@@ -77,6 +78,37 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
     };
 
     match icon {
+        Icon::Bell => {
+            // A dome that flares into the rim, closed along the base.
+            let bezier = |from: [f32; 2], a: [f32; 2], b: [f32; 2], to: [f32; 2]| {
+                (1..=8).map(move |step| {
+                    let t = step as f32 / 8.0;
+                    let u = 1.0 - t;
+                    let at = |i: usize| {
+                        u * u * u * from[i]
+                            + 3.0 * u * u * t * a[i]
+                            + 3.0 * u * t * t * b[i]
+                            + t * t * t * to[i]
+                    };
+                    [at(0), at(1)]
+                })
+            };
+            let mut outline = Vec::with_capacity(30);
+            for step in 0..=12 {
+                let angle = std::f32::consts::PI * (1.0 + step as f32 / 12.0);
+                outline.push([12.0 + 6.0 * angle.cos(), 8.5 + 6.0 * angle.sin()]);
+            }
+            outline.extend(bezier(
+                [18.0, 8.5],
+                [18.0, 14.5],
+                [19.5, 16.0],
+                [20.5, 17.5],
+            ));
+            outline.push([3.5, 17.5]);
+            outline.extend(bezier([3.5, 17.5], [4.5, 16.0], [6.0, 14.5], [6.0, 8.5]));
+            line(&outline);
+            line(&[[10.0, 20.5], [11.0, 21.5], [13.0, 21.5], [14.0, 20.5]]);
+        }
         Icon::Terminal => {
             rectangle(3.0, 5.0, 18.0, 14.0, 3.0);
             line(&[[7.0, 9.0], [10.0, 12.0], [7.0, 15.0]]);

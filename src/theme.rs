@@ -70,6 +70,8 @@ pub struct Palette {
     pub green: Color32,
     pub yellow: Color32,
     pub red: Color32,
+    /// Unread terminal alerts: the pane ring, the bell dot and unread counts.
+    pub attention: Color32,
     pub scrim: Color32,
     pub shadow: Color32,
     pub dark: bool,
@@ -237,11 +239,27 @@ impl Palette {
         p.green = readable(p.ansi[2], &surfaces, 4.5);
         p.yellow = readable(p.ansi[3], &surfaces, 4.5);
         p.red = readable(p.ansi[1], &surfaces, 4.5);
+        // Attention takes the palette's yellow, unless that is also its focus
+        // colour; then it keeps the amber of the original themes.
+        let amber = p.attention;
+        p.attention = readable(p.ansi[3], &surfaces, 3.0);
+        if p.attention == p.accent {
+            p.attention = readable(amber, &surfaces, 3.0);
+        }
         p
     }
 
     pub fn with_accent(theme: &Theme, accent: Accent) -> Self {
         let dark = theme != &Theme::Light;
+        // Attention is amber, and stays apart from an amber focus accent.
+        let attention = accent_color(
+            if accent == Accent::Orange {
+                Accent::Yellow
+            } else {
+                Accent::Orange
+            },
+            dark,
+        );
         let accent = accent_color(accent, dark);
         let on_accent = if luminance(accent) > 170.0 {
             color(0x1d1d1f)
@@ -273,6 +291,7 @@ impl Palette {
             green: color(0x30d158),
             yellow: color(0xffd60a),
             red: color(0xff5a52),
+            attention,
             scrim: black(120),
             shadow: black(110),
             dark,
@@ -453,6 +472,8 @@ mod tests {
                 // Selected terminal cells stay distinct from the surface.
                 assert_ne!(p.selection, p.bg);
                 assert_eq!(p.selection.a(), 255);
+                // An unread ring is never mistaken for the focus ring.
+                assert_ne!(p.attention, p.accent, "{theme:?}/{accent:?}");
             }
         }
     }
@@ -487,6 +508,13 @@ mod tests {
                 "{} button text",
                 theme.name
             );
+            for surface in [p.bg, p.chrome, p.elevated] {
+                assert!(
+                    contrast(p.attention, surface) >= 3.0,
+                    "{} attention contrast",
+                    theme.name
+                );
+            }
             assert!(
                 contrast(p.on_red(), p.red) >= 3.0,
                 "{} destructive button text",

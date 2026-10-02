@@ -374,6 +374,13 @@ fn commands(view: &PaletteView) -> Vec<Command> {
         ),
         command(
             "View",
+            Icon::Bell,
+            "Notifications",
+            "",
+            [Action::Notifications],
+        ),
+        command(
+            "View",
             Icon::Settings,
             "Preferences",
             edit_shortcut(","),
@@ -658,6 +665,8 @@ mod tests {
         let workspaces: Vec<WorkspaceView> = [1, 2]
             .into_iter()
             .map(|id| WorkspaceView {
+                unread: 0,
+                alert: None,
                 group: None,
                 id: WorkspaceId::new(id),
                 name: "app".into(),
@@ -694,6 +703,8 @@ mod tests {
         let workspaces: Vec<WorkspaceView> = [4, 7, 9]
             .into_iter()
             .map(|id| WorkspaceView {
+                unread: 0,
+                alert: None,
                 group: None,
                 id: WorkspaceId::new(id),
                 name: "app".into(),
@@ -734,6 +745,8 @@ mod tests {
         let workspaces: Vec<WorkspaceView> = [(1, None), (2, Some("me@devbox"))]
             .into_iter()
             .map(|(id, remote): (u64, Option<&str>)| WorkspaceView {
+                unread: 0,
+                alert: None,
                 group: None,
                 id: WorkspaceId::new(id),
                 name: "app".into(),
@@ -780,6 +793,8 @@ mod tests {
             [(1, None), (2, None), (3, None), (4, Some("me@devbox"))]
                 .into_iter()
                 .map(|(id, remote): (u64, Option<&str>)| WorkspaceView {
+                    unread: 0,
+                    alert: None,
                     group: None,
                     id: WorkspaceId::new(id),
                     name: "app".into(),
