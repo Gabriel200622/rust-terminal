@@ -176,8 +176,14 @@ prevent a server/network from withholding a newer release.
 
 ## One-time Apple setup (owner action)
 
-No Apple credentials were created/uploaded and no notarization submission was
-made during implementation. Use a trusted Mac and your existing Developer Program:
+Apple credentials were provisioned on 2026-10-02 using the owner’s signed-in
+Developer Program account. A new Developer ID Application certificate and its
+matching private key were exported as a password-protected .p12; a dedicated
+Developer-role team API key was created for notarization. All six Apple secrets
+are stored in `desktop-release`, with owner-requested backups in a restricted
+Downloads folder outside the worktree. Setup alone does not establish successful
+notarization or Gatekeeper acceptance. For renewal or replacement, use a trusted
+Mac and your existing Developer Program:
 
 1. In Certificates, Identifiers & Profiles, create a **Developer ID Application**
    certificate (not Developer ID Installer or an App Store distribution certificate).
