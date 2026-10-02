@@ -132,7 +132,7 @@ fn native_options(
     window: &window_state::WindowState,
     icon: eframe::egui::IconData,
 ) -> eframe::NativeOptions {
-    let mut options = eframe::NativeOptions {
+    eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("Neptune")
             .with_app_id("rs.neptune.terminal")
@@ -140,30 +140,13 @@ fn native_options(
             .with_inner_size(window.inner_size)
             .with_maximized(window.maximized)
             .with_min_inner_size([640.0, 400.0])
-            .with_transparent(true)
+            // Windows rounds and borders the window itself; elsewhere the
+            // application paints transparent corners.
+            .with_transparent(!cfg!(target_os = "windows"))
             .with_decorations(false),
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()
-    };
-    if cfg!(target_os = "windows") {
-        options.wgpu_options.wgpu_setup = windows_gpu_setup();
     }
-    options
-}
-
-fn windows_gpu_setup() -> eframe::egui_wgpu::WgpuSetup {
-    use eframe::{egui_wgpu::WgpuSetupCreateNew, wgpu};
-
-    let mut setup = WgpuSetupCreateNew::without_display_handle();
-    // HWND swapchains are opaque. DirectComposition preserves the alpha in
-    // our painted corners; use DX12 so an opaque Vulkan surface cannot win.
-    setup.instance_descriptor.backends = wgpu::Backends::DX12;
-    setup
-        .instance_descriptor
-        .backend_options
-        .dx12
-        .presentation_system = wgpu::Dx12SwapchainKind::DxgiFromVisual;
-    setup.into()
 }
 
 fn native_icon() -> anyhow::Result<eframe::egui::IconData> {
@@ -188,7 +171,10 @@ mod tests {
             &window_state::WindowState::default(),
             native_icon().expect("bundled icon decodes"),
         );
-        assert_eq!(options.viewport.transparent, Some(true));
+        assert_eq!(
+            options.viewport.transparent,
+            Some(!cfg!(target_os = "windows"))
+        );
         assert_eq!(options.viewport.decorations, Some(false));
     }
 
@@ -219,23 +205,5 @@ mod tests {
             }
         }
         assert_eq!(bounds, [100, 100, 924, 924]);
-    }
-
-    #[test]
-    fn windows_surface_supports_alpha_composition() {
-        use eframe::wgpu::{Backends, Dx12SwapchainKind};
-
-        let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = windows_gpu_setup() else {
-            panic!("the desktop creates its GPU setup");
-        };
-        assert_eq!(setup.instance_descriptor.backends, Backends::DX12);
-        assert_eq!(
-            setup
-                .instance_descriptor
-                .backend_options
-                .dx12
-                .presentation_system,
-            Dx12SwapchainKind::DxgiFromVisual
-        );
     }
 }
