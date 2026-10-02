@@ -265,6 +265,16 @@ impl App {
                 }
             }
         }
+        for (pane, generation, agent) in self.sessions.agent_changes() {
+            self.dispatch(
+                ctx,
+                Command::PaneAgentChanged {
+                    pane,
+                    generation,
+                    agent,
+                },
+            );
+        }
         let metadata: Vec<_> = self
             .sessions
             .iter()
@@ -909,6 +919,16 @@ impl eframe::App for App {
             .collect();
         for (pane, metadata) in metadata {
             self.sync_directory(&ctx, pane, &metadata);
+        }
+        for (pane, generation, agent) in self.sessions.agent_changes() {
+            self.dispatch(
+                &ctx,
+                Command::PaneAgentChanged {
+                    pane,
+                    generation,
+                    agent,
+                },
+            );
         }
         self.save_state();
         self.save_window();

@@ -2053,6 +2053,7 @@ mod tests {
                         id: PaneId::new(*id),
                         cwd: "/srv/app".into(),
                         remote_cwd: None,
+                        agent: None,
                     }],
                     layout: neptune_model::Layout::Leaf(PaneId::new(*id)),
                     active: PaneId::new(*id),

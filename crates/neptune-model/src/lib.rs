@@ -2,12 +2,14 @@
 //! needed to validate layouts or run commands. Runtime owners execute returned
 //! effects and deliver generation-tagged completions back to the controller.
 
+mod agent;
 mod controller;
 mod ids;
 mod layout;
 mod remote;
 mod workspace;
 
+pub use agent::{AgentKind, AgentSession};
 pub use controller::{Command, Completion, Controller, Destination, Effect};
 pub use ids::{PaneId, SessionGeneration, SplitId, WorkspaceGroupId, WorkspaceId};
 pub use layout::{Axis, Edge, FocusDirection, Layout};
