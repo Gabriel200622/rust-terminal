@@ -7,13 +7,59 @@ The workflow ends with a complete **draft**; a human reviews and publishes it.
 unless the user explicitly asks them to release that version.** Preparing code,
 versions, changelog entries and local validation is allowed within an implementation task.
 
-## Prepare the next version
+## Release-candidate policy
+
+Every stable release, including the first public version and hotfixes, must go
+through release candidates. Choose the intended stable version once, then test
+`X.Y.Z-rc.1`, `X.Y.Z-rc.2`, and so on until acceptance passes. Acceptance fixes
+increment the candidate number, keeping `X.Y.Z` fixed; they do not consume stable
+patch or minor versions. Betas may precede RCs, but do not replace RC acceptance.
+
+Each tagged RC is a separate build with its own dated changelog section,
+installers, signed manifest and evidence. Keep its GitHub release a private draft
+for owner acceptance. A green workflow, valid signatures or a complete draft
+does not establish native acceptance. Record the RC tag, source SHA, installer
+hashes, host details, results for every applicable
+[release gate](verification.md#remaining-production-release-gates), and any
+failures and retests. Stable preparation requires an accepted RC for that same
+`X.Y.Z`, with evidence linked from the preparation PR.
+
+If acceptance fails, keep the draft private, fix the blockers through the normal
+feature-branch/PR process, prepare `X.Y.Z-rc.N+1`, and test its actual installers.
+Preserve every existing tag, including rejected RCs. A transient CI/upload failure
+may be rerun for the same tagged source before publication; changed source or
+packaging needs a new RC. The helper validates versions and artifacts; it does
+not enforce the acceptance decision. Agents must check the recorded evidence.
+
+After RC acceptance, follow [stable promotion](#promote-an-accepted-release-candidate).
+An RC remains a prerelease even after acceptance: promotion creates a separate
+stable build, rather than renaming its tag or clearing its prerelease flag.
+Creating tags/releases and publishing either channel still require explicit
+authorization for that version.
+
+### First-public-release status: 2026-10-02
+
+The owner reported that the private **0.1.2** draft failed acceptance:
+
+- macOS Apple Silicon: the Dock icon becomes visibly larger while Neptune runs;
+  it has the expected size after the app closes.
+- Linux: the downloaded AppImage could not be opened directly or with Gear Lever.
+  The distribution/version and exact error still need to be recorded.
+
+It must remain unpublished; its `v0.1.2` tag is preserved. Record reproduction,
+fixes and retest results before claiming acceptance.
+Because the stable tag is already occupied, the next intended stable version is
+**0.1.3**: prepare **0.1.3-rc.1** after the fixes, then increment only the RC
+number until acceptance passes. This is the transition from the earlier workflow,
+not a reason to keep allocating stable versions during testing.
+
+## Prepare a release candidate
 
 Release helpers require Python 3.11+; native release jobs provision Python 3.13.
 Manifest signing uses OpenSSL's Ed25519 support on the final Linux runner.
 
-Use `v0.1.0`, `v0.1.1`, `v0.2.0` for stable releases; use
-`v0.2.0-beta.1`, `v0.2.0-beta.2`, `v0.2.0-rc.1` for previews. SemVer is strict:
+Use `v0.1.3-rc.1`, `v0.1.3-rc.2` for acceptance candidates and `v0.1.3` for
+their eventual stable release. SemVer is strict:
 no leading zeroes in core or numeric prerelease identifiers. Build metadata is
 accepted but does not affect precedence and must not be used to offer an update.
 Core numbers must fit Windows' 16-bit VERSIONINFO fields.
@@ -25,33 +71,33 @@ Windows' numeric resource/installer version use the numeric core; full SemVer
 stays in the executable, tag, filenames and update metadata.
 
 Add useful user-facing bullets to `CHANGELOG.md` under **Unreleased / What's New**
-as changes land. No raw commit list. Prepare a release on a feature branch based
+as changes land. No raw commit list. Prepare each RC on a feature branch based
 on `main`, following the normal PR flow:
 
 ```sh
-# Stable example (the first release; substitute the intended version thereafter):
-python3 scripts/release.py prepare 0.1.0
-python3 scripts/release.py validate v0.1.0
+# First candidate for the intended 0.1.3 stable release:
+python3 scripts/release.py prepare 0.1.3-rc.1
+python3 scripts/release.py validate v0.1.3-rc.1
 # Review Cargo.toml, Cargo.lock and CHANGELOG.md, then commit via a PR.
 ```
 
 The helper moves Unreleased into a dated section and leaves a fresh Unreleased
 heading. It neither commits nor creates/pushes a tag. Empty/unfinished notes,
-version mismatches and unprovisioned updater trust keys fail validation. For a beta:
+version mismatches and unprovisioned updater trust keys fail validation. After
+fixes and useful Unreleased notes, prepare the next candidate:
 
 ```sh
-python3 scripts/release.py prepare 0.2.0-beta.1
-python3 scripts/release.py validate v0.2.0-beta.1
+python3 scripts/release.py prepare 0.1.3-rc.2
+python3 scripts/release.py validate v0.1.3-rc.2
 # Review and merge through a green PR as usual.
 ```
 
-Every beta gets its own useful changelog section. Repeat important preview changes
-in the final stable section so users upgrading from the previous stable learn
-what changed; this is release history, not a separate notes source. The workflow
+Every RC or beta gets its own useful changelog section. The first public stable
+notes must also include the features from earlier unpublished drafts. The workflow
 copies the version's section verbatim to GitHub Release notes and the signed
 updater manifest. Edit it before tagging. Published versions and assets are immutable.
 
-## Create the tag and review the draft
+## Create the candidate tag and review the draft
 
 After the preparation PR has merged and the **CI** workflow has passed for that
 exact resulting `main` SHA, use a clean retained checkout:
@@ -60,16 +106,16 @@ exact resulting `main` SHA, use a clean retained checkout:
 git fetch origin main --tags
 git switch main
 git pull --ff-only origin main
-python3 scripts/release.py validate v0.1.0
+python3 scripts/release.py validate v0.1.3-rc.1
 gh run list --repo zevem/neptune --workflow ci.yml --commit "$(git rev-parse HEAD)"
 # Confirm the exact main push run succeeded, then, only with release authorization:
-git tag -a v0.1.0 -m "Neptune 0.1.0"
-git push origin refs/tags/v0.1.0
+git tag -a v0.1.3-rc.1 -m "Neptune 0.1.3-rc.1"
+git push origin refs/tags/v0.1.3-rc.1
 ```
 
-Beta uses the same commands with `v0.2.0-beta.1` and tag message
-`Neptune 0.2.0-beta.1`. Never move or force-push a release tag. A failed preflight
-can be rerun after exact-commit CI completes; source corrections need a new version/tag.
+Subsequent candidates use the same commands with their `-rc.N` version.
+Never move or force-push a release tag. A failed preflight can be rerun after
+exact-commit CI completes; source corrections need the next RC tag.
 Do not tag an unrelated feature branch.
 
 `Desktop release` runs only on `push.tags: v*`:
@@ -107,17 +153,52 @@ shortcuts and uninstall registration. It preserves user settings/workspaces.
 Once the workflow is green, download draft artifacts as an authenticated operator,
 verify all eight asset names, signatures/checksums/attestations, test installers
 and run the [native acceptance gates](verification.md#remaining-production-release-gates).
-Review the notes and SemVer prerelease checkbox in GitHub. Only then publish the
-draft manually. Stable releases should be marked **latest**; prereleases must
-remain prereleases and never be marked latest. Prefer the GitHub UI, or, with
-explicit release-publication authorization:
+Review the notes and confirm the RC has GitHub's prerelease checkbox enabled.
+Record acceptance before proceeding to stable promotion. Keep the RC private
+unless explicitly authorized to publish that preview; a published RC remains a
+prerelease and is never marked latest. Prefer the GitHub UI, or, with explicit
+release-publication authorization:
 
 ```sh
-# Stable:
-gh release edit v0.1.0 --repo zevem/neptune --draft=false --latest
-# Beta:
-gh release edit v0.2.0-beta.1 --repo zevem/neptune --draft=false --prerelease --latest=false
+# Optional public RC; this does not publish a stable release:
+gh release edit v0.1.3-rc.1 --repo zevem/neptune --draft=false --prerelease --latest=false
 ```
+
+## Promote an accepted release candidate
+
+1. Verify the latest RC for the intended `X.Y.Z` passed all applicable acceptance
+   gates, and link its evidence from the stable preparation PR. Outstanding blockers
+   or missing platform evidence keep the release in the RC cycle.
+2. Prepare `X.Y.Z` on a feature branch based on `main`. Compared with the accepted
+   RC, promotion changes only release version/notes metadata: no new application,
+   dependency, packaging or workflow changes. Any such change needs another RC.
+   Summarize all user-facing changes since the previous public stable release
+   under Unreleased before running the helper; it does not collect RC notes for you.
+
+   ```sh
+   python3 scripts/release.py prepare 0.1.3
+   python3 scripts/release.py validate v0.1.3
+   ```
+
+3. Review and merge through green PR CI, then require successful main-push CI for
+   the exact resulting SHA. With authorization to release that stable version,
+   use the tag procedure above with `v0.1.3` and message `Neptune 0.1.3`.
+4. The workflow builds and signs new stable installers and leaves a private draft.
+   Verify all eight assets and native acceptance of those exact final installers,
+   including install/launch and version/update-channel behavior. RC evidence does
+   not prove the final artifact bytes. A failed final draft stays private; preserve
+   its occupied stable tag and start RCs for the next unused stable version.
+5. With explicit stable-publication authorization, publish the complete accepted
+   draft as stable and **latest**:
+
+   ```sh
+   gh release edit v0.1.3 --repo zevem/neptune --draft=false --prerelease=false --latest
+   ```
+
+Verify public GitHub downloads, `neptune.rs/download`, all five installer links,
+and native update checks after publication; allow up to five minutes for website
+caching. The Beta channel and `/download/beta` also carry published RCs according
+to the channel rules below; private drafts are excluded from both channels.
 
 ## GitHub environment and signing credentials
 
@@ -343,6 +424,10 @@ same workflow run and signs only the complete set.
 
 ## Troubleshoot a failed release
 
+- **Acceptance:** keep a rejected draft private and follow the
+  [RC policy](#release-candidate-policy); fixes increment the RC number for the
+  intended stable version. If a rejected stable tag already exists, preserve it
+  and begin RCs for the next unused stable version.
 - **Preflight:** check strict tag/package/lock equality, dated What's New bullets,
   main ancestry, trust key and exact main SHA's successful CI run. Wait for CI and
   rerun if it was pending. Do not disable checks or force-move the tag.

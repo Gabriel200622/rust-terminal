@@ -411,6 +411,10 @@ before accepting them. The design choices and corrections are recorded in
 
 ## Remaining production release gates
 
+Record these results for the exact release candidate under the mandatory
+[RC workflow](releases.md#release-candidate-policy). An accepted RC is required
+before preparing stable artifacts; verify the final installers before publication.
+
 | Gate | Required evidence |
 | --- | --- |
 | Native platforms | Successful release builds and interactive desktop runs on Linux Wayland/X11, Windows ConPTY, and macOS; real shell/TUI input, resize/reflow, alternate screen, mouse, clipboard, and lifecycle verification on each |
