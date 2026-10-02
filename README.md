@@ -1,6 +1,6 @@
 # Neptune
 
-<img src="assets/icons/neptune-256.png" alt="Neptune logo" width="96" height="96">
+<img src="assets/branding/neptune-icon.png" alt="Neptune logo" width="96" height="96">
 
 [neptune.rs](https://neptune.rs) · [GitHub](https://github.com/zevem/neptune)
 

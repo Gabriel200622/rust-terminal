@@ -215,7 +215,7 @@ export function Icon({
   );
 }
 
-/** The supplied logo, exported from `assets/branding/neptune-logo.png`. */
+/** The marketing mark, exported from `assets/branding/neptune-icon.png`. */
 export function NeptuneMark({ size = 28 }: { size?: number }) {
   return (
     <Image

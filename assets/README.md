@@ -2,11 +2,18 @@
 
 Project artwork, designs and bundled fonts live here.
 
-- [`branding/neptune-logo.png`](branding/neptune-logo.png) is the original supplied
-  Neptune logo, including its transparent background and padding.
-- `icons/` contains exports of that exact artwork: PNGs from 16 to 1024 pixels,
-  a Windows ICO with sizes through 256 pixels, and a macOS ICNS with Retina sizes
-  through 1024 pixels.
+The supplied originals have distinct uses:
+
+| Source | Supplied name | Use |
+| --- | --- | --- |
+| [`branding/neptune-logo.png`](branding/neptune-logo.png) | Logo.png | Linux and Windows app/taskbar icons |
+| [`branding/neptune-macos-logo.png`](branding/neptune-macos-logo.png) | MacOS Logo.png | macOS Finder/Dock icon, with its supplied padding preserved |
+| [`branding/neptune-icon.png`](branding/neptune-icon.png) | Icon.png | Website, marketing, sharing metadata and README |
+
+- `icons/` contains Linux/Windows PNGs from 16 to 1024 pixels and a Windows ICO
+  with sizes through 256 pixels, exported from `neptune-logo.png`. The macOS ICNS
+  has Retina sizes through 1024 pixels, exported from `neptune-macos-logo.png`
+  without adding padding.
 - [`fonts/`](fonts/README.md) contains the bundled typefaces and their licenses.
 
 Regenerate the icons and website copies from the repository root:
@@ -21,6 +28,7 @@ The native window loads `icons/neptune-256.png`; Windows builds embed
 see [`package-macos.py`](../scripts/package-macos.py). Linux installs the PNGs in
 the `hicolor` icon theme under the name `neptune`.
 
-The website copies serve its navigation, footer, favicon, touch icon and sharing
-metadata. The logo belongs to app identity and external branding; it is not
-drawn inside the terminal interface or its website demo.
+The website copies use `neptune-icon.png` for navigation, footer, favicon, touch
+icon and sharing metadata. The touch icon composites the mark onto the website's
+opaque dark background. The logo belongs to app identity and external branding;
+it is not drawn inside the terminal interface or its website demo.
