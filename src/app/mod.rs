@@ -939,9 +939,13 @@ impl eframe::App for App {
                     &mut actions,
                 );
             }
-            OverlayState::Settings => {
-                ui::preferences::show(&ctx, &self.config, &self.updates, &mut actions)
-            }
+            OverlayState::Settings => ui::preferences::show(
+                &ctx,
+                &self.config,
+                &self.updates,
+                &mut self.ui.preferences,
+                &mut actions,
+            ),
             OverlayState::Update => ui::updates::show(&ctx, p, &self.updates, &mut actions),
             OverlayState::Palette => ui::palette::show(
                 &ctx,
@@ -1059,9 +1063,9 @@ fn default_cwd() -> PathBuf {
 fn set_session_palette(session: &terminal_core::TerminalSession, p: Palette) {
     use terminal_core::{NamedColor, Rgb};
     for (index, color) in p.ansi.iter().copied().enumerate().chain([
-        (NamedColor::Foreground as usize, p.fg),
+        (NamedColor::Foreground as usize, p.terminal_fg),
         (NamedColor::Background as usize, p.bg),
-        (NamedColor::Cursor as usize, p.accent),
+        (NamedColor::Cursor as usize, p.cursor),
     ]) {
         session.set_color(
             index,

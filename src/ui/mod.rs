@@ -8,6 +8,8 @@ pub mod notifications;
 pub mod palette;
 pub mod preferences;
 pub mod search;
+pub mod theme_browser;
+mod theme_editor;
 pub mod updates;
 pub mod workspace;
 use crate::{config::Config, terminal::Cache};
@@ -43,6 +45,7 @@ pub enum OverlayState {
 #[derive(Default)]
 pub struct UiState {
     pub overlay: OverlayState,
+    pub preferences: theme_browser::State,
     pub palette_query: String,
     /// Highlighted command; reset whenever the query changes.
     pub palette_selected: usize,
@@ -99,6 +102,7 @@ pub enum Action {
     },
     Disconnect(WorkspaceId),
     Settings,
+    Themes,
     Notifications,
     Palette,
     ToggleSidebar,

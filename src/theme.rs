@@ -57,6 +57,11 @@ pub struct Palette {
     /// Outline of floating surfaces and editable controls.
     pub border: Color32,
     pub fg: Color32,
+    pub terminal_fg: Color32,
+    pub terminal_bold: Color32,
+    pub cursor: Color32,
+    pub cursor_text: Option<Color32>,
+    pub selection_text: Option<Color32>,
     pub secondary: Color32,
     pub muted: Color32,
     pub accent: Color32,
@@ -132,18 +137,120 @@ fn luminance(color: Color32) -> f32 {
     0.299 * color.r() as f32 + 0.587 * color.g() as f32 + 0.114 * color.b() as f32
 }
 
+/// Relative luminance of opaque sRGB colors, used only for window readability.
+fn relative_luminance(c: Color32) -> f32 {
+    let linear = |v: u8| {
+        let v = f32::from(v) / 255.0;
+        if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * linear(c.r()) + 0.7152 * linear(c.g()) + 0.0722 * linear(c.b())
+}
+fn contrast(a: Color32, b: Color32) -> f32 {
+    let a = relative_luminance(a);
+    let b = relative_luminance(b);
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+fn readable(ink: Color32, surfaces: &[Color32], minimum: f32) -> Color32 {
+    let score = |ink| {
+        surfaces
+            .iter()
+            .map(|&surface| contrast(ink, surface))
+            .fold(f32::INFINITY, f32::min)
+    };
+    if score(ink) >= minimum {
+        return ink;
+    }
+    let target = if score(Color32::WHITE) > score(Color32::BLACK) {
+        Color32::WHITE
+    } else {
+        Color32::BLACK
+    };
+    for step in 1..=20 {
+        let adjusted = mix(ink, target, step as f32 / 20.0);
+        if score(adjusted) >= minimum {
+            return adjusted;
+        }
+    }
+    target
+}
+
 impl Palette {
-    /// The theme with the default accent.
+    /// The theme with the default accent (custom themes require their config).
     pub fn new(theme: Theme) -> Self {
-        Self::with_accent(theme, Accent::default())
+        Self::for_config(&Config {
+            theme,
+            ..Config::default()
+        })
     }
 
     pub fn for_config(config: &Config) -> Self {
-        Self::with_accent(config.theme, config.accent)
+        config
+            .theme_colors()
+            .map(Self::from_colors)
+            .unwrap_or_else(|| Self::with_accent(&config.theme, config.accent))
     }
 
-    pub fn with_accent(theme: Theme, accent: Accent) -> Self {
-        let dark = theme != Theme::Light;
+    /// Derive all window materials from the same palette used by the terminal.
+    /// Terminal colors stay exact; chrome text and accents get a contrast floor.
+    pub fn from_colors(colors: crate::terminal_theme::ThemeColors) -> Self {
+        let dark = colors.is_dark();
+        let mut p = Self::with_accent(
+            if dark {
+                &Theme::Graphite
+            } else {
+                &Theme::Light
+            },
+            Accent::default(),
+        );
+        p.bg = color(colors.background.0);
+        p.terminal_fg = color(colors.foreground.0);
+        p.terminal_bold = color(colors.bold.0);
+        p.cursor = color(colors.cursor.0);
+        p.cursor_text = Some(color(colors.cursor_text.0));
+        p.selection = color(colors.selection.0);
+        p.selection_text = Some(color(colors.selection_text.0));
+        p.ansi = colors.ansi.map(|c| color(c.0));
+        let lift = if dark { Color32::WHITE } else { Color32::BLACK };
+        let anchor = if contrast(p.bg, Color32::WHITE) > contrast(p.bg, Color32::BLACK) {
+            Color32::WHITE
+        } else {
+            Color32::BLACK
+        };
+        let material = |amount| {
+            let surface = mix(p.bg, lift, amount);
+            if contrast(anchor, surface) >= 4.5 {
+                surface
+            } else {
+                p.bg
+            }
+        };
+        p.chrome = material(if dark { 0.055 } else { 0.035 });
+        p.elevated = material(if dark { 0.095 } else { 0.015 });
+        let surfaces = [p.bg, p.chrome, p.elevated];
+        p.fg = readable(p.terminal_fg, &surfaces, 4.5);
+        p.secondary = readable(mix(p.chrome, p.fg, 0.78), &surfaces, 4.5);
+        p.muted = readable(mix(p.chrome, p.fg, 0.60), &surfaces, 4.5);
+        p.accent = readable(p.ansi[4], &surfaces, 3.0);
+        p.on_accent = readable(p.bg, &[p.accent], 4.5);
+        p.green = readable(p.ansi[2], &surfaces, 4.5);
+        p.yellow = readable(p.ansi[3], &surfaces, 4.5);
+        p.red = readable(p.ansi[1], &surfaces, 4.5);
+        // Attention takes the palette's yellow, unless that is also its focus
+        // colour; then it keeps the amber of the original themes.
+        let amber = p.attention;
+        p.attention = readable(p.ansi[3], &surfaces, 3.0);
+        if p.attention == p.accent {
+            p.attention = readable(amber, &surfaces, 3.0);
+        }
+        p
+    }
+
+    pub fn with_accent(theme: &Theme, accent: Accent) -> Self {
+        let dark = theme != &Theme::Light;
         // Attention is amber, and stays apart from an amber focus accent.
         let attention = accent_color(
             if accent == Accent::Orange {
@@ -171,6 +278,11 @@ impl Palette {
             separator: white(20),
             border: white(30),
             fg: color(0xececf1),
+            terminal_fg: color(0xececf1),
+            terminal_bold: color(0xececf1),
+            cursor: accent,
+            cursor_text: None,
+            selection_text: None,
             secondary: color(0xa0a0a8),
             muted: color(0x6d6d76),
             accent,
@@ -190,7 +302,7 @@ impl Palette {
             .map(color),
         };
         match theme {
-            Theme::Graphite => {}
+            Theme::Graphite | Theme::Palette(_) => {}
             Theme::Dusk => {
                 p.bg = color(0x12111c);
                 p.chrome = color(0x1e1c2b);
@@ -226,8 +338,20 @@ impl Palette {
             }
         }
         // Opaque, so selected cells keep their exact colour under any glyph.
+        p.terminal_fg = p.fg;
+        p.terminal_bold = p.fg;
         p.selection = mix(p.bg, p.accent, if dark { 0.34 } else { 0.24 });
         p
+    }
+
+    /// Label ink on a filled destructive control: white, unless an imported
+    /// palette's red is too light to carry it.
+    pub fn on_red(&self) -> Color32 {
+        if contrast(Color32::WHITE, self.red) >= 3.0 {
+            Color32::WHITE
+        } else {
+            color(0x1d1d1f)
+        }
     }
 
     pub fn hairline(&self) -> Stroke {
@@ -340,15 +464,75 @@ mod tests {
     fn every_accent_keeps_readable_text_in_every_theme() {
         for theme in [Theme::Graphite, Theme::Dusk, Theme::Light] {
             for (accent, _) in Accent::ALL {
-                let p = Palette::with_accent(theme, accent);
+                let p = Palette::with_accent(&theme, accent);
                 let contrast = (luminance(p.accent) - luminance(p.on_accent)).abs();
                 assert!(contrast > 70.0, "{theme:?}/{accent:?} label contrast");
+                // The original themes keep white labels on destructive controls.
+                assert_eq!(p.on_red(), Color32::WHITE);
                 // Selected terminal cells stay distinct from the surface.
                 assert_ne!(p.selection, p.bg);
                 assert_eq!(p.selection.a(), 255);
                 // An unread ring is never mistaken for the focus ring.
                 assert_ne!(p.attention, p.accent, "{theme:?}/{accent:?}");
             }
+        }
+    }
+
+    #[test]
+    fn every_imported_theme_drives_window_and_terminal_with_readable_chrome() {
+        for theme in crate::terminal_theme::BUNDLED {
+            let config = Config {
+                theme: Theme::Palette(format!("iterm:{}", theme.name)),
+                ..Config::default()
+            };
+            let p = Palette::for_config(&config);
+            assert_eq!(p.bg, color(theme.colors.background.0));
+            assert_eq!(p.terminal_fg, color(theme.colors.foreground.0));
+            assert_eq!(p.ansi, theme.colors.ansi.map(|c| color(c.0)));
+            for surface in [p.bg, p.chrome, p.elevated] {
+                for ink in [p.fg, p.secondary, p.muted, p.red, p.green, p.yellow] {
+                    assert!(
+                        contrast(ink, surface) >= 4.5,
+                        "{} text contrast",
+                        theme.name
+                    );
+                }
+                assert!(
+                    contrast(p.accent, surface) >= 3.0,
+                    "{} accent contrast",
+                    theme.name
+                );
+            }
+            assert!(
+                contrast(p.on_accent, p.accent) >= 4.5,
+                "{} button text",
+                theme.name
+            );
+            for surface in [p.bg, p.chrome, p.elevated] {
+                assert!(
+                    contrast(p.attention, surface) >= 3.0,
+                    "{} attention contrast",
+                    theme.name
+                );
+            }
+            assert!(
+                contrast(p.on_red(), p.red) >= 3.0,
+                "{} destructive button text",
+                theme.name
+            );
+        }
+    }
+
+    #[test]
+    fn custom_theme_keeps_exact_terminal_colors_and_repairs_chrome_contrast() {
+        let mut colors = crate::terminal_theme::bundled("Dracula").unwrap().colors;
+        colors.background = crate::terminal_theme::HexColor(0x777777);
+        colors.foreground = colors.background;
+        colors.ansi.fill(colors.background);
+        let p = Palette::from_colors(colors);
+        assert_eq!(p.bg, p.terminal_fg);
+        for surface in [p.bg, p.chrome, p.elevated] {
+            assert!(contrast(p.fg, surface) >= 4.5);
         }
     }
 

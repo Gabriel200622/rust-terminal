@@ -1,10 +1,18 @@
 # Use with: neptune --config config.example.toml
 # Omitted fields use the application's defaults. Unknown keys are rejected.
 
-# graphite, dusk, or light
+# One theme for the window and terminal: graphite, dusk, light, or a palette ID.
 theme = "graphite"
 
-# Highlight for focus, selection and the cursor:
+# Browse all 715 themes from the theme row in Preferences.
+# Palette names are exact, including spaces/case. For example:
+# theme = "iterm:Dracula"
+# Custom themes are created/edited in Preferences and stored as [[custom_themes]]
+# entries in this file. Their stable selection IDs look like "custom:1".
+# Reset to defaults retains the custom theme library.
+
+# Legacy accent setting for Graphite, Dusk and Light only. Imported/custom
+# themes derive their interface accent from the palette:
 # blue, indigo, purple, pink, red, orange, yellow, green, or graphite
 accent = "blue"
 
