@@ -702,10 +702,13 @@ impl eframe::App for App {
         }
         let p = Palette::for_config(&self.config);
         let bounds = ui.max_rect();
-        let radius = if ctx.input(|i| {
-            !i.viewport().fullscreen.unwrap_or(false)
-                && (cfg!(target_os = "macos") || !i.viewport().maximized.unwrap_or(false))
-        }) {
+        // Windows 11 clips the window to its own smaller rounded corner and
+        // draws the border; a painted corner would leave gaps inside it.
+        let radius = if !cfg!(target_os = "windows")
+            && ctx.input(|i| {
+                !i.viewport().fullscreen.unwrap_or(false)
+                    && (cfg!(target_os = "macos") || !i.viewport().maximized.unwrap_or(false))
+            }) {
             metrics::WINDOW_RADIUS
         } else {
             0
