@@ -1,6 +1,6 @@
 "use client";
 
-// Pace's window, rebuilt for the browser from the app's own layout code
+// Neptune's window, rebuilt for the browser from the app's own layout code
 // (`src/ui/chrome.rs`, `src/ui/workspace.rs`) and theme tokens. Sizes are the
 // app's logical points; the window responds to its own width as the app does:
 // the sidebar yields below 820 points and the command field below 760.
@@ -1003,7 +1003,7 @@ function Hud({ hud, mac }: { hud: NonNullable<State["hud"]>; mac: boolean }) {
   );
 }
 
-export function PaceWindow({
+export function NeptuneWindow({
   store,
   onTakeover,
   touring,
@@ -1134,7 +1134,7 @@ export function PaceWindow({
     <div
       ref={root}
       role="application"
-      aria-label="Pace, an interactive demonstration"
+      aria-label="Neptune, an interactive demonstration"
       aria-roledescription="terminal window"
       tabIndex={0}
       data-sidebar={state.sidebar ? "open" : "closed"}

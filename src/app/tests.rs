@@ -1,10 +1,10 @@
 use super::*;
-use pace_model::WorkspaceId;
+use neptune_model::WorkspaceId;
 
 fn fixture(root: &std::path::Path) -> (App, mpsc::SyncSender<Startup>) {
     let (sender, receiver) = mpsc::sync_channel(1);
     let config = Config {
-        shell: Some("/nonexistent/pace-startup-test-shell".into()),
+        shell: Some("/nonexistent/neptune-startup-test-shell".into()),
         ..Config::default()
     };
     let app = App {
@@ -25,7 +25,7 @@ fn fixture(root: &std::path::Path) -> (App, mpsc::SyncSender<Startup>) {
         deferred_actions: Vec::new(),
         initial_cwd: Some(root.into()),
         initial_remote: None,
-        ssh_client: "/nonexistent/pace-startup-test-ssh".into(),
+        ssh_client: "/nonexistent/neptune-startup-test-ssh".into(),
         ui: UiState::default(),
         search_point: None,
         search_query: None,
@@ -464,7 +464,7 @@ fn navigation_fixture(root: &std::path::Path) -> (App, [PaneId; 4]) {
         .dispatch(Command::SplitPane {
             workspace,
             pane: top_left,
-            axis: pace_model::Axis::Vertical,
+            axis: neptune_model::Axis::Vertical,
             cwd: root.into(),
         })
         .unwrap();
@@ -475,7 +475,7 @@ fn navigation_fixture(root: &std::path::Path) -> (App, [PaneId; 4]) {
             .dispatch(Command::SplitPane {
                 workspace,
                 pane,
-                axis: pace_model::Axis::Horizontal,
+                axis: neptune_model::Axis::Horizontal,
                 cwd: root.into(),
             })
             .unwrap();
@@ -1199,7 +1199,7 @@ fn a_terminal_moved_to_another_workspace_keeps_its_running_shell() {
     };
     let home = add(&mut app, "Home");
     let stays = app.controller.model().active_pane().unwrap();
-    app.action(&ctx, Action::Split(stays, pace_model::Axis::Vertical));
+    app.action(&ctx, Action::Split(stays, neptune_model::Axis::Vertical));
     let moved = app.controller.model().active_pane().unwrap();
     let other = add(&mut app, "Other");
     app.action(&ctx, Action::SelectWorkspace(home));
@@ -1218,7 +1218,7 @@ fn a_terminal_moved_to_another_workspace_keeps_its_running_shell() {
 
     app.action(
         &ctx,
-        Action::MovePane(moved, pace_model::Destination::Workspace(other)),
+        Action::MovePane(moved, neptune_model::Destination::Workspace(other)),
     );
     let model = app.controller.model();
     assert_eq!(model.workspace_for_pane(moved), Some(other));
@@ -1721,7 +1721,7 @@ fn remote_workspaces_are_presented_by_host_instead_of_a_local_folder() {
     assert_eq!(presentation.location(), "me@devbox");
     assert_eq!(
         presentation.metadata.shell,
-        "/nonexistent/pace-startup-test-ssh"
+        "/nonexistent/neptune-startup-test-ssh"
     );
     assert!(presentation.starting);
 }
@@ -1795,7 +1795,7 @@ fn a_remote_split_inherits_the_reported_host_directory_and_keeps_its_local_direc
     app.poll(&ctx);
     // A split opens another connection from the same local directory while
     // passing the host's reported path in the remote bootstrap.
-    app.action(&ctx, Action::Split(pane, pace_model::Axis::Vertical));
+    app.action(&ctx, Action::Split(pane, neptune_model::Axis::Vertical));
     let second = app.controller.model().active_pane().unwrap();
     assert_ne!(second, pane);
     assert_eq!(app.controller.model().pane(second).unwrap().cwd(), cwd);
@@ -1842,7 +1842,7 @@ fn remote_splits_follow_their_source_pane_after_focus_and_directory_changes() {
         "unsetopt GLOBAL_RCS\nfpath=(\"$ZDOTDIR/insecure-completions\" $fpath)\n",
     )
     .unwrap();
-    std::fs::write(home.join(".zshrc"), "PROMPT='PACE> '\n").unwrap();
+    std::fs::write(home.join(".zshrc"), "PROMPT='NEPTUNE> '\n").unwrap();
     let client = root.path().join("fake-ssh");
     std::fs::write(&client, "#!/bin/sh\nexport HOME=\"$0.home\" SHELL=zsh ZDOTDIR=\"$0.home\" TMPDIR=\"$0.home\"\ncd \"$HOME\"\nexec /bin/sh -c \"$4\"\n").unwrap();
     std::fs::set_permissions(&client, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -1880,7 +1880,7 @@ fn remote_splits_follow_their_source_pane_after_focus_and_directory_changes() {
         .write(b"cd 'first project'\r")
         .unwrap();
     wait_for_directory(&mut app, source, &first);
-    app.action(&ctx, Action::Split(source, pace_model::Axis::Vertical));
+    app.action(&ctx, Action::Split(source, neptune_model::Axis::Vertical));
     let right = app.controller.model().active_pane().unwrap();
     wait_for_directory(&mut app, right, &first);
     // The source is now unfocused, but its parser and directory hooks stay live.
@@ -1890,7 +1890,7 @@ fn remote_splits_follow_their_source_pane_after_focus_and_directory_changes() {
         .write(b"cd ../next*\r")
         .unwrap();
     wait_for_directory(&mut app, source, &next);
-    app.action(&ctx, Action::Split(source, pace_model::Axis::Horizontal));
+    app.action(&ctx, Action::Split(source, neptune_model::Axis::Horizontal));
     let below = app.controller.model().active_pane().unwrap();
     wait_for_directory(&mut app, below, &next);
     assert_eq!(

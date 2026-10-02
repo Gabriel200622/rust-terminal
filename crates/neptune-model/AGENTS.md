@@ -24,8 +24,8 @@ For a controller/layout change, run the affected test or module filter; the
 crate suite is small and headless when the whole model contract changes:
 
 ```sh
-cargo test -p pace-model --locked
-cargo clippy -p pace-model --lib --locked -- -D warnings
+cargo test -p neptune-model --locked
+cargo clippy -p neptune-model --lib --locked -- -D warnings
 ```
 
 Use `python3 scripts/check-architecture.py` for dependency/public-boundary

@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Legacy Linux/X11 coordinate regression for an explicitly identified Pace window.
+"""Legacy Linux/X11 coordinate regression for an explicitly identified Neptune window.
 
 Prefer native-harness.py for isolated launch and semantic widget verification.
 
-Launch Pace separately with WAYLAND_DISPLAY unset and an isolated config root,
+Launch Neptune separately with WAYLAND_DISPLAY unset and an isolated config root,
 then run this script. It does not launch, stop, or rebuild the application.
-The workflow leaves Pace running, returns its theme to Graphite, and cancels
+The workflow leaves Neptune running, returns its theme to Graphite, and cancels
 the close confirmation. Screenshots and a machine-readable report are written
 to --output. Coordinates are relative to the selected native window; modal
 positions are inferred from screenshot differences rather than desktop pixels.
 
-    env -u WAYLAND_DISPLAY target/debug/pace --data-root /tmp/pace-ui-qa --no-restore
-    python3 scripts/ui-regression.py --data-root /tmp/pace-ui-qa --window-id 0xWINDOW
+    env -u WAYLAND_DISPLAY target/debug/neptune --data-root /tmp/neptune-ui-qa --no-restore
+    python3 scripts/ui-regression.py --data-root /tmp/neptune-ui-qa --window-id 0xWINDOW
 
 Individual phases can be rerun with --phase after inspecting their captures.
 An individual phase assumes the UI state created by the preceding phases.
@@ -254,7 +254,7 @@ class Regression:
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--window-id", type=lambda value: int(value,0), required=True, help="Exact X11 window ID belonging to this run")
-    parser.add_argument("--data-root", "--config-root", dest="data_root", type=Path, required=True, help="Exact --data-root passed to Pace")
+    parser.add_argument("--data-root", "--config-root", dest="data_root", type=Path, required=True, help="Exact --data-root passed to Neptune")
     parser.add_argument("--output", type=Path, default=Path("artifacts/ui-regression"))
     parser.add_argument("--scale", type=float, help="native pixels per logical UI pixel; inferred from title-bar border otherwise")
     parser.add_argument("--phase", choices=PHASES, action="append", help="run selected phases instead of the complete sequence")

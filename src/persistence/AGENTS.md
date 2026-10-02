@@ -15,7 +15,7 @@ settings validation/atomic writes belong to `../config.rs`.
 For schema/recovery changes, run the relevant case or this focused module:
 
 ```sh
-cargo test -p pace-terminal --lib persistence::workspace_state::tests --locked
+cargo test -p neptune-terminal --lib persistence::workspace_state::tests --locked
 ```
 
 Include the writer/application completion path only when its behavior changes.

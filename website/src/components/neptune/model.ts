@@ -1,5 +1,5 @@
-// A small model of Pace's workspace state for the in-page window. It follows
-// the shapes of `crates/pace-model` and the saved `workspaces.json`: a
+// A small model of Neptune's workspace state for the in-page window. It follows
+// the shapes of `crates/neptune-model` and the saved `workspaces.json`: a
 // workspace owns a binary layout of panes, and every change is one action.
 
 export type Axis = "vertical" | "horizontal";

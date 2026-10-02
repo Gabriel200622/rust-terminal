@@ -1,4 +1,4 @@
-// Pace's own icon set, ported from `src/icons.rs`: a 24-point grid, a
+// Neptune's own icon set, ported from `src/icons.rs`: a 24-point grid, a
 // 1.5-point stroke that does not scale with the glyph, and rounded ends.
 
 const TAU = Math.PI * 2;
@@ -213,8 +213,8 @@ export function Icon({
   );
 }
 
-/** The application icon, `assets/pace.svg`. */
-export function PaceMark({ size = 28 }: { size?: number }) {
+/** The application icon, `assets/neptune.svg`. */
+export function NeptuneMark({ size = 28 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 128 128" aria-hidden="true">
       <rect width="128" height="128" rx="30" fill="#171719" />

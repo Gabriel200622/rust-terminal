@@ -1,6 +1,6 @@
 # Terminal interface direction
 
-Pace's interface was rebuilt on 2026-09-30 around a native, Apple-style visual
+Neptune's interface was rebuilt on 2026-09-30 around a native, Apple-style visual
 language: one quiet window material, content that sits in it as rounded
 surfaces, depth from elevation rather than borders, and a single accent reserved
 for focus and selection. The terminal remains the dominant surface. Chrome earns
@@ -149,7 +149,7 @@ icon buttons keep a 28-point target around a 16-point glyph.
   rounded shape. The confirming action sits at the trailing edge; destructive
   confirmations are red and are never the Enter default. Each close target has
   its own title and consequence ("Close terminal?", "Close workspace?",
-  "Disconnect from SSH?", "Quit Pace?"). The SSH sheet asks only for a host,
+  "Disconnect from SSH?", "Quit Neptune?"). The SSH sheet asks only for a host,
   states that connecting an existing workspace restarts its terminals, and
   names the problem in place of that note while the host is unusable.
 - **Preferences.** Grouped rows that apply immediately: theme previews drawn

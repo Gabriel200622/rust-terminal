@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "MIT OR Apache-2.0"
-description = "A cross-platform PTY and VT engine for the native terminal"
+description = "A cross-platform PTY and VT engine for Neptune"
+homepage = "https://neptune.rs"
+repository = "https://github.com/zevem/neptune"
 
 [dependencies]
 alacritty_terminal = "0.26.0"

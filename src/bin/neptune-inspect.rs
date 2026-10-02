@@ -5,7 +5,7 @@ use anyhow::{Context, Result, bail, ensure};
 use eframe::egui::{Event, Key, Modifiers, PointerButton, pos2};
 use egui_inspection::{Request, Response, protocol};
 
-const HELP: &str = "pace-inspect [--addr HOST:PORT] COMMAND\n\
+const HELP: &str = "neptune-inspect [--addr HOST:PORT] COMMAND\n\
 \n\
   info                         Print application/protocol information\n\
   tree                         Print the current AccessKit tree as JSON\n\

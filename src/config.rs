@@ -159,7 +159,7 @@ fn atomic_write_with(
     let directory = std::fs::File::open(parent)
         .with_context(|| format!("Cannot open configuration directory {}", parent.display()))?;
     let mut temporary = tempfile::Builder::new()
-        .prefix(".pace-save-")
+        .prefix(".neptune-save-")
         .tempfile_in(parent)
         .with_context(|| format!("Cannot prepare save for {}", path.display()))?;
     write(temporary.as_file_mut())
@@ -213,14 +213,116 @@ fn persist_temporary(temporary: tempfile::TempPath, path: &Path) -> std::io::Res
 }
 
 pub fn data_dir() -> PathBuf {
-    directories::ProjectDirs::from("dev", "Pace", "pace")
+    directories::ProjectDirs::from("rs", "Neptune", "neptune")
         .map(|d| d.config_dir().to_path_buf())
-        .unwrap_or_else(|| PathBuf::from(".pace"))
+        .unwrap_or_else(|| PathBuf::from(".neptune"))
+}
+
+/// Resolve default storage on a startup worker, preserving all legacy files.
+/// Explicit data roots and ephemeral screenshot launches bypass migration.
+pub fn prepare_data_dir() -> Result<PathBuf> {
+    let destination = data_dir();
+    let legacy = directories::ProjectDirs::from("dev", "Pace", "pace")
+        .map(|d| d.config_dir().to_path_buf())
+        .unwrap_or_else(|| PathBuf::from(".pace"));
+    migrate_data_dir(&legacy, &destination)?;
+    Ok(destination)
+}
+
+fn migrate_data_dir(legacy: &Path, destination: &Path) -> Result<()> {
+    if destination.try_exists()? || !legacy.try_exists()? {
+        return Ok(());
+    }
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("Cannot create storage parent {}", parent.display()))?;
+    }
+    // Move the complete directory atomically, including recovery copies and
+    // unreadable or unsupported state. Never parse or replace saved files here.
+    // A failed move stops startup before a fresh directory can hide old work.
+    std::fs::rename(legacy, destination).with_context(|| {
+        format!(
+            "Cannot migrate saved data from {} to {}",
+            legacy.display(),
+            destination.display()
+        )
+    })?;
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn product_rename_preserves_all_saved_bytes_and_recovery_copies() {
+        let root = tempfile::tempdir().unwrap();
+        let legacy = root.path().join("legacy");
+        let destination = root.path().join("Neptune/neptune/config");
+        std::fs::create_dir_all(legacy.join("recovery")).unwrap();
+        let files: [(&str, &[u8]); 4] = [
+            ("config.toml", b"theme = \"dusk\"\n"),
+            ("workspaces.json", b"{\"version\":999}"),
+            ("window.json", b"damaged window data\xff"),
+            ("recovery/original.json", b"original bytes"),
+        ];
+        for (name, bytes) in files {
+            std::fs::write(legacy.join(name), bytes).unwrap();
+        }
+        migrate_data_dir(&legacy, &destination).unwrap();
+        assert!(!legacy.exists());
+        for (name, bytes) in files {
+            assert_eq!(std::fs::read(destination.join(name)).unwrap(), bytes);
+        }
+        migrate_data_dir(&legacy, &destination).unwrap();
+        assert_eq!(
+            std::fs::read(destination.join("workspaces.json")).unwrap(),
+            files[1].1
+        );
+    }
+
+    #[test]
+    fn product_rename_keeps_existing_neptune_storage_and_legacy_storage() {
+        let root = tempfile::tempdir().unwrap();
+        let legacy = root.path().join("legacy");
+        let destination = root.path().join("neptune");
+        std::fs::create_dir(&legacy).unwrap();
+        std::fs::create_dir(&destination).unwrap();
+        std::fs::write(legacy.join("workspaces.json"), b"legacy work").unwrap();
+        std::fs::write(destination.join("workspaces.json"), b"current work").unwrap();
+        migrate_data_dir(&legacy, &destination).unwrap();
+        assert_eq!(
+            std::fs::read(legacy.join("workspaces.json")).unwrap(),
+            b"legacy work"
+        );
+        assert_eq!(
+            std::fs::read(destination.join("workspaces.json")).unwrap(),
+            b"current work"
+        );
+    }
+
+    #[test]
+    fn product_rename_does_not_create_storage_without_legacy_data() {
+        let root = tempfile::tempdir().unwrap();
+        let destination = root.path().join("neptune");
+        migrate_data_dir(&root.path().join("missing"), &destination).unwrap();
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn product_rename_failure_preserves_legacy_data() {
+        let root = tempfile::tempdir().unwrap();
+        let legacy = root.path().join("legacy");
+        std::fs::create_dir(&legacy).unwrap();
+        std::fs::write(legacy.join("workspaces.json"), b"original work").unwrap();
+        let blocked = root.path().join("blocked");
+        std::fs::write(&blocked, b"a file, not a directory").unwrap();
+        assert!(migrate_data_dir(&legacy, &blocked.join("neptune")).is_err());
+        assert_eq!(
+            std::fs::read(legacy.join("workspaces.json")).unwrap(),
+            b"original work"
+        );
+    }
 
     // Atomic replacement guarantees complete contents, not that a racing
     // Windows open always succeeds. Test this Windows error policy on every

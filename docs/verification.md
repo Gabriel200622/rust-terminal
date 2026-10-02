@@ -1,16 +1,20 @@
 # Verification and release readiness
 
-Pace has a running native Linux implementation with real PTY sessions, automated
+Neptune has a running native Linux implementation with real PTY sessions, automated
 engine and application tests, and iterative native screenshot review. Linux is
 the local verification platform. macOS and Windows build/test jobs are configured
 in CI; their existence does not establish a successful CI run or desktop runtime
 verification. A production release requires the remaining gates below.
 
+Historical captures and raw reports under `artifacts/` retain the branding,
+paths and executable names of the build they actually measured. They are
+evidence of those builds; Neptune's rename does not rewrite past evidence.
+
 ## Local proof and CI coverage
 
 Local changes use the narrowest meaningful affected crate/target checks and
 focused behavior tests. See [desktop guidance](../src/AGENTS.md),
-[model guidance](../crates/pace-model/AGENTS.md),
+[model guidance](../crates/neptune-model/AGENTS.md),
 [terminal guidance](../crates/terminal-core/AGENTS.md) and
 [script guidance](../scripts/AGENTS.md) for scoped commands. Cross-boundary work
 checks each changed seam. Documentation-only edits need reference/consistency
@@ -32,7 +36,7 @@ cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --all-features --locked
 python3 scripts/check-architecture.py
 python3 scripts/check-architecture.py --self-test
-cargo build --release --locked --bin pace
+cargo build --release --locked --bin neptune
 ```
 
 Rust 1.97.1 is pinned by `rust-toolchain.toml` and is the declared minimum for all
@@ -90,7 +94,7 @@ emit OSC 133 A/C markers for interactive shells. The final native workflow
 preserved an actual 330-byte typed payload across 900×640 and 640×480 windows,
 then verified its exact successful execution without clearing the terminal.
 
-That observation verifies this sourced configuration; it does not mean Pace
+That observation verifies this sourced configuration; it does not mean Neptune
 installs shell-integration hooks. OSC 133 coverage does not establish universal
 resize behavior for every shell, theme, asynchronous-output pattern, or
 shell-integration implementation.
@@ -101,10 +105,10 @@ Build the release executable before measuring or accepting final screenshots.
 Capture the application's native framebuffer with a one-shot launch:
 
 ```sh
-target/release/pace --data-root /tmp/pace-capture-UNIQUE --no-restore --screenshot artifacts/native-main.png
+target/release/neptune --data-root /tmp/neptune-capture-UNIQUE --no-restore --screenshot artifacts/native-main.png
 ```
 
-Replace `/tmp/pace-capture-UNIQUE` with a fresh task-owned directory. This mode
+Replace `/tmp/neptune-capture-UNIQUE` with a fresh task-owned directory. This mode
 captures after three seconds and exits without saving workspace state.
 It is useful for the default view; interactive states need a running application.
 The preferred repeatable UI workflow is
@@ -115,7 +119,7 @@ the same endpoint/data directory through restoration. Widgets expose stable
 accessible pane and field labels. Build the optional developer tools and run:
 
 ```sh
-cargo build -p pace-terminal --locked --features inspection --bin pace --bin pace-inspect
+cargo build -p neptune-terminal --locked --features inspection --bin neptune --bin neptune-inspect
 python3 scripts/native-harness.py --output artifacts/native
 ```
 
@@ -125,7 +129,7 @@ polling. The full shell workflow currently requires a POSIX shell; OS key/pointe
 injection remains in the explicitly Linux/X11 adapter.
 
 For an independently managed manual launch, supply a fresh `--data-root` and
-unique loopback `EGUI_INSPECTION=HOST:PORT` to Pace, then carry both to the script.
+unique loopback `EGUI_INSPECTION=HOST:PORT` to Neptune, then carry both to the script.
 Any explicit `--config` must use task-owned storage too. Track the process at
 spawn and stop only that process; do not find processes to kill by name/path.
 `--config` or `--no-restore` alone does not isolate workspace writes:
@@ -157,7 +161,7 @@ native rendering; use the normal release build for performance measurements.
 [`native-smoke.py`](../scripts/native-smoke.py) complements inspection by sending
 real X11 keyboard/pointer events and capturing the desktop window. It requires
 Python 3, Pillow, libX11, and libXtst, and never starts the application. Launch
-your isolated Pace instance through X11/XWayland (unset `WAYLAND_DISPLAY` only
+your isolated Neptune instance through X11/XWayland (unset `WAYLAND_DISPLAY` only
 for that child), identify its exact window ID, and pass it to every invocation:
 
 ```sh
@@ -206,10 +210,10 @@ input, Unicode text injection, and AccessKit tree inspection. With the applicati
 running as above, use another terminal:
 
 ```sh
-target/debug/pace-inspect --addr HOST:PORT info
-target/debug/pace-inspect --addr HOST:PORT tree
-target/debug/pace-inspect --addr HOST:PORT settle
-target/debug/pace-inspect --addr HOST:PORT screenshot artifacts/inspection/main.png
+target/debug/neptune-inspect --addr HOST:PORT info
+target/debug/neptune-inspect --addr HOST:PORT tree
+target/debug/neptune-inspect --addr HOST:PORT settle
+target/debug/neptune-inspect --addr HOST:PORT screenshot artifacts/inspection/main.png
 ```
 
 Inspection screenshots use one pixel per logical point. X11 window captures use
@@ -279,10 +283,10 @@ direction and the corrections made during review. Evidence is under
 [`artifacts/ui-rebuild`](../artifacts/ui-rebuild).
 
 - **Focused tests.** The desktop library suite passes 85 tests on Linux with
-  Rust 1.97.1 (`cargo test -p pace-terminal --lib --locked`), and the
+  Rust 1.97.1 (`cargo test -p neptune-terminal --lib --locked`), and the
   inspection client's two tests pass. Clippy with warnings denied passes for the
   desktop package's targets with and without `inspection`; rustfmt and the
-  architecture boundary check pass. The workspace-wide suite, `pace-model` and
+  architecture boundary check pass. The workspace-wide suite, `neptune-model` and
   `terminal-core` tests were not rerun locally; neither crate changed.
 - **Native regression.** The optimized inspection build passed 24 semantic
   checks and produced 25 captures in the

@@ -24,7 +24,7 @@ use crate::{
     },
 };
 use eframe::egui::{self, Pos2, Rect, Stroke, Vec2, emath::GuiRounding as _};
-use pace_model::{Command, Controller, Effect, Lifecycle, Limits, Model, PaneId, Remote};
+use neptune_model::{Command, Controller, Effect, Lifecycle, Limits, Model, PaneId, Remote};
 use std::{
     collections::BTreeMap,
     path::PathBuf,
@@ -96,7 +96,7 @@ impl App {
         launch: Launch,
         window: window_state::LoadReport,
     ) -> Self {
-        // Pace routes zoom before terminal input and reserves Ctrl+Shift for
+        // Neptune routes zoom before terminal input and reserves Ctrl+Shift for
         // terminal font size. The toolkit's permissive shortcuts overlap it.
         cc.egui_ctx
             .options_mut(|options| options.zoom_with_keyboard = false);
@@ -121,7 +121,7 @@ impl App {
         let state = state_path.clone();
         let wake = cc.egui_ctx.clone();
         let thread_result = std::thread::Builder::new()
-            .name("pace-restore".into())
+            .name("neptune-restore".into())
             .spawn(move || {
                 let (config, error) = match Config::load(&settings) {
                     Ok(config) => (config, None),
@@ -743,7 +743,7 @@ impl eframe::App for App {
         let mut output = ui::workspace::StageOutput::default();
         if let Some(workspace) = active.and_then(|id| self.controller.model().workspace(id)) {
             let layout = if self.ui.zoomed {
-                pace_model::Layout::Leaf(workspace.active())
+                neptune_model::Layout::Leaf(workspace.active())
             } else {
                 workspace.layout().clone()
             };

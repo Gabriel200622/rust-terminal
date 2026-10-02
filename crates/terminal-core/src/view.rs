@@ -64,7 +64,7 @@ bitflags::bitflags! {
     }
 }
 
-/// Input protocol modes owned by Pace.
+/// Input protocol modes owned by Neptune.
 pub type TermMode = Mode;
 
 /// Grid coordinates: negative lines are history, line zero starts the live screen.

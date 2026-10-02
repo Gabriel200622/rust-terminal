@@ -197,7 +197,7 @@ impl TerminalSession {
         command.cwd(&options.cwd);
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
-        command.env("TERM_PROGRAM", "pace");
+        command.env("TERM_PROGRAM", "neptune");
         command.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
         for (key, value) in &options.env {
             command.env(key, value);

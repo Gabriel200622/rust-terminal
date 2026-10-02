@@ -50,7 +50,7 @@ fn rename(
     ctx: &egui::Context,
     p: Palette,
     state: &mut UiState,
-    workspace: pace_model::WorkspaceId,
+    workspace: neptune_model::WorkspaceId,
     actions: &mut Vec<Action>,
 ) {
     let mut save = confirmed_by_enter(ctx, state);
@@ -101,7 +101,7 @@ fn ssh(
     ctx: &egui::Context,
     p: Palette,
     state: &mut UiState,
-    workspace: Option<pace_model::WorkspaceId>,
+    workspace: Option<neptune_model::WorkspaceId>,
     actions: &mut Vec<Action>,
 ) {
     let title = if workspace.is_some() {
@@ -130,7 +130,7 @@ fn ssh(
             }
             ui.add_space(12.0);
             let problem = (!state.ssh_host.trim().is_empty())
-                .then(|| pace_model::Remote::parse(&state.ssh_host).err())
+                .then(|| neptune_model::Remote::parse(&state.ssh_host).err())
                 .flatten();
             let (note, ink) = match problem {
                 Some(error) => (error.to_string(), p.red),
@@ -164,7 +164,7 @@ fn ssh(
     if cancel || output.backdrop_clicked {
         actions.push(Action::CloseOverlay);
     } else if connect {
-        match pace_model::Remote::parse(&state.ssh_host) {
+        match neptune_model::Remote::parse(&state.ssh_host) {
             Ok(remote) => actions.push(Action::Connect {
                 workspace,
                 destination: remote.destination().to_owned(),
@@ -195,7 +195,7 @@ pub fn close_copy(close: Close) -> (&'static str, &'static str, &'static str) {
             "Disconnect",
         ),
         Close::App => (
-            "Quit Pace?",
+            "Quit Neptune?",
             "Running processes in all terminals will stop. Workspaces reopen with fresh shells.",
             "Quit",
         ),
@@ -260,7 +260,7 @@ pub fn show(ctx: &egui::Context, p: Palette, state: &mut UiState, actions: &mut 
 mod tests {
     use super::*;
     use egui::Pos2;
-    use pace_model::{PaneId, WorkspaceId};
+    use neptune_model::{PaneId, WorkspaceId};
 
     #[test]
     fn rename_gives_its_field_the_keyboard_once_visible() {

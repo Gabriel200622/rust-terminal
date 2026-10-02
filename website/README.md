@@ -1,6 +1,6 @@
-# Pace website
+# Neptune website
 
-The landing page for [Pace](../README.md): a static Next.js site styled with
+The landing page for [Neptune](https://neptune.rs): a static Next.js site styled with
 Tailwind CSS. It uses [Bun](https://bun.sh) for dependencies and scripts.
 
 ```sh
@@ -14,21 +14,21 @@ bun run build    # static export in out/
 
 ## Staying consistent with the app
 
-The page rebuilds Pace's window in the browser instead of showing screenshots,
+The page rebuilds Neptune's window in the browser instead of showing screenshots,
 so it follows the app's own sources:
 
 - `src/app/globals.css` carries the palette, radii and motion of
   [`src/theme.rs`](../src/theme.rs) and [`docs/design.md`](../docs/design.md).
 - `src/components/icons.tsx` is the icon set of [`src/icons.rs`](../src/icons.rs).
-- `src/components/pace/` mirrors the chrome, panes, palette and sheets under
+- `src/components/neptune/` mirrors the chrome, panes, palette and sheets under
   [`src/ui/`](../src/ui), and a small model of
-  [`crates/pace-model`](../crates/pace-model).
+  [`crates/neptune-model`](../crates/neptune-model).
 
 When the app's look or behaviour changes, update the matching file here.
 
 The window answers a few typed commands through a stand-in shell
-(`src/components/pace/shell.ts`). It demonstrates the interface; it is not
-Pace's terminal engine.
+(`src/components/neptune/shell.ts`). It demonstrates the interface; it is not
+Neptune's terminal engine.
 
 ## Claims
 
@@ -39,6 +39,7 @@ comparison with other terminals. Keep new copy to the same standard.
 
 ## Hosting
 
+The canonical domain is `https://neptune.rs`; metadata and sharing links use it.
 The export assumes it is served from the root of a domain. To host it under a
 subpath, such as a GitHub Pages project site, set `basePath` in
 `next.config.ts`.

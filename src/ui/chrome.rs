@@ -14,7 +14,7 @@ use eframe::egui::{
     Sense, Shadow, Stroke, StrokeKind, Ui, UiBuilder, Vec2, WidgetInfo, WidgetType,
     emath::GuiRounding as _, style::ScrollAnimation, vec2,
 };
-use pace_model::{Destination, PaneId, WorkspaceId};
+use neptune_model::{Destination, PaneId, WorkspaceId};
 
 /// What the chrome needs to know about the frame it surrounds.
 pub struct ChromeView<'a> {
@@ -305,7 +305,7 @@ pub fn toolbar(
                     )
                     .clicked()
                     {
-                        actions.push(Action::Split(pane, pace_model::Axis::Horizontal));
+                        actions.push(Action::Split(pane, neptune_model::Axis::Horizontal));
                     }
                     if icons::button_with_hint(
                         ui,
@@ -315,7 +315,7 @@ pub fn toolbar(
                     )
                     .clicked()
                     {
-                        actions.push(Action::Split(pane, pace_model::Axis::Vertical));
+                        actions.push(Action::Split(pane, neptune_model::Axis::Vertical));
                     }
                     if icons::button_with_hint(ui, Icon::Search, "Find in terminal", &shortcut("F"))
                         .clicked()

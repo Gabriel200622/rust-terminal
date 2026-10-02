@@ -10,7 +10,7 @@ use eframe::egui::{
     self, Align, Align2, CursorIcon, Id, LayerId, Layout, Order, Pos2, Rect, Sense, Stroke,
     StrokeKind, Ui, UiBuilder, Vec2, WidgetInfo, WidgetType, vec2,
 };
-use pace_model::{Axis, Destination, Edge, PaneId};
+use neptune_model::{Axis, Destination, Edge, PaneId};
 use std::collections::BTreeMap;
 use terminal_core::{Mode as TermMode, SessionMetadata, SessionStatus, ViewportSnapshot};
 
@@ -731,7 +731,7 @@ fn divide(rect: Rect, vertical: bool, ratio: f32) -> (Rect, Rect, Rect) {
 
 pub fn draw_node(
     ui: &mut Ui,
-    node: &pace_model::Layout,
+    node: &neptune_model::Layout,
     place: Placement,
     panes: &mut BTreeMap<PaneId, PaneRender>,
     stage: &Stage,
@@ -739,12 +739,12 @@ pub fn draw_node(
     output: &mut StageOutput,
 ) {
     match node {
-        pace_model::Layout::Leaf(id) => {
+        neptune_model::Layout::Leaf(id) => {
             if let Some(pane) = panes.get_mut(id) {
                 draw_pane(ui, *id, place, pane, stage, actions, output);
             }
         }
-        pace_model::Layout::Split {
+        neptune_model::Layout::Split {
             id: split,
             axis,
             ratio,
@@ -1022,7 +1022,7 @@ mod tests {
         config: Config,
         panes: BTreeMap<PaneId, PaneRender>,
         presentations: BTreeMap<PaneId, PanePresentation>,
-        layout: pace_model::Layout,
+        layout: neptune_model::Layout,
         drag: Option<PaneId>,
     }
 
@@ -1050,12 +1050,12 @@ mod tests {
                         )
                     })
                     .into(),
-                layout: pace_model::Layout::Split {
-                    id: pace_model::SplitId::new(1),
+                layout: neptune_model::Layout::Split {
+                    id: neptune_model::SplitId::new(1),
                     axis: Axis::Vertical,
                     ratio: 0.5,
-                    first: Box::new(pace_model::Layout::Leaf(ids[0])),
-                    second: Box::new(pace_model::Layout::Leaf(ids[1])),
+                    first: Box::new(neptune_model::Layout::Leaf(ids[0])),
+                    second: Box::new(neptune_model::Layout::Leaf(ids[1])),
                 },
                 drag: None,
             };
@@ -1231,12 +1231,12 @@ mod tests {
         let ctx = egui::Context::default();
         theme::fonts(&ctx);
         let (left, right) = (PaneId::new(1), PaneId::new(2));
-        let layout = pace_model::Layout::Split {
-            id: pace_model::SplitId::new(1),
+        let layout = neptune_model::Layout::Split {
+            id: neptune_model::SplitId::new(1),
             axis: Axis::Vertical,
             ratio: 0.5,
-            first: Box::new(pace_model::Layout::Leaf(left)),
-            second: Box::new(pace_model::Layout::Leaf(right)),
+            first: Box::new(neptune_model::Layout::Leaf(left)),
+            second: Box::new(neptune_model::Layout::Leaf(right)),
         };
         let presentations: BTreeMap<_, _> = [left, right]
             .map(|id| {

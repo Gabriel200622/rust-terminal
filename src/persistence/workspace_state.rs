@@ -1,4 +1,4 @@
-use pace_model::{
+use neptune_model::{
     Axis, Layout, Limits, Model, PaneId, PaneSpec, SplitId, WorkspaceId, WorkspaceSpec,
 };
 use serde::{Deserialize, Serialize};
@@ -100,7 +100,7 @@ impl StateSnapshot {
 
     /// Conversion enforces the same invariants as new commands without checking
     /// directories; callers can use it for headless snapshots and round trips.
-    pub fn into_model(self, limits: Limits) -> Result<Model, pace_model::Error> {
+    pub fn into_model(self, limits: Limits) -> Result<Model, neptune_model::Error> {
         Model::restore(
             self.workspaces
                 .into_iter()
@@ -544,7 +544,7 @@ fn preserve_original(path: &Path, bytes: &[u8], report: &mut LoadReport) {
         .unwrap_or_else(|| Path::new("."));
     let result = (|| -> std::io::Result<PathBuf> {
         let mut backup = tempfile::Builder::new()
-            .prefix("pace-workspaces-recovery-")
+            .prefix("neptune-workspaces-recovery-")
             .suffix(".json")
             .tempfile_in(parent)?;
         backup.write_all(bytes)?;
@@ -570,7 +570,7 @@ fn preserve_original(path: &Path, bytes: &[u8], report: &mut LoadReport) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pace_model::{Command, Controller};
+    use neptune_model::{Command, Controller};
 
     fn fixture(directory: &Path) -> Vec<u8> {
         include_str!("fixtures/workspaces-unversioned.json")

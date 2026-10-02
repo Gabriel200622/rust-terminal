@@ -19,7 +19,7 @@ contained, scrollable overlays with reachable close/actions, not clipped forms.
 For control/helper logic, select the affected test in `chrome.rs` or `helpers.rs`:
 
 ```sh
-cargo test -p pace-terminal --lib ui:: --locked
+cargo test -p neptune-terminal --lib ui:: --locked
 ```
 
 Review fresh native captures after the final build, using

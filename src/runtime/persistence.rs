@@ -121,7 +121,7 @@ impl PersistenceWriter {
         let shared = Arc::new(Shared::default());
         let worker_shared = Arc::clone(&shared);
         let worker = thread::Builder::new()
-            .name("pace-persistence".into())
+            .name("neptune-persistence".into())
             .spawn(move || worker_loop(&worker_shared, &wake, &operation))?;
         Ok(Self {
             shared,
@@ -348,7 +348,7 @@ fn worker_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pace_model::{Command, Controller, Model};
+    use neptune_model::{Command, Controller, Model};
     use std::sync::{
         Barrier,
         atomic::{AtomicBool, Ordering},
@@ -523,7 +523,7 @@ mod tests {
         std::fs::write(&state_path, original).unwrap();
         let report = crate::persistence::workspace_state::load_state(
             &state_path,
-            pace_model::Limits::default(),
+            neptune_model::Limits::default(),
         );
         let mut writer = PersistenceWriter::new(
             state_path.clone(),

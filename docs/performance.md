@@ -1,6 +1,6 @@
 # Performance measurements
 
-Pace uses a native Rust PTY and terminal parser with a GPU-rendered interface.
+Neptune uses a native Rust PTY and terminal parser with a GPU-rendered interface.
 The parser, PTY transport, shaping, GPU work, and input latency need separate
 measurements. A fast parser alone does not establish terminal rendering speed.
 
@@ -104,12 +104,12 @@ The default is a five-second warmup followed by a five-second sample, taking
 RSS snapshots every 250 ms:
 
 ```sh
-python3 scripts/measure-idle.py <pace-pid> \
+python3 scripts/measure-idle.py <neptune-pid> \
   --label 'release; one quiet shell; focused; cursor blink enabled' \
   --output artifacts/idle-release.json
 ```
 
-Use the process running `target/release/pace`. Let startup, shell output, and
+Use the process running `target/release/neptune`. Let startup, shell output, and
 font loading finish. Keep the window visible and settled, leave the same cursor
 and focus settings throughout the sample, and stop UI automation. A build that
 is receiving clicks, input, output, or resizes is an activity observation,
@@ -218,7 +218,7 @@ and diagnostic logs belong to that case. The report records compiler, platform,
 features and binary/lockfile hashes.
 
 CPU/RSS use a separate quiet interval after command probes finish. CPU includes
-Pace's threads, excluding shell/producer processes and GPU execution. Frame
+Neptune's threads, excluding shell/producer processes and GPU execution. Frame
 percentiles describe application UI CPU work in a rolling sample of up to 2,048
 frames across the run, including setup and probes; they exclude GPU presentation.
 The five latency samples measure inspection text/key roundtrip to shell-created

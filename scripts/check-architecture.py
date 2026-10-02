@@ -41,7 +41,7 @@ def production_code(source: str) -> str:
 
 def check(root: Path) -> list[str]:
     errors = []
-    manifest_path = root / "crates/pace-model/Cargo.toml"
+    manifest_path = root / "crates/neptune-model/Cargo.toml"
     if not manifest_path.is_file():
         return ["Missing pure model manifest"]
     manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
@@ -53,7 +53,7 @@ def check(root: Path) -> list[str]:
                 for name, options in value.items():
                     package = options.get("package", name) if isinstance(options, dict) else name
                     if package not in allowed:
-                        errors.append(f"pace-model {context}{key}: forbidden dependency {package}")
+                        errors.append(f"neptune-model {context}{key}: forbidden dependency {package}")
             elif isinstance(value, dict):
                 dependencies(value, context + key + ".")
 
@@ -64,7 +64,7 @@ def check(root: Path) -> list[str]:
             line = code.count("\n", 0, match.start()) + 1
             errors.append(f"{path.relative_to(root)}:{line}: {message}")
 
-    for path in (root / "crates/pace-model/src").rglob("*.rs"):
+    for path in (root / "crates/neptune-model/src").rglob("*.rs"):
         reject(path, rust_code(path.read_text(encoding="utf-8")), r"\b(?:eframe|egui|terminal_core|alacritty_terminal|portable_pty|fs|process|thread)\b", "pure model imports a runtime/backend capability")
     for path in (root / "src").rglob("*.rs"):
         code = production_code(path.read_text(encoding="utf-8"))
@@ -83,7 +83,7 @@ class ArchitectureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.scaffold(root)
-            for relative in ("crates/pace-model/Cargo.toml", "crates/pace-model/src/lib.rs", "src/app.rs", "crates/terminal-core/src/lib.rs"):
+            for relative in ("crates/neptune-model/Cargo.toml", "crates/neptune-model/src/lib.rs", "src/app.rs", "crates/terminal-core/src/lib.rs"):
                 path = root / relative
                 with path.open("a", encoding="utf-8") as file:
                     file.write("# \u0141\n" if path.suffix == ".toml" else "// \u0141\n")
@@ -97,16 +97,16 @@ class ArchitectureTests(unittest.TestCase):
                 self.assertEqual(check(root), [])
 
     def scaffold(self, root: Path) -> None:
-        (root / "crates/pace-model/src").mkdir(parents=True)
+        (root / "crates/neptune-model/src").mkdir(parents=True)
         (root / "src/terminal_view").mkdir(parents=True)
         (root / "crates/terminal-core/src").mkdir(parents=True)
-        (root / "crates/pace-model/Cargo.toml").write_text('[package]\nname="pace-model"\n[dependencies]\nserde="1"\n')
+        (root / "crates/neptune-model/Cargo.toml").write_text('[package]\nname="neptune-model"\n[dependencies]\nserde="1"\n')
 
     def test_rejects_backend_dependency_hidden_in_target_table(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.scaffold(root)
-            with (root / "crates/pace-model/Cargo.toml").open("a") as file:
+            with (root / "crates/neptune-model/Cargo.toml").open("a") as file:
                 file.write('[target.\'cfg(unix)\'.dependencies]\nengine={package="alacritty_terminal",version="1"}\n')
             self.assertTrue(any("forbidden dependency alacritty_terminal" in error for error in check(root)))
 

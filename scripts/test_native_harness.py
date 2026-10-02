@@ -62,18 +62,18 @@ class NativeHarnessTests(unittest.TestCase):
         x11 = smoke.X11.__new__(smoke.X11)
         x11.root = 1
         x11.children = lambda window: [2, 3] if window == 1 else []
-        x11.title = lambda window: "Pace" if window in [2, 3] else ""
+        x11.title = lambda window: "Neptune" if window in [2, 3] else ""
         x11.geometry = lambda window: (1180, 760)
         with self.assertRaisesRegex(RuntimeError, "pass --window-id"):
-            x11.find("Pace")
+            x11.find("Neptune")
 
     def test_linux_adapter_ignores_similarly_named_foreign_window(self):
         x11 = smoke.X11.__new__(smoke.X11)
         x11.root = 1
         x11.children = lambda window: [2, 3] if window == 1 else []
-        x11.title = lambda window: {2:"Workspaces", 3:"Pace"}.get(window, "")
+        x11.title = lambda window: {2:"Workspaces", 3:"Neptune"}.get(window, "")
         x11.geometry = lambda window: (1180, 760)
-        self.assertEqual(x11.find("Pace"), 3)
+        self.assertEqual(x11.find("Neptune"), 3)
 
 
 if __name__ == "__main__":

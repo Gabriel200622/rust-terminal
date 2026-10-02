@@ -122,19 +122,19 @@ jobs:
         run: cargo test --profile ci --workspace --all-features --locked
       - name: Build native application
         if: needs.preflight.outputs.code == 'true' && runner.os != 'Linux'
-        run: cargo build --profile ci --locked --bin pace
+        run: cargo build --profile ci --locked --bin neptune
       - name: Build native inspection binaries with the existing dependency cache
         if: needs.preflight.outputs.code == 'true' && runner.os == 'Linux'
-        run: cargo build --profile ci --features inspection --locked --bin pace --bin pace-inspect
+        run: cargo build --profile ci --features inspection --locked --bin neptune --bin neptune-inspect
       - name: Verify isolated native inspection and workspace restoration
         if: needs.preflight.outputs.code == 'true' && runner.os == 'Linux'
         env:
           WGPU_BACKEND: vulkan
           LIBGL_ALWAYS_SOFTWARE: '1'
-          XDG_RUNTIME_DIR: ${{ runner.temp }}/pace-runtime
+          XDG_RUNTIME_DIR: ${{ runner.temp }}/neptune-runtime
         run: |
           install -d -m 700 "$XDG_RUNTIME_DIR"
-          xvfb-run -a python3 scripts/native-harness.py --app target/ci/pace --client target/ci/pace-inspect --restore --output artifacts/native-ci
+          xvfb-run -a python3 scripts/native-harness.py --app target/ci/neptune --client target/ci/neptune-inspect --restore --output artifacts/native-ci
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always() && needs.preflight.outputs.code == 'true' && runner.os == 'Linux'
         with:

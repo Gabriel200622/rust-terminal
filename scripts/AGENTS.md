@@ -5,7 +5,7 @@ loopback endpoint, fresh data directory, subprocess handles, logs, artifacts and
 cleanup. Build only the required desktop targets:
 
 ```sh
-cargo build -p pace-terminal --features inspection --locked --bin pace --bin pace-inspect
+cargo build -p neptune-terminal --features inspection --locked --bin neptune --bin neptune-inspect
 python3 scripts/native-harness.py --output artifacts/native
 ```
 
@@ -28,7 +28,7 @@ only relevant scenarios; use each script's `--help` for current arguments.
   developer's working terminal or reuse its saved state.
 - OS key/pointer workflows run sequentially because desktop focus is global.
   For `native-smoke.py`/`ui-regression.py`, pass the exact owned `--window-id`;
-  do not let title matching select another Pace window. Prefer stable accessible
+  do not let title matching select another Neptune window. Prefer stable accessible
   pane/field labels and bounded semantic polling in `inspect-regression.py` over
   coordinates or fixed delays. The old coordinate workflow is diagnostic only.
 

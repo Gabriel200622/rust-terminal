@@ -1,5 +1,5 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
-use pace_terminal::{Launch, app, config, persistence::window_state};
+use neptune_terminal::{Launch, app, config, persistence::window_state};
 
 fn main() -> anyhow::Result<()> {
     let mut launch = Launch::default();
@@ -17,7 +17,7 @@ fn main() -> anyhow::Result<()> {
                 let destination = args.next().ok_or_else(|| {
                     anyhow::anyhow!("--ssh needs a destination such as user@host")
                 })?;
-                pace_model::Remote::parse(&destination)
+                neptune_model::Remote::parse(&destination)
                     .map_err(|error| anyhow::anyhow!("--ssh {destination:?}: {error}"))?;
                 launch.ssh = Some(destination);
             }
@@ -66,12 +66,12 @@ fn main() -> anyhow::Result<()> {
             "--no-restore" => launch.no_restore = true,
             "--diagnostics" => launch.diagnostics = true,
             "--version" | "-V" => {
-                println!("Pace {}", env!("CARGO_PKG_VERSION"));
+                println!("Neptune {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
             }
             "--help" | "-h" => {
                 println!(
-                    "Pace — a native GPU terminal\n\nUsage: pace [OPTIONS]\n  --cwd PATH         Open a workspace at PATH\n  --ssh DESTINATION  Open a workspace whose terminals run on an SSH host\n  --config PATH      Use a TOML configuration\n  --data-root PATH   Isolate settings and saved workspace/window state\n  --command COMMAND  Run a command in the first terminal\n  --no-restore       Start without saved workspaces\n  --size WIDTHxHEIGHT Override saved window size and maximized state\n  --screenshot PATH  Capture the native window after 3 seconds and exit\n  --diagnostics      Print renderer and display details\n  --version\n  --help"
+                    "Neptune — a native GPU terminal\n\nUsage: neptune [OPTIONS]\n  --cwd PATH         Open a workspace at PATH\n  --ssh DESTINATION  Open a workspace whose terminals run on an SSH host\n  --config PATH      Use a TOML configuration\n  --data-root PATH   Isolate settings and saved workspace/window state\n  --command COMMAND  Run a command in the first terminal\n  --no-restore       Start without saved workspaces\n  --size WIDTHxHEIGHT Override saved window size and maximized state\n  --screenshot PATH  Capture the native window after 3 seconds and exit\n  --diagnostics      Print renderer and display details\n  --version\n  --help"
                 );
                 return Ok(());
             }
@@ -87,40 +87,36 @@ fn main() -> anyhow::Result<()> {
         launch.ssh.is_none() || launch.command.is_none(),
         "--command cannot be combined with --ssh"
     );
-    let window_path = launch
-        .data_root
-        .clone()
-        .unwrap_or_else(config::data_dir)
-        .join("window.json");
-    // Finish the small geometry read before creating the native window, so it
-    // opens at the restored size without a visible resize during bootstrap.
-    let mut window = if launch.screenshot.is_some() {
-        window_state::LoadReport::default()
-    } else {
-        match std::thread::Builder::new()
-            .name("pace-window-restore".into())
-            .spawn(move || window_state::load(&window_path))
-        {
-            Ok(worker) => worker.join().unwrap_or_else(|_| window_state::LoadReport {
-                error: Some(
-                    "Window restoration worker stopped; saved file will be preserved".into(),
-                ),
-                ..Default::default()
-            }),
-            Err(error) => window_state::LoadReport {
-                error: Some(format!(
-                    "Could not start window restoration worker: {error}"
-                )),
-                ..Default::default()
-            },
-        }
-    };
+    let data_root = launch.data_root.clone();
+    let ephemeral = launch.screenshot.is_some();
+    // Resolve/migrate storage and read geometry before creating the window.
+    // Failure must preserve old work rather than start saving into a new root.
+    let (data, mut window) = std::thread::Builder::new()
+        .name("neptune-window-restore".into())
+        .spawn(move || -> anyhow::Result<_> {
+            let data = match data_root {
+                Some(data) => data,
+                None if ephemeral => config::data_dir(),
+                None => config::prepare_data_dir()?,
+            };
+            let window = if ephemeral {
+                window_state::LoadReport::default()
+            } else {
+                window_state::load(&data.join("window.json"))
+            };
+            Ok((data, window))
+        })?
+        .join()
+        .map_err(|_| {
+            anyhow::anyhow!("Storage restoration worker stopped; saved data is preserved")
+        })??;
+    launch.data_root = Some(data);
     if let Some(size) = launch.size {
         window.state.inner_size = size;
         window.state.maximized = false;
     }
     eframe::run_native(
-        "Pace",
+        "Neptune",
         native_options(&window.state),
         Box::new(move |cc| Ok(Box::new(app::App::new(cc, launch, window)))),
     )
@@ -130,8 +126,8 @@ fn main() -> anyhow::Result<()> {
 fn native_options(window: &window_state::WindowState) -> eframe::NativeOptions {
     let mut options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_title("Pace")
-            .with_app_id("dev.pace.terminal")
+            .with_title("Neptune")
+            .with_app_id("rs.neptune.terminal")
             .with_icon(native_icon())
             .with_inner_size(window.inner_size)
             .with_maximized(window.maximized)

@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "../icons";
-import { Store } from "../pace/model";
-import { BASE, CHAPTERS, Tour } from "../pace/tour";
-import { PaceWindow } from "../pace/window";
+import { Store } from "../neptune/model";
+import { BASE, CHAPTERS, Tour } from "../neptune/tour";
+import { NeptuneWindow } from "../neptune/window";
 import { useReducedMotion } from "../prefs";
 
 interface Playing {
@@ -15,7 +15,7 @@ interface Playing {
 }
 
 /**
- * The hero: Pace's window, playing a short tour of what it does. Choosing a
+ * The hero: Neptune's window, playing a short tour of what it does. Choosing a
  * chapter jumps to it; using the window hands it to the visitor.
  */
 export function HeroDemo() {
@@ -188,7 +188,7 @@ export function HeroDemo() {
         ref={frame}
         className="relative mt-6 aspect-[10/11] w-full max-[639px]:[zoom:0.82] sm:aspect-[4/3] lg:aspect-[1180/740]"
       >
-        <PaceWindow store={store} onTakeover={takeover} touring={playing !== null} />
+        <NeptuneWindow store={store} onTakeover={takeover} touring={playing !== null} />
       </div>
     </div>
   );

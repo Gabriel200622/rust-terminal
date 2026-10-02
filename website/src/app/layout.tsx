@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, JetBrains_Mono } from "next/font/google";
 import { PrefsProvider } from "@/components/prefs";
+import { SITE_URL } from "@/lib/site";
 import "./globals.css";
 
 // The same faces the app bundles: Geist for the interface, JetBrains Mono for
@@ -12,14 +13,19 @@ const jetbrains = JetBrains_Mono({
 });
 
 const description =
-  "Pace is a native Rust terminal for focused work: GPU rendering, real shell sessions, and a quiet workspace interface. No webview.";
+  "Neptune is a native Rust terminal for focused work: GPU rendering, real shell sessions, and a quiet workspace interface. No webview.";
 
 export const metadata: Metadata = {
-  title: "Pace — a native terminal for focused work",
+  metadataBase: new URL(SITE_URL),
+  applicationName: "Neptune",
+  title: "Neptune — a native terminal for focused work",
   description,
+  alternates: { canonical: "/" },
   openGraph: {
-    title: "Pace — a native terminal for focused work",
+    title: "Neptune — a native terminal for focused work",
     description,
+    url: SITE_URL,
+    siteName: "Neptune",
     type: "website",
   },
 };

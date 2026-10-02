@@ -1,8 +1,10 @@
-# Pace
+# Neptune
+
+[neptune.rs](https://neptune.rs) · [GitHub](https://github.com/zevem/neptune)
 
 A native Rust terminal for focused work. GPU rendering, real shell sessions, and a quiet workspace interface inspired by cmux and Ghostty. The interface follows a native, Apple-style visual language: a full-height sidebar, a unified toolbar, terminals as rounded content surfaces, and one accent colour for focus. See [the interface direction](docs/design.md).
 
-Pace uses `egui`/`eframe` with `wgpu`, `alacritty_terminal` for terminal state, and `portable-pty` for Unix PTYs and Windows ConPTY. It contains no webview. This repository is an initial implementation: Linux is the local verification platform; macOS and Windows need native runtime verification before a production release.
+Neptune uses `egui`/`eframe` with `wgpu`, `alacritty_terminal` for terminal state, and `portable-pty` for Unix PTYs and Windows ConPTY. It contains no webview. This repository is an initial implementation: Linux is the local verification platform; macOS and Windows need native runtime verification before a production release.
 
 ## Build and run
 
@@ -10,16 +12,16 @@ Install a pinned Rust 1.97.1 toolchain (installed automatically by rustup) with 
 
 ```sh
 sudo apt-get install pkg-config libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
-cargo run --release --locked --bin pace
+cargo run --release --locked --bin neptune
 ```
 
 On macOS, install Xcode Command Line Tools. On Windows, use the MSVC Rust toolchain with the Visual Studio C++ Build Tools and Windows SDK; ConPTY requires Windows 10 version 1809 or later.
 
 ```sh
-cargo build --release --locked --bin pace
+cargo build --release --locked --bin neptune
 ```
 
-The executable is `target/release/pace` on Linux/macOS and `target\release\pace.exe` on Windows.
+The executable is `target/release/neptune` on Linux/macOS and `target\release\neptune.exe` on Windows.
 
 ### Development builds
 
@@ -52,27 +54,37 @@ Hold Command on macOS or Ctrl on Linux/Windows to reveal small shortcut hints in
 
 A workspace can be connected to another machine over SSH. Every terminal in it, including new splits and restarted terminals, then opens on that host instead of in a local shell. Secondary-click a workspace and choose **Connect over SSH…** to move all of its terminals to a host, or run **New SSH workspace** from the command palette. **Disconnect from SSH** returns the workspace to local shells. Connecting or disconnecting replaces the workspace's terminals, so processes running in them stop. A terminal keeps its session when it is moved, so it can be moved only between workspaces on the same machine.
 
-The host is an OpenSSH destination: `host`, `user@host`, an alias from `~/.ssh/config`, or `ssh://user@host:port`. Pace runs the system `ssh` client (which must be on your `PATH`) once per terminal, so your SSH configuration, keys and agent apply, and password, passphrase and host-key prompts appear in the terminal. Pace stores only the destination, never a credential. Each terminal is its own connection; enable `ControlMaster` in your SSH configuration to share one. The remote host needs a POSIX `sh` to launch its login shell; the `shell` setting applies to local terminals only. A terminal whose connection ends offers **Reconnect**.
+The host is an OpenSSH destination: `host`, `user@host`, an alias from `~/.ssh/config`, or `ssh://user@host:port`. Neptune runs the system `ssh` client (which must be on your `PATH`) once per terminal, so your SSH configuration, keys and agent apply, and password, passphrase and host-key prompts appear in the terminal. Neptune stores only the destination, never a credential. Each terminal is its own connection; enable `ControlMaster` in your SSH configuration to share one. The remote host needs a POSIX `sh` to launch its login shell; the `shell` setting applies to local terminals only. A terminal whose connection ends offers **Reconnect**.
 
-The first terminal starts in the host's login directory; splitting inherits the source terminal's current remote directory. Pace adds temporary OSC 7 directory reporting to Zsh after loading your normal login configuration, without editing your dotfiles. Other shells need their own OSC 7 integration; until a shell reports a directory, splits start in the login directory. Reconnecting or restoring opens a fresh login shell; remote directories are not saved as local paths.
+The first terminal starts in the host's login directory; splitting inherits the source terminal's current remote directory. Neptune adds temporary OSC 7 directory reporting to Zsh after loading your normal login configuration, without editing your dotfiles. Other shells need their own OSC 7 integration; until a shell reports a directory, splits start in the login directory. Reconnecting or restoring opens a fresh login shell; remote directories are not saved as local paths.
 
-When no saved workspace can be restored, Pace opens a terminal in your home directory (`~`). Use `--cwd` to choose another starting directory, or `--ssh` to open a workspace on a host. `--command` cannot be combined with `--ssh`, and a startup command is never typed into a terminal that is connecting over SSH.
+When no saved workspace can be restored, Neptune opens a terminal in your home directory (`~`). Use `--cwd` to choose another starting directory, or `--ssh` to open a workspace on a host. `--command` cannot be combined with `--ssh`, and a startup command is never typed into a terminal that is connecting over SSH.
 
 New workspace opens and selects a fresh shell at `~` immediately. Rename it later by double-clicking its sidebar row or choosing Rename workspace from its menu or the command palette.
 
 ```sh
-pace --cwd /path/to/project
-pace --ssh user@host
-pace --config config.example.toml
-pace --data-root /path/to/isolated-pace-data
-pace --command 'printf "hello\n"'
-pace --no-restore
-pace --help
+neptune --cwd /path/to/project
+neptune --ssh user@host
+neptune --config config.example.toml
+neptune --data-root /path/to/isolated-neptune-data
+neptune --command 'printf "hello\n"'
+neptune --no-restore
+neptune --help
 ```
 
 [config.example.toml](config.example.toml) documents the supported settings: three themes, nine accent colours, window zoom, font size and line height, scrollback limit, shell executable, cursor style/blink, sidebar width, workspace restoration, and close confirmation. Window zoom is available in Preferences under Appearance; changes there or through zoom shortcuts are saved and restored on the next launch, including with workspace restoration disabled. Settings are validated; unknown keys are rejected. Workspace restoration restores directories, split positions, and focused panes, and launches fresh shell processes; a remote workspace opens new SSH connections to its host. Commands and process memory are never serialized.
 
-Pace also remembers the window's size and maximized state when closed. Window state is saved as `window.json` in the data directory, independently of workspace restoration; `--no-restore` and `restore_workspaces = false` only affect workspaces. Use `--size WIDTHxHEIGHT` to override the saved geometry and start with a non-maximized window. Screenshot launches use the default or explicit size and do not save window state.
+Default storage is `~/.config/neptune` on Linux (or `$XDG_CONFIG_HOME/neptune`),
+`~/Library/Application Support/rs.Neptune.neptune` on macOS, and
+`%APPDATA%\Neptune\neptune\config` on Windows. On the first normal launch,
+Neptune moves the previous product's entire settings directory to this location
+if Neptune storage does not already exist. Saved files and recovery copies retain
+their original bytes; damaged or unsupported state still receives the usual write
+protection. A migration failure stops startup and preserves the original files.
+Existing Neptune storage takes precedence. Explicit `--data-root` and screenshot
+launches bypass migration.
+
+Neptune also remembers the window's size and maximized state when closed. Window state is saved as `window.json` in the data directory, independently of workspace restoration; `--no-restore` and `restore_workspaces = false` only affect workspaces. Use `--size WIDTHxHEIGHT` to override the saved geometry and start with a non-maximized window. Screenshot launches use the default or explicit size and do not save window state.
 
 ## Keyboard shortcuts
 
@@ -80,19 +92,19 @@ Ctrl-click a web link in a terminal to open it in your default browser; on macOS
 
 Use Ctrl+Shift on Linux/Windows and Command on macOS: T opens a workspace, D splits right, E splits below, W closes the focused pane, F searches, P opens commands, B toggles the sidebar, Enter zooms the focused pane to full size and back, and 1–9 select a workspace by its sidebar position. Ctrl+Tab switches workspaces. Ctrl+Shift+Left/Right/Up/Down focuses the adjacent pane on every platform, including while zoomed; at an outer edge, focus stays put. These moves are also available in the command palette. Escape cancels a terminal drag, or leaves a sheet or a focused search field; otherwise it goes to the shell, as do Tab and unmodified arrow keys. Ctrl+comma opens preferences. Ctrl+plus/minus (Command on macOS) zooms the whole app; Ctrl+equals also zooms in, and Ctrl+0 resets app zoom (Command on macOS). On keyboards where Plus requires Shift, use Ctrl+equals (Command on macOS) for app zoom. Change terminal font size in Preferences or with Ctrl+Shift+plus/minus on Linux/Windows and Command+Shift+plus/minus on macOS; Ctrl+Shift+0 (Command+Shift+0 on macOS) resets it to the default (14 pt). On macOS these font shortcuts follow the active keyboard layout's labeled +, -, and 0 keys, even when Shift produces *, _, or =, as on Latin American keyboards. Use Ctrl+Shift+C/V to copy/paste on Linux/Windows, Command+C/V on macOS. Plain Ctrl+C interrupts the shell; Shift+PageUp/PageDown scrolls history. Hold Shift to select text when a TUI owns the mouse.
 
-The native [desktop icon](assets/pace.svg) and [Linux desktop entry](packaging/pace.desktop) are provided. Install the binary on your PATH and these files in your desktop environment's standard application/icon locations.
+The native [desktop icon](assets/neptune.svg) and [Linux desktop entry](packaging/neptune.desktop) are provided. Install the binary on your PATH and these files in your desktop environment's standard application/icon locations.
 
 For a per-user Linux install (ensure `~/.local/bin` is on your PATH):
 
 ```sh
-install -Dm755 target/release/pace ~/.local/bin/pace
-install -Dm644 packaging/pace.desktop ~/.local/share/applications/dev.pace.terminal.desktop
-install -Dm644 assets/pace.svg ~/.local/share/icons/hicolor/scalable/apps/pace.svg
+install -Dm755 target/release/neptune ~/.local/bin/neptune
+install -Dm644 packaging/neptune.desktop ~/.local/share/applications/rs.neptune.terminal.desktop
+install -Dm644 assets/neptune.svg ~/.local/share/icons/hicolor/scalable/apps/neptune.svg
 ```
 
 ## Website
 
-The landing page lives in [`website/`](website/README.md): a static Next.js site that rebuilds the window from the app's theme tokens and layout code. It is separate from the Cargo workspace and uses Bun.
+The landing page for [neptune.rs](https://neptune.rs) lives in [`website/`](website/README.md): a static Next.js site that rebuilds the window from the app's theme tokens and layout code. It is separate from the Cargo workspace and uses Bun.
 
 ## Verification
 
@@ -120,15 +132,15 @@ Pushing a tag matching the package version, such as `v0.1.0`, runs release check
 
 These are binary archives, not installers. macOS signing/notarization, Windows signing, an update mechanism, and distribution-specific integration remain release work. Kitty graphics, full font fallback/shaping, keypad identification and some advanced keyboard modes, and platform accessibility need dedicated coverage before they are advertised. Running a GUI and reviewing screenshots on each OS remains necessary even after CI passes.
 
-Pace is MIT licensed. Bundled fonts retain their SIL Open Font License notices; third-party dependencies and vendored development skills retain their respective licenses. See [third-party notices](THIRD-PARTY-NOTICES.md) for skill attribution and the full upstream license texts.
+Neptune is MIT licensed. Bundled fonts retain their SIL Open Font License notices; third-party dependencies and vendored development skills retain their respective licenses. See [third-party notices](THIRD-PARTY-NOTICES.md) for skill attribution and the full upstream license texts.
 
-Developer inspection is opt-in through the `inspection` feature. `pace-inspect` exposes the native accessibility tree and supports `screenshot`, `key`, `text`, `click`, `context` (secondary click), `double-click`, `drag`, `press`, `release`, and `resize` commands for repeatable native visual review. The normal release binary has no inspection listener. Independent launches must follow [the run-isolation rules](scripts/AGENTS.md).
+Developer inspection is opt-in through the `inspection` feature. `neptune-inspect` exposes the native accessibility tree and supports `screenshot`, `key`, `text`, `click`, `context` (secondary click), `double-click`, `drag`, `press`, `release`, and `resize` commands for repeatable native visual review. The normal release binary has no inspection listener. Independent launches must follow [the run-isolation rules](scripts/AGENTS.md).
 
 Native regression runs own their process, temporary data directory, and inspection
 endpoint; they never use your saved workspaces:
 
 ```sh
-cargo build -p pace-terminal --features inspection --locked --bin pace --bin pace-inspect
+cargo build -p neptune-terminal --features inspection --locked --bin neptune --bin neptune-inspect
 python3 scripts/native-harness.py --restore --output artifacts/native-review
 ```
 

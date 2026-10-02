@@ -393,10 +393,10 @@ fn zsh_multiline_prompt_resize_preserves_long_input_and_command_history() {
         directory.path().join(".zshrc"),
         r#"
 autoload -Uz add-zsh-hook
-pace_prompt_start() { printf '\033]133;A\007'; }
-pace_command_start() { printf '\033]133;C\007'; }
-add-zsh-hook precmd pace_prompt_start
-add-zsh-hook preexec pace_command_start
+neptune_prompt_start() { printf '\033]133;A\007'; }
+neptune_command_start() { printf '\033]133;C\007'; }
+add-zsh-hook precmd neptune_prompt_start
+add-zsh-hook preexec neptune_command_start
 setopt prompt_subst
 PROMPT=$'PROMPT_LEFT${(pl.$((COLUMNS-21)).. .)}RIGHT_TAG\n> '
 RPROMPT=
