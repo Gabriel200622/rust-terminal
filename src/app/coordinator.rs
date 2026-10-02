@@ -363,6 +363,9 @@ impl App {
                 self.dispatch(ctx, Command::SetWorkspaceGroup { workspace, group })
             }
             Action::RemoveGroup(group) => self.dispatch(ctx, Command::RemoveWorkspaceGroup(group)),
+            Action::MoveGroup(group, index) => {
+                self.dispatch(ctx, Command::MoveWorkspaceGroup { group, index })
+            }
             Action::SshInGroup(group) => {
                 if self.controller.model().group(group).is_some() {
                     self.ui.ssh_host.clear();

@@ -44,6 +44,12 @@ pub enum Command {
     },
     /// Removes the folder, retaining its workspaces and every running session.
     RemoveWorkspaceGroup(WorkspaceGroupId),
+    /// Moves a folder to `index` in the group order; a position past the end
+    /// means last. Membership, order within each folder and sessions stay intact.
+    MoveWorkspaceGroup {
+        group: WorkspaceGroupId,
+        index: usize,
+    },
     SelectWorkspace(WorkspaceId),
     SplitPane {
         workspace: WorkspaceId,
@@ -362,6 +368,20 @@ impl Controller {
                     }
                 }
                 dirty = true;
+            }
+            Command::MoveWorkspaceGroup { group, index } => {
+                let position = self
+                    .model
+                    .groups
+                    .iter()
+                    .position(|folder| folder.id == group)
+                    .ok_or(Error::UnknownWorkspaceGroup(group))?;
+                let index = index.min(self.model.groups.len() - 1);
+                if index != position {
+                    let moved = self.model.groups.remove(position);
+                    self.model.groups.insert(index, moved);
+                    dirty = true;
+                }
             }
             Command::SelectWorkspace(id) => {
                 if self.model.workspace(id).is_none() {
@@ -2060,6 +2080,131 @@ mod tests {
 #[cfg(test)]
 mod group_tests {
     use super::*;
+
+    #[test]
+    fn moving_folders_only_persists_order_and_preserves_their_workspaces() {
+        let mut controller = Controller::new(Model::default());
+        for name in ["Projects", "Servers", "Empty"] {
+            controller
+                .dispatch(Command::AddWorkspaceGroup { name: name.into() })
+                .unwrap();
+        }
+        let ids: Vec<_> = controller
+            .model()
+            .groups()
+            .iter()
+            .map(WorkspaceGroup::id)
+            .collect();
+        for (name, group) in [
+            ("root", None),
+            ("client", Some(ids[0])),
+            ("server", Some(ids[0])),
+            ("remote", Some(ids[1])),
+        ] {
+            controller
+                .dispatch(Command::AddWorkspace {
+                    cwd: "/fake".into(),
+                    name: name.into(),
+                    remote: None,
+                    group,
+                })
+                .unwrap();
+        }
+        controller
+            .dispatch(Command::SetWorkspaceGroupCollapsed {
+                group: ids[0],
+                collapsed: true,
+            })
+            .unwrap();
+        let workspaces = controller.model().workspaces().to_owned();
+        let active = controller.model().active_workspace();
+        let generation = controller.generation();
+        assert_eq!(
+            controller
+                .dispatch(Command::MoveWorkspaceGroup {
+                    group: ids[0],
+                    index: 2
+                })
+                .unwrap(),
+            [Effect::Persist {
+                generation: generation + 1
+            }]
+        );
+        assert_eq!(
+            controller
+                .model()
+                .groups()
+                .iter()
+                .map(WorkspaceGroup::id)
+                .collect::<Vec<_>>(),
+            [ids[1], ids[2], ids[0]]
+        );
+        assert!(controller.model().group(ids[0]).unwrap().collapsed());
+        assert_eq!(
+            controller
+                .model()
+                .workspaces()
+                .iter()
+                .map(Workspace::name)
+                .collect::<Vec<_>>(),
+            ["root", "remote", "client", "server"]
+        );
+        for workspace in &workspaces {
+            assert_eq!(
+                controller.model().workspace(workspace.id()),
+                Some(workspace)
+            );
+        }
+        assert_eq!(controller.model().active_workspace(), active);
+        controller
+            .dispatch(Command::MoveWorkspaceGroup {
+                group: ids[0],
+                index: 0,
+            })
+            .unwrap();
+        assert_eq!(
+            controller
+                .model()
+                .groups()
+                .iter()
+                .map(WorkspaceGroup::id)
+                .collect::<Vec<_>>(),
+            ids
+        );
+        controller
+            .dispatch(Command::MoveWorkspaceGroup {
+                group: ids[0],
+                index: usize::MAX,
+            })
+            .unwrap();
+        let before = controller.model().clone();
+        let generation = controller.generation();
+        assert!(
+            controller
+                .dispatch(Command::MoveWorkspaceGroup {
+                    group: ids[0],
+                    index: 2
+                })
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            controller.dispatch(Command::MoveWorkspaceGroup {
+                group: WorkspaceGroupId::new(99),
+                index: 0
+            }),
+            Err(Error::UnknownWorkspaceGroup(WorkspaceGroupId::new(99)))
+        );
+        assert_eq!(controller.model(), &before);
+        assert_eq!(controller.generation(), generation);
+        assert_eq!(
+            Controller::new(Model::default()).dispatch(Command::MoveWorkspaceGroup {
+                group: ids[0],
+                index: 0
+            }),
+            Err(Error::UnknownWorkspaceGroup(ids[0]))
+        );
+    }
 
     #[test]
     fn folder_changes_preserve_terminal_identity_and_only_persist() {

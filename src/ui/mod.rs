@@ -54,6 +54,8 @@ pub struct UiState {
     pub sidebar_drag: Option<f32>,
     /// A workspace row being dragged to a new place in the sidebar.
     pub workspace_drag: chrome::WorkspaceDrag,
+    /// A folder and its visible workspaces moving together in the sidebar.
+    pub group_drag: chrome::GroupDrag,
     /// A sidebar toggle still sliding into place.
     pub sidebar_slide: Option<chrome::SidebarSlide>,
     /// The terminal being carried by its header, as of the last frame.
@@ -77,6 +79,7 @@ pub enum Action {
     RenameGroup(WorkspaceGroupId),
     SetGroupName(WorkspaceGroupId, String),
     SetGroupCollapsed(WorkspaceGroupId, bool),
+    MoveGroup(WorkspaceGroupId, usize),
     MoveToGroup(WorkspaceId, Option<WorkspaceGroupId>),
     RemoveGroup(WorkspaceGroupId),
     SshInGroup(WorkspaceGroupId),
