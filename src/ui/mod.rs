@@ -42,9 +42,21 @@ pub enum OverlayState {
     SshInGroup(WorkspaceGroupId),
     ConfirmClose(Close),
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CloseStatus {
+    #[default]
+    General,
+    Checking,
+    Running {
+        terminals: usize,
+        unknown: usize,
+    },
+    Unknown,
+}
 #[derive(Default)]
 pub struct UiState {
     pub overlay: OverlayState,
+    pub close_status: CloseStatus,
     pub preferences: theme_browser::State,
     pub palette_query: String,
     /// Highlighted command; reset whenever the query changes.

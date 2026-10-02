@@ -198,11 +198,19 @@ pub fn show(
                                 "Confirm before closing terminals",
                             );
                         });
+                        rows.row(ui, "Warn about running processes", |ui| {
+                            toggle(
+                                ui,
+                                p,
+                                &mut config.warn_running_processes,
+                                "Warn about running processes",
+                            );
+                        });
                     });
                     caption(
                         ui,
                         p,
-                        "Restoring reopens folders and layouts with fresh shells.",
+                        "Restoring reopens folders and layouts with fresh shells. Process warnings also apply when quitting, even with close confirmation off.",
                     );
                     ui.add_space(14.0);
                     section_label(ui, p, "Notifications");

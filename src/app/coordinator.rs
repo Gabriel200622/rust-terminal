@@ -660,6 +660,7 @@ impl App {
                 self.search_task = None;
             }
             Action::CloseOverlay => {
+                self.pending_close = None;
                 if self.ui.overlay == OverlayState::Update {
                     self.updates.dismiss();
                 }
@@ -718,24 +719,11 @@ impl App {
                 }
                 self.dispatch(ctx, Command::UpdatePreferences);
             }
-            Action::Confirm(close) => {
+            Action::Confirm(close) => self.confirm_close(ctx, close),
+            Action::CancelClose => {
+                self.pending_close = None;
                 self.ui.overlay = OverlayState::None;
-                match close {
-                    Close::App => self.exit_approved = true,
-                    Close::Pane(pane) => self.dispatch(ctx, Command::ClosePane(pane)),
-                    Close::Workspace(workspace) => {
-                        self.dispatch(ctx, Command::CloseWorkspace(workspace))
-                    }
-                    Close::Connection(workspace) => self.dispatch(
-                        ctx,
-                        Command::SetWorkspaceRemote {
-                            workspace,
-                            remote: None,
-                        },
-                    ),
-                }
             }
-            Action::CancelClose => self.ui.overlay = OverlayState::None,
             Action::Resize(pane, geometry) => {
                 let result = self.sessions.resize(
                     pane,
@@ -858,12 +846,5 @@ impl App {
     pub(super) fn cancel_pane_drag(&mut self, ctx: &egui::Context) {
         self.ui.pane_drag = None;
         ctx.stop_dragging();
-    }
-    fn request_close(&mut self, ctx: &egui::Context, close: Close) {
-        if self.config.confirm_close {
-            self.ui.overlay = OverlayState::ConfirmClose(close);
-        } else {
-            self.action(ctx, Action::Confirm(close));
-        }
     }
 }

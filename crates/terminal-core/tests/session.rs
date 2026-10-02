@@ -469,6 +469,116 @@ RPROMPT=
     wait_for(|| session.metrics().active_workers == 0);
 }
 
+fn activity(session: &TerminalSession) -> terminal_core::ProcessActivity {
+    session
+        .check_process_activity()
+        .recv_timeout(Duration::from_secs(3))
+        .unwrap()
+}
+
+#[track_caller]
+fn wait_for_activity_output(session: &TerminalSession, marker: &str) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let output = session.history_text();
+        if output.contains(marker) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "Missing fixture output {marker:?}; status {:?}; fixture transcript:\n{output}",
+            session.metadata().status
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn process_activity_distinguishes_idle_foreground_background_and_stopped_jobs() {
+    process_activity_tracks_interactive_jobs("/bin/sh", Vec::new());
+}
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn process_activity_tracks_interactive_bash_jobs() {
+    process_activity_tracks_interactive_jobs(
+        "/bin/bash",
+        vec!["--noprofile".into(), "--norc".into()],
+    );
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn process_activity_tracks_interactive_jobs(shell_path: &str, args: Vec<String>) {
+    use terminal_core::ProcessActivity::{Idle, Running};
+    let session = TerminalSession::spawn(
+        SessionOptions {
+            shell: Some(shell_path.into()),
+            args,
+            env: vec![("PS1".into(), "ACTIVITY_READY> ".into())],
+            ..SessionOptions::default()
+        },
+        Arc::new(|| {}),
+    )
+    .unwrap();
+    wait_for(|| screen(&session).contains("ACTIVITY_READY>"));
+    assert_eq!(activity(&session), Idle);
+    // A child can be detected between fork and foreground/interrupt setup.
+    // Its output proves the job has actually started before we send Ctrl+C.
+    session
+        .write(b"sh -c 'printf \"FOREGROUND_%s\\n\" ready; exec sleep 30'\r")
+        .unwrap();
+    wait_for_activity_output(&session, "FOREGROUND_ready");
+    assert_eq!(activity(&session), Running);
+    let prompts = session.history_text().matches("ACTIVITY_READY>").count();
+    session.write(b"\x03").unwrap();
+    // No child processes does not mean the shell has finished recovering from
+    // SIGINT. Wait for its next prompt before writing another command.
+    wait_for(|| session.history_text().matches("ACTIVITY_READY>").count() > prompts);
+    wait_for(|| activity(&session) == Idle);
+    // Wait for the marker rather than echoed input; the child is in place.
+    let prompts = session.history_text().matches("ACTIVITY_READY>").count();
+    // Bash 3.2 on macOS treats `$!;` as history expansion in an interactive
+    // shell. Whitespace after `!` preserves the background-PID expansion.
+    session
+        .write(b"sleep 30 & job=$! ; printf 'BACKGROUND_%s\\n' ready\r")
+        .unwrap();
+    wait_for_activity_output(&session, "BACKGROUND_ready");
+    wait_for(|| session.history_text().matches("ACTIVITY_READY>").count() > prompts);
+    assert_eq!(activity(&session), Running);
+    let prompts = session.history_text().matches("ACTIVITY_READY>").count();
+    session
+        .write(b"kill -STOP $job; printf 'STOPPED_%s\\n' ready\r")
+        .unwrap();
+    wait_for_activity_output(&session, "STOPPED_ready");
+    wait_for(|| session.history_text().matches("ACTIVITY_READY>").count() > prompts);
+    assert_eq!(activity(&session), Running);
+    // Interactive shells can return a pending stopped status from wait before
+    // reaping the killed child. Consume statuses until that PID is gone.
+    session
+        .write(b"kill -KILL $job; while kill -0 $job 2>/dev/null; do wait $job; done; printf 'FINISHED_%s\\n' ready\r")
+        .unwrap();
+    wait_for_activity_output(&session, "FINISHED_ready");
+    wait_for(|| activity(&session) == Idle);
+    session.write(b"exit\r").unwrap();
+    wait_for(|| matches!(session.metadata().status, SessionStatus::Exited { .. }));
+    assert_eq!(activity(&session), Idle);
+    wait_for(|| session.metrics().active_workers == 0);
+}
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn process_activity_detects_exec_replacing_the_shell_and_jobs_without_job_control() {
+    use terminal_core::ProcessActivity::Running;
+    for script in ["exec sleep 30", "sleep 30 & wait"] {
+        let session = shell(script);
+        wait_for(|| activity(&session) == Running);
+        session.write(b"\x03").unwrap();
+        session.shutdown();
+        wait_for(|| session.metrics().active_workers == 0);
+    }
+}
+
 #[test]
 fn notification_osc_events_cross_the_real_pty_without_polluting_screen_text() {
     let session = shell(

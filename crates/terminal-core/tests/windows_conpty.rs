@@ -253,3 +253,71 @@ fn conpty_child_fixture() {
     stdout.flush().unwrap();
     std::process::exit(0);
 }
+
+#[test]
+fn process_activity_distinguishes_cmd_prompt_from_a_running_child() {
+    use terminal_core::ProcessActivity::{Idle, Running};
+    let session = TerminalSession::spawn(
+        SessionOptions {
+            shell: Some("cmd.exe".into()),
+            args: vec!["/D".into(), "/Q".into()],
+            env: vec![
+                (FIXTURE_ENV.into(), "input".into()),
+                ("PROMPT".into(), "ACTIVITY_READY$G".into()),
+            ],
+            ..SessionOptions::default()
+        },
+        Arc::new(|| {}),
+    )
+    .unwrap();
+    let activity = || {
+        session
+            .check_process_activity()
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap()
+    };
+    wait_for(&session, || screen(&session).contains("ACTIVITY_READY>"));
+    assert_eq!(activity(), Idle);
+    let executable = std::env::current_exe().unwrap();
+    session
+        .write(
+            format!(
+                "\"{}\" --ignored --exact conpty_child_fixture --nocapture\r",
+                executable.display()
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+    wait_for(&session, || {
+        screen(&session).contains("READY\r\n") || screen(&session).contains("READY\n")
+    });
+    assert_eq!(activity(), Running);
+    session.write(b"hello").unwrap();
+    wait_for(&session, || activity() == Idle);
+    session.shutdown();
+    wait_for(&session, || session.metrics().active_workers == 0);
+}
+
+#[test]
+fn process_activity_marks_direct_programs_running_and_exited_sessions_idle() {
+    use terminal_core::ProcessActivity::{Idle, Running};
+    let session = session("input");
+    wait_for(&session, || screen(&session).contains("READY"));
+    assert_eq!(
+        session
+            .check_process_activity()
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap(),
+        Running
+    );
+    session.write(b"hello").unwrap();
+    wait_for(&session, || exited(&session, 7));
+    assert_eq!(
+        session
+            .check_process_activity()
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap(),
+        Idle
+    );
+    wait_for(&session, || session.metrics().active_workers == 0);
+}

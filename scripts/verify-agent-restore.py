@@ -51,7 +51,7 @@ def main():
     fixtures = output / 'bin'; fixtures.mkdir()
     for provider in ('codex', 'claude'):
         path = fixtures/provider; path.write_text(FIXTURE); path.chmod(0o700)
-    (data/'config.toml').write_text('shell = "/bin/bash"\nconfirm_close = false\n')
+    (data/'config.toml').write_text('shell = "/bin/bash"\nconfirm_close = false\nwarn_running_processes = false\n')
     (home/'.bashrc').write_text(f'export PATH={shlex.quote(str(fixtures))}:"$PATH"\nPS1="test $ "\n')
     endpoint = H['free_endpoint']()
     env = os.environ.copy(); env.pop('WAYLAND_DISPLAY',None)

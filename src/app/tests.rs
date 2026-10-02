@@ -1,7 +1,7 @@
 use super::*;
 use neptune_model::WorkspaceId;
 
-fn fixture(root: &std::path::Path) -> (App, mpsc::SyncSender<Startup>) {
+pub(super) fn fixture(root: &std::path::Path) -> (App, mpsc::SyncSender<Startup>) {
     let (sender, receiver) = mpsc::sync_channel(1);
     let config = Config {
         shell: Some("/nonexistent/neptune-startup-test-shell".into()),
@@ -36,6 +36,7 @@ fn fixture(root: &std::path::Path) -> (App, mpsc::SyncSender<Startup>) {
         screenshot: None,
         capture_sent: false,
         exit_approved: false,
+        pending_close: None,
         ephemeral: true,
         preference_generation: 0,
         ime_composing: false,
@@ -1697,6 +1698,7 @@ fn disconnecting_asks_first_and_cancelling_keeps_the_connection() {
     // Without confirmation the same action applies at once.
     let workspace = connect(&mut app);
     app.config.confirm_close = false;
+    app.config.warn_running_processes = false;
     app.action(&ctx, Action::Disconnect(workspace));
     assert_eq!(app.ui.overlay, OverlayState::None);
     assert_eq!(remote_of(&app, workspace), None);

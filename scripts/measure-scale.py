@@ -92,7 +92,7 @@ def run_case(args,count,scenario,root):
         result={"panes":count,"scenario":scenario,"status":"not-applicable","reason":"One pane has no independent hidden pane"}
         (output/"result.json").write_text(json.dumps(result,indent=2)+"\n");return result
     (data/"workspaces.json").write_text(json.dumps(make_state(data,count)))
-    (data/"config.toml").write_text('shell="/bin/sh"\nscrollback=1000\ncursor_blink=false\nconfirm_close=false\n')
+    (data/"config.toml").write_text('shell="/bin/sh"\nscrollback=1000\ncursor_blink=false\nconfirm_close=false\nwarn_running_processes=false\n')
     address=harness.free_endpoint();env=os.environ.copy();env.pop("WAYLAND_DISPLAY",None);env["EGUI_INSPECTION"]=address
     log=output/"app.log";result={"panes":count,"scenario":scenario,"endpoint":address,"data_root":str(data),"status":"running","output_producers":[]}
     process=None

@@ -1,5 +1,6 @@
 //! Thin eframe composition: widgets emit actions, the controller owns transitions,
 //! workers own processes/storage, and caches consume immutable terminal snapshots.
+mod closing;
 mod coordinator;
 mod diagnostics;
 mod input;
@@ -78,6 +79,7 @@ pub struct App {
     screenshot: Option<PathBuf>,
     capture_sent: bool,
     exit_approved: bool,
+    pending_close: Option<closing::PendingClose>,
     ephemeral: bool,
     preference_generation: u64,
     /// An input-method composition is in progress.
@@ -184,6 +186,7 @@ impl App {
             screenshot: launch.screenshot,
             capture_sent: false,
             exit_approved: false,
+            pending_close: None,
             ephemeral,
             preference_generation: 0,
             ime_composing: false,
@@ -652,15 +655,12 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         self.poll(&ctx);
         self.observe_window(&ctx, ui.max_rect().size());
-        if ctx.input(|i| i.viewport().close_requested())
-            && !self.exit_approved
-            && self.config.confirm_close
-        {
+        if ctx.input(|i| i.viewport().close_requested()) && !self.exit_approved {
             crate::platform::window::send(
                 &ctx,
                 crate::platform::window::WindowOperation::CancelClose,
             );
-            self.ui.overlay = OverlayState::ConfirmClose(Close::App);
+            self.request_close(&ctx, Close::App);
         }
         self.shortcuts(&ctx);
         self.release_closed_overlay_focus(&ctx);
@@ -977,6 +977,8 @@ impl eframe::App for App {
         for action in actions {
             self.action(&ctx, action);
         }
+        // Apply Cancel/Escape before an asynchronous idle result can close a pane.
+        self.poll_close(&ctx);
         self.send_startup_command();
         if self.command.is_some() || self.screenshot.is_some() {
             ctx.request_repaint_after(Duration::from_millis(100));

@@ -62,6 +62,28 @@ Secondary-click the **Workspaces** heading or empty sidebar space for **New work
 
 Use **Move to group** in a workspace's menu to organize existing workspaces, or choose **Ungrouped** to move one out. Workspaces can be reordered within their group by dragging or with **Move up** and **Move down**. Drag a group by its folder row to place it at the top, between ungrouped workspaces, or beside another group; its workspaces move with it. Ungrouped workspace rows can also be dragged around groups. Escape cancels the drag, and the new order is saved on release. Group commands are also available in the palette. Collapsing or removing a group keeps its shells running; removing it leaves its workspaces ungrouped in the folder's former position. Names, membership, empty groups, mixed sidebar order, and collapsed state are saved with the workspace organization. Groups do not nest.
 
+### Closing terminals safely
+
+Preferences has two independent switches, both enabled by default:
+**Confirm before closing terminals** always asks before closing; **Warn about
+running processes** asks when a terminal has an active job, even if the first
+switch is off. They apply to terminals, whole workspaces, SSH disconnects and
+quitting Neptune, including terminals in hidden workspaces. One confirmation
+covers the whole action; Cancel preserves the sessions. Process checks do not
+show a dialog until confirmation is needed; Escape can cancel a pending check.
+
+The process check runs on session workers only when closing is requested. It
+uses OS metadata rather than terminal titles or output, detects foreground,
+background and stopped child jobs, and recognizes programs that replace the
+shell with `exec`. An idle recognized shell can close immediately with the first
+switch off. Starting sessions, failed checks and checks taking longer than two
+seconds ask before closing. SSH connections always count as active: Neptune
+cannot inspect jobs on the remote host. Shell helper processes and unrecognized
+shell executables may also trigger a warning. Shell builtins with no child
+process and fully detached/reparented jobs cannot reliably be distinguished
+from an idle shell; use the always-confirm switch if you need that protection.
+Closing hangs up the terminal; detached or signal-ignoring jobs may survive.
+
 ### Coding agent sessions
 
 Local Unix terminals can reopen Claude Code and Codex in their original panes
@@ -93,7 +115,7 @@ neptune --no-restore
 neptune --help
 ```
 
-[config.example.toml](config.example.toml) documents the supported settings: 715 themes shared by the window and terminal, custom themes, window zoom, font size and line height, scrollback limit, shell executable, cursor style/blink, sidebar width, workspace restoration, and close confirmation. Window zoom is available in Preferences under Appearance; changes there or through zoom shortcuts are saved and restored on the next launch, including with workspace restoration disabled. Settings are validated; unknown keys are rejected. Workspace restoration restores directories, split positions, and focused panes, and launches fresh shell processes; a remote workspace opens new SSH connections to its host. Recognized coding agents can resume their provider-owned conversations through saved session references; arbitrary commands and process memory are never serialized.
+[config.example.toml](config.example.toml) documents the supported settings: 715 themes shared by the window and terminal, custom themes, window zoom, font size and line height, scrollback limit, shell executable, cursor style/blink, sidebar width, workspace restoration, and the two independent close warnings. Window zoom is available in Preferences under Appearance; changes there or through zoom shortcuts are saved and restored on the next launch, including with workspace restoration disabled. Settings are validated; unknown keys are rejected. Workspace restoration restores directories, split positions, and focused panes, and launches fresh shell processes; a remote workspace opens new SSH connections to its host. Recognized coding agents can resume their provider-owned conversations through saved session references; arbitrary commands and process memory are never serialized.
 
 Open **Preferences** and choose the theme row under Appearance (or **Browse
 themes** in the command palette) to pick one theme for the whole app. Neptune's
