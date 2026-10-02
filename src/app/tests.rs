@@ -1799,7 +1799,12 @@ fn a_remote_split_inherits_the_reported_host_directory_and_keeps_its_local_direc
     let second = app.controller.model().active_pane().unwrap();
     assert_ne!(second, pane);
     assert_eq!(app.controller.model().pane(second).unwrap().cwd(), cwd);
-    while app.sessions.usage().running != 2 || lines("args").lines().count() != 2 {
+    // The argument header is written first. Wait for both complete bootstrap
+    // records before checking the split's remote directory.
+    while app.sessions.usage().running != 2
+        || lines("args").lines().count() != 2
+        || lines("commands").matches('\0').count() != 2
+    {
         app.poll(&ctx);
         assert!(
             Instant::now() < deadline,
