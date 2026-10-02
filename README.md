@@ -222,6 +222,21 @@ is manual after review and native acceptance.
 
 Download published stable builds at [neptune.rs/download](https://neptune.rs/download)
 and prereleases at [neptune.rs/download/beta](https://neptune.rs/download/beta).
+
+On Linux, a downloaded AppImage needs execute permission before it can run.
+In the file's Properties → Permissions, enable execution as a program, or use
+the following commands with your downloaded version and location:
+
+```sh
+chmod u+x ./Neptune-VERSION-linux-x64.AppImage
+./Neptune-VERSION-linux-x64.AppImage
+```
+
+Opening the file in Gear Lever shows its management screen; mark the file trusted
+and use its launch or integration control. If a desktop double-click does nothing,
+run the executable AppImage from a terminal to see the error. The DEB uses the
+system package installer and does not need execute permission.
+
 GitHub Releases hosts the binaries; the Vercel website caches and verifies release
 metadata server-side and always offers all platform/architecture choices.
 Preferences → Updates controls automatic checks and Stable/Beta channels.

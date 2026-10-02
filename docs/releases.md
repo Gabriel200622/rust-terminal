@@ -104,6 +104,14 @@ pins requires reviewing upstream primary sources and rerunning packaging proof.
 Windows uses Inno Setup, per-user installation, Start Menu/optional desktop
 shortcuts and uninstall registration. It preserves user settings/workspaces.
 
+Browser downloads do not preserve Linux execute permission. Before testing a
+downloaded AppImage, enable execution in file Properties or run `chmod u+x` on
+that exact file, then launch it. Opening it with Gear Lever presents a management
+screen; trusting and launching/integrating the file is a separate action.
+Record downloaded-file permissions and test both the direct launch and any
+integration tool used. A `--version` check alone does not verify a native window.
+See the [download instructions](../README.md#ci-and-artifacts).
+
 Once the workflow is green, download draft artifacts as an authenticated operator,
 verify all eight asset names, signatures/checksums/attestations, test installers
 and run the [native acceptance gates](verification.md#remaining-production-release-gates).
