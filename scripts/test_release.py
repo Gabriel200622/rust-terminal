@@ -96,7 +96,7 @@ class ReleaseTests(unittest.TestCase):
             subprocess.run(['openssl', 'pkeyutl', '-verify', '-pubin', '-inkey', str(public_pem), '-rawin', '-in', str(dist / 'update-manifest.json'), '-sigfile', str(signature)], check=True, stdout=subprocess.DEVNULL)
 
     def test_published_release_rerun_never_mutates_public_assets(self):
-        with patch.object(release, 'validate', return_value={'version': '0.2.0', 'prerelease': 'false'}), patch.object(release.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '{"draft":false}', '')) as run:
+        with patch.object(release, 'validate', return_value={'version': '0.2.0', 'prerelease': 'false'}), patch.object(release.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '[{"tag_name":"v0.2.0","draft":false}]', '')) as run:
             with self.assertRaisesRegex(ValueError, 'already published'):
                 release.stage('v0.2.0', Path('dist'))
             self.assertEqual(run.call_count, 1)
@@ -115,7 +115,7 @@ class ReleaseTests(unittest.TestCase):
             def run(command, **kwargs):
                 calls.append(command)
                 if command[:2] == ['gh', 'api']:
-                    return subprocess.CompletedProcess(command, 1, '', 'HTTP 404')
+                    return subprocess.CompletedProcess(command, 0, '[]', '')
                 if command[:3] == ['gh', 'release', 'upload']:
                     raise subprocess.CalledProcessError(1, command)
                 return subprocess.CompletedProcess(command, 0)
@@ -135,13 +135,14 @@ class ReleaseTests(unittest.TestCase):
             names = [*release.artifact_names('0.2.0-beta.1').values(), 'SHA256SUMS', 'update-manifest.json', 'update-manifest.sig']
             for name in names: (dist / name).write_bytes(b'fixture')
             calls = []
+            listings = iter([[], [{'tag_name': 'v0.2.0-beta.1', 'draft': True, 'assets': [{'name': name} for name in names]}]])
             def run(command, **kwargs):
                 calls.append(command)
                 if command[:2] == ['gh', 'api']:
-                    return subprocess.CompletedProcess(command, 1, '', 'HTTP 404')
+                    self.assertNotIn('/releases/tags/', command[2])
+                    return subprocess.CompletedProcess(command, 0, json.dumps(next(listings)), '')
                 return subprocess.CompletedProcess(command, 0)
-            complete = json.dumps({'draft': True, 'assets': [{'name': name} for name in names]}).encode()
-            with patch.object(release, 'validate', return_value=release.validate('v0.2.0-beta.1', root)), patch.object(release.subprocess, 'run', side_effect=run), patch.object(release.subprocess, 'check_output', return_value=complete):
+            with patch.object(release, 'validate', return_value=release.validate('v0.2.0-beta.1', root)), patch.object(release.subprocess, 'run', side_effect=run):
                 release.stage('v0.2.0-beta.1', dist)
             upload_index = next(i for i, command in enumerate(calls) if command[:3] == ['gh', 'release', 'upload'])
             self.assertTrue(all('INCOMPLETE' in ' '.join(command) for command in calls[1:upload_index]))
@@ -150,6 +151,40 @@ class ReleaseTests(unittest.TestCase):
             self.assertIn('--prerelease=true', final)
             self.assertEqual(final[-2:], ['--notes-file', str(notes)])
             self.assertFalse(any('--draft=false' in command for command in calls))
+
+    def test_draft_lookup_paginates_and_rejects_ambiguous_tags(self):
+        first = [{'tag_name': f'v1.0.{i}', 'draft': False} for i in range(100)]
+        draft = {'tag_name': 'v0.2.0', 'draft': True, 'assets': []}
+        responses = [subprocess.CompletedProcess([], 0, json.dumps(page), '') for page in [first, [draft]]]
+        with patch.object(release.subprocess, 'run', side_effect=responses) as run:
+            self.assertEqual(release.release_for_tag('v0.2.0'), draft)
+            self.assertIn('page=2', run.call_args_list[1].args[0][2])
+        with patch.object(release.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, json.dumps([draft, draft]), '')):
+            with self.assertRaisesRegex(ValueError, 'Ambiguous'):
+                release.release_for_tag('v0.2.0')
+
+    def test_existing_private_draft_replaces_stale_assets_without_publishing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            dist = Path(directory)
+            (dist / 'asset').write_bytes(b'installer')
+            old = {'tag_name': 'v0.2.0', 'draft': True, 'assets': [{'id': 7, 'name': 'stale'}]}
+            complete = {'tag_name': 'v0.2.0', 'draft': True, 'assets': [{'name': 'asset'}]}
+            listings = iter([[old], [complete]])
+            calls = []
+            def run(command, **kwargs):
+                calls.append(command)
+                if command[:2] == ['gh', 'api'] and '?per_page=' in command[2]:
+                    return subprocess.CompletedProcess(command, 0, json.dumps(next(listings)), '')
+                return subprocess.CompletedProcess(command, 0)
+            with patch.object(release, 'validate', return_value={'version': '0.2.0', 'prerelease': 'false'}), patch.object(release.subprocess, 'run', side_effect=run):
+                release.stage('v0.2.0', dist)
+            self.assertFalse(any(command[:3] == ['gh', 'release', 'create'] for command in calls))
+            self.assertIn(['gh', 'api', '--method', 'DELETE', 'repos/zevem/neptune/releases/assets/7'], calls)
+            edits = [command for command in calls if command[:3] == ['gh', 'release', 'edit']]
+            self.assertEqual(len(edits), 2)
+            self.assertTrue(all('--draft' in command for command in edits))
+            self.assertIn('INCOMPLETE Neptune 0.2.0', edits[0])
+            self.assertIn('Neptune 0.2.0', edits[1])
 
     def test_macos_missing_credentials_cannot_fall_back_to_unsigned_artifacts(self):
         spec = importlib.util.spec_from_file_location('sign_macos', Path(__file__).with_name('sign-macos.py'))

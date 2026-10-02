@@ -367,6 +367,10 @@ same workflow run and signs only the complete set.
   key; check exactly five artifact names and nonzero bounded sizes. No unsigned fallback.
 - **Upload:** failed uploads remain private drafts. Wait for/fix the failed job,
   rerun only before publication, then verify eight assets and the green workflow.
+  GitHub's by-tag REST endpoint returns published releases only. Operators can
+  inspect a draft with `gh release view`; staging lists authenticated releases
+  with pagination so existing drafts are found and verified without publication.
+  See [GitHub release lookup semantics](https://docs.github.com/en/rest/releases/releases#get-a-release-by-tag-name).
   Do not publish a draft from a failed/cancelled run. Public release reruns are refused.
 - **Website:** inspect Vercel runtime logs/configuration, API limits, public-key
   build value and release classification/completeness. Wait up to five minutes
