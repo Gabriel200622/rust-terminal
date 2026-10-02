@@ -91,6 +91,12 @@ pub enum Command {
         generation: u64,
         cwd: PathBuf,
     },
+    /// A directory explicitly reported by the remote shell, never a local path.
+    PaneRemoteCwdChanged {
+        pane: PaneId,
+        generation: u64,
+        cwd: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,6 +107,7 @@ pub enum Effect {
         cwd: PathBuf,
         /// Where the session runs; `None` is a local shell.
         remote: Option<Remote>,
+        remote_cwd: Option<PathBuf>,
         replacement: bool,
     },
     StopSession {
@@ -178,6 +185,7 @@ impl Controller {
                     generation: pane.generation,
                     cwd: pane.cwd.clone(),
                     remote: workspace.remote.clone(),
+                    remote_cwd: pane.remote_cwd.clone(),
                     replacement: false,
                 })
             })
@@ -239,6 +247,7 @@ impl Controller {
                     panes: vec![Pane {
                         id: pane_id,
                         cwd: cwd.clone(),
+                        remote_cwd: None,
                         generation: 1,
                         lifecycle: Lifecycle::Starting,
                     }],
@@ -251,6 +260,7 @@ impl Controller {
                     generation: 1,
                     cwd,
                     remote,
+                    remote_cwd: None,
                     replacement: false,
                 });
                 dirty = true;
@@ -274,9 +284,11 @@ impl Controller {
                     .model
                     .workspace(workspace)
                     .ok_or(Error::UnknownWorkspace(workspace))?;
-                if ws.pane(pane).is_none() {
-                    return Err(Error::UnknownPane(pane));
-                }
+                let remote_cwd = ws
+                    .pane(pane)
+                    .ok_or(Error::UnknownPane(pane))?
+                    .remote_cwd
+                    .clone();
                 self.check_pane_capacity(ws.panes.len())?;
                 let id = PaneId::new(self.model.next_pane);
                 let split = SplitId::new(self.model.next_split);
@@ -301,6 +313,7 @@ impl Controller {
                 ws.panes.push(Pane {
                     id,
                     cwd: cwd.clone(),
+                    remote_cwd: remote_cwd.clone(),
                     generation: 1,
                     lifecycle: Lifecycle::Starting,
                 });
@@ -314,6 +327,7 @@ impl Controller {
                     generation: 1,
                     cwd,
                     remote,
+                    remote_cwd,
                     replacement: false,
                 });
                 dirty = true;
@@ -404,6 +418,7 @@ impl Controller {
                         let previous = pane.generation;
                         pane.generation += 1;
                         pane.lifecycle = Lifecycle::Starting;
+                        pane.remote_cwd = None;
                         effects.push(Effect::StopSession {
                             pane: pane.id,
                             generation: previous,
@@ -413,6 +428,7 @@ impl Controller {
                             generation: pane.generation,
                             cwd: pane.cwd.clone(),
                             remote: remote.clone(),
+                            remote_cwd: None,
                             replacement: true,
                         });
                     }
@@ -455,6 +471,7 @@ impl Controller {
                     generation: item.generation,
                     cwd: item.cwd.clone(),
                     remote,
+                    remote_cwd: item.remote_cwd.clone(),
                     replacement: true,
                 });
                 if old_focus == Some(pane) {
@@ -494,6 +511,25 @@ impl Controller {
                     && item.cwd != cwd
                 {
                     item.cwd = cwd;
+                    dirty = true;
+                }
+            }
+            Command::PaneRemoteCwdChanged {
+                pane,
+                generation,
+                cwd,
+            } => {
+                let remote = self
+                    .model
+                    .workspace_for_pane(pane)
+                    .and_then(|id| self.model.workspace(id))
+                    .is_some_and(|workspace| workspace.remote.is_some());
+                if remote
+                    && let Ok(item) = self.model.pane_mut(pane)
+                    && item.generation == generation
+                    && item.remote_cwd.as_ref() != Some(&cwd)
+                {
+                    item.remote_cwd = Some(cwd);
                     dirty = true;
                 }
             }
@@ -1381,6 +1417,7 @@ mod tests {
             generation: 2,
             cwd: PathBuf::from("/fake"),
             remote: None,
+            remote_cwd: None,
             replacement: true
         }));
         controller
@@ -1485,6 +1522,136 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn remote_directories_follow_each_pane_through_split_restart_and_restore() {
+        let (mut controller, workspace, first) = setup();
+        controller
+            .dispatch(Command::SetWorkspaceRemote {
+                workspace,
+                remote: Some("devbox".into()),
+            })
+            .unwrap();
+        let directory = PathBuf::from("/srv/project ' % λ");
+        let generation = controller.model().pane(first).unwrap().generation();
+        controller
+            .dispatch(Command::PaneRemoteCwdChanged {
+                pane: first,
+                generation,
+                cwd: directory.clone(),
+            })
+            .unwrap();
+        let split = controller
+            .dispatch(Command::SplitPane {
+                workspace,
+                pane: first,
+                axis: Axis::Vertical,
+                cwd: PathBuf::from("/fake"),
+            })
+            .unwrap();
+        let second = controller.model().active_pane().unwrap();
+        assert!(split.iter().any(|effect| matches!(effect, Effect::StartSession { pane, remote_cwd: Some(cwd), .. } if *pane == second && *cwd == directory)));
+        controller
+            .dispatch(Command::PaneRemoteCwdChanged {
+                pane: second,
+                generation: 1,
+                cwd: PathBuf::from("/srv/other"),
+            })
+            .unwrap();
+        let restarted = controller.dispatch(Command::RestartPane(first)).unwrap();
+        assert!(restarted.iter().any(|effect| matches!(effect, Effect::StartSession { pane, remote_cwd: Some(cwd), .. } if *pane == first && *cwd == directory)));
+        let restored = Controller::new(
+            Model::restore(
+                controller.model().specs(),
+                Some(workspace),
+                true,
+                Limits::default(),
+            )
+            .unwrap(),
+        );
+        let directories: Vec<_> = restored
+            .start_effects()
+            .into_iter()
+            .filter_map(|effect| match effect {
+                Effect::StartSession { remote_cwd, .. } => remote_cwd,
+                _ => None,
+            })
+            .collect();
+        assert_eq!(directories, [directory, PathBuf::from("/srv/other")]);
+        for pane in [first, second] {
+            assert_eq!(
+                restored.model().pane(pane).unwrap().cwd(),
+                std::path::Path::new("/fake")
+            );
+        }
+    }
+
+    #[test]
+    fn remote_directory_reports_ignore_stale_closed_and_local_sessions() {
+        let (mut controller, workspace, pane) = setup();
+        let report = |generation| Command::PaneRemoteCwdChanged {
+            pane,
+            generation,
+            cwd: PathBuf::from("/srv/project"),
+        };
+        let generation = controller.generation();
+        assert!(controller.dispatch(report(1)).unwrap().is_empty());
+        assert_eq!(controller.generation(), generation);
+        controller
+            .dispatch(Command::SetWorkspaceRemote {
+                workspace,
+                remote: Some("devbox".into()),
+            })
+            .unwrap();
+        assert!(controller.dispatch(report(1)).unwrap().is_empty());
+        assert!(
+            controller
+                .dispatch(report(2))
+                .unwrap()
+                .iter()
+                .any(|effect| matches!(effect, Effect::Persist { .. }))
+        );
+        assert!(controller.dispatch(report(2)).unwrap().is_empty());
+        controller.dispatch(Command::RestartPane(pane)).unwrap();
+        assert!(controller.dispatch(report(2)).unwrap().is_empty());
+        assert_eq!(
+            controller.model().pane(pane).unwrap().remote_cwd(),
+            Some(std::path::Path::new("/srv/project"))
+        );
+        controller.dispatch(Command::ClosePane(pane)).unwrap();
+        assert!(controller.dispatch(report(3)).unwrap().is_empty());
+    }
+
+    #[test]
+    fn changing_ssh_hosts_and_disconnecting_clear_remote_directories() {
+        let (mut controller, workspace, pane) = setup();
+        for destination in [Some("devbox"), Some("otherbox"), None] {
+            let effects = controller
+                .dispatch(Command::SetWorkspaceRemote {
+                    workspace,
+                    remote: destination.map(str::to_owned),
+                })
+                .unwrap();
+            assert_eq!(controller.model().pane(pane).unwrap().remote_cwd(), None);
+            assert!(effects.iter().any(|effect| matches!(
+                effect,
+                Effect::StartSession {
+                    remote_cwd: None,
+                    ..
+                }
+            )));
+            if destination.is_some() {
+                let generation = controller.model().pane(pane).unwrap().generation();
+                controller
+                    .dispatch(Command::PaneRemoteCwdChanged {
+                        pane,
+                        generation,
+                        cwd: PathBuf::from("/srv/project"),
+                    })
+                    .unwrap();
+            }
+        }
     }
 
     #[test]
@@ -1736,10 +1903,12 @@ mod tests {
                 PaneSpec {
                     id: PaneId::new(1),
                     cwd: PathBuf::new(),
+                    remote_cwd: None,
                 },
                 PaneSpec {
                     id: PaneId::new(2),
                     cwd: PathBuf::new(),
+                    remote_cwd: None,
                 },
             ],
             layout: Layout::Leaf(PaneId::new(1)),

@@ -59,7 +59,7 @@ command rm -f -- "$_neptune_dir"/.zcompdump*(N)
 command rmdir -- "$_neptune_dir"
 unset _neptune_dir _neptune_user_zdotdir _neptune_user_zdotdir_set
 [[ -r ${ZDOTDIR-$HOME}/.zlogin ]] && source "${ZDOTDIR-$HOME}/.zlogin"
-# Login configuration may itself cd. Apply the requested split directory last.
+# Login configuration may itself cd. Apply the requested directory last.
 if [[ -n $_neptune_start_cwd ]]; then
     builtin cd -- "$_neptune_start_cwd" || exit
 fi
