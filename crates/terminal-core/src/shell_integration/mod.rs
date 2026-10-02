@@ -120,6 +120,19 @@ fn decode_report(bytes: &[u8]) -> Option<PathBuf> {
         Some(uri) => decode_cwd(uri),
         None => decode_path(bytes.strip_prefix(REPORTS[1])?),
     }
+    .filter(|path| is_local_report(path))
+}
+
+/// Any program's output can claim a directory, and splits/restoration later
+/// probe it and start shells there. Refuse Windows UNC and device paths so
+/// terminal output cannot make Neptune connect to a network share. Drive paths
+/// and rooted paths (including remote hosts' Unix paths) remain valid.
+fn is_local_report(path: &std::path::Path) -> bool {
+    use std::path::{Component, Prefix};
+    match path.components().next() {
+        Some(Component::Prefix(prefix)) => matches!(prefix.kind(), Prefix::Disk(_)),
+        _ => true,
+    }
 }
 
 /// OSC 9;9 carries a native path, optionally quoted, rather than a URI.

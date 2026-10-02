@@ -398,6 +398,20 @@ fn osc9_9_reports_native_paths_and_ignores_other_osc9() {
     );
     assert!(decode_path(b"relative").is_none());
     assert!(decode_path(b"/tmp\0").is_none());
+    if cfg!(windows) {
+        // Output must not steer later splits/restores onto a network share.
+        for report in [
+            &b"\x1b]9;9;\\\\evil\\share\x07"[..],
+            b"\x1b]9;9;\\\\?\\UNC\\evil\\share\x07",
+            b"\x1b]7;file://x//evil/share\x07",
+        ] {
+            assert!(tracker.advance(report).is_none());
+        }
+        assert_eq!(
+            tracker.advance(b"\x1b]7;file://neptune/home/dev\x07"),
+            Some(PathBuf::from("/home/dev"))
+        );
+    }
 }
 
 /// A parser-backed fixture exercises the public contract without PTYs,
