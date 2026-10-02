@@ -1,12 +1,12 @@
 # Architecture and renderer decision
 
-Pace is a Rust desktop terminal: native windows, operating-system PTYs, a terminal state engine, and GPU rendering. The application uses `eframe`/`egui` with `wgpu`; no browser or webview hosts its interface. This is a cross-platform implementation, but release readiness and platform support must be established by the verification below rather than inferred from its dependencies.
+Neptune is a Rust desktop terminal: native windows, operating-system PTYs, a terminal state engine, and GPU rendering. The application uses `eframe`/`egui` with `wgpu`; no browser or webview hosts its interface. This is a cross-platform implementation, but release readiness and platform support must be established by the verification below rather than inferred from its dependencies.
 
 ## Why the first version does not embed Ghostty's renderer
 
 Ghostty was researched on 2026-09-30 at upstream commit `76895d97b74ff6b24c2b1543bcd69ccc18048a4d`. There are two different APIs with different purposes:
 
-| API | What it provides | Suitability for Pace |
+| API | What it provides | Suitability for Neptune |
 | --- | --- | --- |
 | `libghostty-internal`, `include/ghostty.h` | Ghostty application surfaces, including renderer and platform integration | The header identifies the macOS app as its only consumer, discourages external embedding, and exposes macOS/iOS platform surfaces. It is not a portable Linux/Windows GPU surface interface. |
 | `libghostty-vt`, `include/ghostty/vt.h` | Terminal parsing, state, scrollback, input encoding, and render-state extraction | A viable future terminal engine for Linux, Windows, and macOS. It does not draw glyphs or create windows, and its C API is explicitly unstable. |
@@ -15,15 +15,15 @@ These distinctions are explicit in [the internal embedding header](https://githu
 
 The official [Ghostling example](https://github.com/ghostty-org/ghostling/blob/main/README.md) demonstrates using the VT library with a separately implemented renderer and window layer. It requires Zig in addition to the host build tools. Upstream's [CMake integration](https://github.com/ghostty-org/ghostty/blob/76895d97b74ff6b24c2b1543bcd69ccc18048a4d/CMakeLists.txt) delegates to Zig and has additional static-link considerations for SIMD dependencies on Windows.
 
-The initial engine is `alacritty_terminal`, with PTYs provided by `portable-pty`. These are Rust dependencies with published releases. This choice avoids committing the first release to an unversioned C ABI or to platform-specific Ghostty surfaces. It does **not** mean that Pace inherits Alacritty's renderer or its benchmark results. [Alacritty's upstream documentation](https://github.com/alacritty/alacritty/blob/master/README.md) lists Linux, macOS, and Windows support. [WezTerm's PTY implementation](https://github.com/wezterm/wezterm/blob/main/pty/src/lib.rs) selects Unix PTYs or Windows ConPTY.
+The initial engine is `alacritty_terminal`, with PTYs provided by `portable-pty`. These are Rust dependencies with published releases. This choice avoids committing the first release to an unversioned C ABI or to platform-specific Ghostty surfaces. It does **not** mean that Neptune inherits Alacritty's renderer or its benchmark results. [Alacritty's upstream documentation](https://github.com/alacritty/alacritty/blob/master/README.md) lists Linux, macOS, and Windows support. [WezTerm's PTY implementation](https://github.com/wezterm/wezterm/blob/main/pty/src/lib.rs) selects Unix PTYs or Windows ConPTY.
 
 ## Component boundaries
 
-`pace-model` owns ordered workspaces, pane membership, stable pane/workspace/split identities, validated layouts, lifecycle, targeted commands and the optional SSH destination of a remote workspace. It depends only on `serde`. Model fields are private, and the pure controller returns effects; it opens no windows, shells or files.
+`neptune-model` owns ordered workspaces, pane membership, stable pane/workspace/split identities, validated layouts, lifecycle, targeted commands and the optional SSH destination of a remote workspace. It depends only on `serde`. Model fields are private, and the pure controller returns effects; it opens no windows, shells or files.
 
 `terminal-core` owns PTY sessions and terminal state. Each pane is an independent session. Its public contract contains project-owned input modes, coordinates, colors, selection, events, owned viewport snapshots and budgeted search. Alacritty types and mutable grid locks remain internal.
 
-A remote workspace is still made of ordinary PTY sessions: the desktop starts the system OpenSSH client as each pane's process, with `-t`, the validated destination after `--`, and a quoted remote bootstrap command. Pace implements no SSH protocol, stores no credentials and adds no dependency for it. The bootstrap runs on a Unix host after authentication, opens its login shell, and adds temporary OSC 7 directory hooks to Zsh without editing user configuration. A remote pane keeps its local directory in the model, because the directory its host reports is not a local path. `terminal-core` exposes the last OSC 7 directory separately from the local process directory. Splits capture that report from their stable source pane and pass it as a quoted argument in the new session's generation-tagged startup request; local filesystem validation and persistence never consume it. Reconnect and restoration start fresh login shells.
+A remote workspace is still made of ordinary PTY sessions: the desktop starts the system OpenSSH client as each pane's process, with `-t`, the validated destination after `--`, and a quoted remote bootstrap command. Neptune implements no SSH protocol, stores no credentials and adds no dependency for it. The bootstrap runs on a Unix host after authentication, opens its login shell, and adds temporary OSC 7 directory hooks to Zsh without editing user configuration. A remote pane keeps its local directory in the model, because the directory its host reports is not a local path. `terminal-core` exposes the last OSC 7 directory separately from the local process directory. Splits capture that report from their stable source pane and pass it as a quoted argument in the new session's generation-tagged startup request; local filesystem validation and persistence never consume it. Reconnect and restoration start fresh login shells.
 
 The desktop library connects the controller to `runtime/sessions.rs`, the background persistence writer, platform services and `ui/` widgets. The session manager bounds startup concurrency and retains resource reservations for starting/closing sessions. `terminal_view/` prepares/caches/paints snapshots and returns interactions; painting receives no live session. `input.rs` normalizes egui events and delegates protocol encoding to terminal-core. `platform/` owns clipboard, fonts and window operations.
 
@@ -37,11 +37,11 @@ shell/TUI ⇄ native PTY ⇄ terminal-core ⇄ owned viewport ⇄ terminal_view 
 
 PTY startup, reading, VT parsing, configuration loading and persistence run off the UI thread. Rendering reads a visible snapshot; it never waits for a shell command to finish. Search compilation happens when the query changes, and scans use explicit row/time budgets with revision/query/session identity. This separation makes a future `libghostty-vt` adapter practical while preserving the workspace UI and PTY lifecycle. Such an adapter is planned, not implemented.
 
-See [the development contract](../AGENTS.md), [desktop ownership](../src/AGENTS.md), [model ownership](../crates/pace-model/AGENTS.md) and [core threading contracts](../crates/terminal-core/AGENTS.md) for change paths and focused checks. `scripts/check-architecture.py` enforces model dependencies, desktop backend isolation and snapshot-only rendering; Rust privacy enforces validated model mutation and sealed terminal state.
+See [the development contract](../AGENTS.md), [desktop ownership](../src/AGENTS.md), [model ownership](../crates/neptune-model/AGENTS.md) and [core threading contracts](../crates/terminal-core/AGENTS.md) for change paths and focused checks. `scripts/check-architecture.py` enforces model dependencies, desktop backend isolation and snapshot-only rendering; Rust privacy enforces validated model mutation and sealed terminal state.
 
 `eframe` supports native Linux, macOS, and Windows applications and a `wgpu` renderer; see [the framework documentation](https://github.com/emilk/egui/blob/master/crates/eframe/README.md). `wgpu` selects a backend available on the host, normally Vulkan on Linux, Direct3D 12 on Windows, or Metal on macOS; see [its supported-platform matrix](https://github.com/gfx-rs/wgpu/blob/trunk/README.md#supported-platforms). A GPU-backed framework alone does not guarantee low latency or high throughput: the terminal paint path must also be measured.
 
-Pace selects Direct3D 12 with a DirectComposition visual on Windows so the GPU
+Neptune selects Direct3D 12 with a DirectComposition visual on Windows so the GPU
 surface can preserve alpha at the rounded window corners. The default HWND
 swapchain is opaque; see [wgpu's presentation options](https://docs.rs/wgpu/30.0.1/wgpu/enum.Dx12SwapchainKind.html).
 Linux and macOS retain the framework's default backend selection. This

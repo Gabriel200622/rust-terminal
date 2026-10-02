@@ -1,6 +1,6 @@
 # Third-party notices
 
-Pace's own code is licensed under the [MIT license](LICENSE). Third-party
+Neptune's own code is licensed under the [MIT license](LICENSE). Third-party
 material retains the licenses and attribution below.
 
 ## Vendored skills

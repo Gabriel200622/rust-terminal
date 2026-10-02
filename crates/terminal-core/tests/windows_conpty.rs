@@ -16,7 +16,7 @@ use windows_sys::Win32::System::Console::{
     GetConsoleScreenBufferInfo, GetStdHandle, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, SetConsoleMode,
 };
 
-const FIXTURE_ENV: &str = "PACE_CONPTY_TEST_FIXTURE";
+const FIXTURE_ENV: &str = "NEPTUNE_CONPTY_TEST_FIXTURE";
 const PASTE: &[u8] = b"\x1b[200~alpha\nbeta[201~\x1b[201~";
 
 fn session(scenario: &str) -> TerminalSession {

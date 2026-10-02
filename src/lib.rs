@@ -1,4 +1,4 @@
-//! Desktop composition. Durable state belongs to pace-model, processes to runtime,
+//! Desktop composition. Durable state belongs to neptune-model, processes to runtime,
 //! file compatibility to persistence, and terminal drawing to terminal_view.
 pub mod app;
 pub mod config;

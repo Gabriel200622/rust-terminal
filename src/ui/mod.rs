@@ -9,7 +9,7 @@ pub mod preferences;
 pub mod search;
 pub mod workspace;
 use crate::{config::Config, terminal::Cache};
-use pace_model::{Axis, Destination, PaneId, SplitId, WorkspaceId};
+use neptune_model::{Axis, Destination, PaneId, SplitId, WorkspaceId};
 use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

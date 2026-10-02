@@ -1,6 +1,6 @@
 "use client";
 
-import { Keycaps, shortcut } from "../pace/controls";
+import { Keycaps, shortcut } from "../neptune/controls";
 import { useMac } from "../prefs";
 
 /**

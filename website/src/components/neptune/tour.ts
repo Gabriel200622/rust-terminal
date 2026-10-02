@@ -1,6 +1,6 @@
 // The scripted demonstration that plays in the hero window. Each chapter
 // drives the same actions a visitor can perform, so the tour and the window
-// never disagree about what Pace does.
+// never disagree about what Neptune does.
 
 import {
   Store,
@@ -25,8 +25,8 @@ export const BASE: State = {
   workspaces: [
     {
       id: 1,
-      name: "pace",
-      cwd: "~/code/pace",
+      name: "neptune",
+      cwd: "~/code/neptune",
       layout: { kind: "pane", pane: 1 },
       active: 1,
     },
@@ -56,7 +56,7 @@ export const BASE: State = {
     1: {
       id: 1,
       title: "zsh",
-      cwd: "~/code/pace",
+      cwd: "~/code/neptune",
       branch: "main",
       lines: [],
       input: "",
@@ -238,7 +238,7 @@ export const CHAPTERS: Chapter[] = [
     async run(s) {
       s.d({ type: "selectWorkspace", workspace: 1 });
       await s.wait(900);
-      await type(s, 1, "cargo test -p pace-model -q");
+      await type(s, 1, "cargo test -p neptune-model -q");
       await s.wait(260);
       s.d({ type: "commit", pane: 1 });
       await s.wait(700);

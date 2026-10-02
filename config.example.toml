@@ -1,4 +1,4 @@
-# Use with: pace --config config.example.toml
+# Use with: neptune --config config.example.toml
 # Omitted fields use the application's defaults. Unknown keys are rejected.
 
 # graphite, dusk, or light

@@ -56,7 +56,7 @@ impl LinkOpener {
         }
         let (sender, receiver) = mpsc::sync_channel(1);
         std::thread::Builder::new()
-            .name("pace-open-link".into())
+            .name("neptune-open-link".into())
             .spawn(move || {
                 let result = launch(&link);
                 let _ = sender.send(result);

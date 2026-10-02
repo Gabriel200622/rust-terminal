@@ -215,10 +215,10 @@ impl App {
             };
             let direction = if m.ctrl && m.shift && !m.alt && !m.mac_cmd {
                 match key {
-                    egui::Key::ArrowLeft => Some(pace_model::FocusDirection::Left),
-                    egui::Key::ArrowRight => Some(pace_model::FocusDirection::Right),
-                    egui::Key::ArrowUp => Some(pace_model::FocusDirection::Up),
-                    egui::Key::ArrowDown => Some(pace_model::FocusDirection::Down),
+                    egui::Key::ArrowLeft => Some(neptune_model::FocusDirection::Left),
+                    egui::Key::ArrowRight => Some(neptune_model::FocusDirection::Right),
+                    egui::Key::ArrowUp => Some(neptune_model::FocusDirection::Up),
+                    egui::Key::ArrowDown => Some(neptune_model::FocusDirection::Down),
                     _ => None,
                 }
             } else {
@@ -351,8 +351,10 @@ impl App {
             let action = if command {
                 match key {
                     egui::Key::T | egui::Key::N => Some(Action::New),
-                    egui::Key::D => pane.map(|id| Action::Split(id, pace_model::Axis::Vertical)),
-                    egui::Key::E => pane.map(|id| Action::Split(id, pace_model::Axis::Horizontal)),
+                    egui::Key::D => pane.map(|id| Action::Split(id, neptune_model::Axis::Vertical)),
+                    egui::Key::E => {
+                        pane.map(|id| Action::Split(id, neptune_model::Axis::Horizontal))
+                    }
                     egui::Key::W => pane.map(Action::ClosePane),
                     egui::Key::F => Some(Action::Find),
                     egui::Key::P => Some(Action::Palette),

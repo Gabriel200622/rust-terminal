@@ -1,6 +1,6 @@
 //! Opt-in structured counters never include terminal contents or input.
 use crate::{runtime::sessions::SessionManager, ui::PaneRender};
-use pace_model::PaneId;
+use neptune_model::PaneId;
 use std::{
     collections::{BTreeMap, VecDeque},
     time::{Duration, Instant},
@@ -50,7 +50,7 @@ impl Diagnostics {
         elapsed: Duration,
         sessions: &SessionManager,
         renders: &BTreeMap<PaneId, PaneRender>,
-        model: &pace_model::Model,
+        model: &neptune_model::Model,
     ) {
         if !self.enabled {
             return;

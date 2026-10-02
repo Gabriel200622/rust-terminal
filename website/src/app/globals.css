@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 /*
- * The visual system mirrors Pace's own: `src/theme.rs` (Palette, metrics) and
+ * The visual system mirrors Neptune's own: `src/theme.rs` (Palette, metrics) and
  * `docs/design.md`. Keep these values in step with the app rather than
  * inventing page-only colours.
  */

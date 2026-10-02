@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch and verify one isolated native inspection build of Pace.
+"""Launch and verify one isolated native inspection build of Neptune.
 
 Each run owns a loopback endpoint, data directory, logs, screenshots and the
 process it starts. Build first with `cargo build --features inspection --locked`.
@@ -63,7 +63,7 @@ def wait_ready(process: subprocess.Popen, client: Path, address: str, timeout: f
     last_error = None
     while time.monotonic() < deadline:
         if process.poll() is not None:
-            raise RuntimeError(f"Pace exited before readiness with code {process.returncode}; see app.log")
+            raise RuntimeError(f"Neptune exited before readiness with code {process.returncode}; see app.log")
         try:
             info = inspect(client, address, "info")
             tree = inspect(client, address, "tree")
@@ -73,13 +73,13 @@ def wait_ready(process: subprocess.Popen, client: Path, address: str, timeout: f
         except (OSError, ValueError, KeyError, RuntimeError, subprocess.TimeoutExpired) as error:
             last_error = error
         time.sleep(0.05)
-    raise RuntimeError(f"Pace did not expose a terminal pane within {timeout:g}s: {last_error}")
+    raise RuntimeError(f"Neptune did not expose a terminal pane within {timeout:g}s: {last_error}")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--app", type=Path, default=REPO / "target/debug" / ("pace" + SUFFIX))
-    parser.add_argument("--client", type=Path, default=REPO / "target/debug" / ("pace-inspect" + SUFFIX))
+    parser.add_argument("--app", type=Path, default=REPO / "target/debug" / ("neptune" + SUFFIX))
+    parser.add_argument("--client", type=Path, default=REPO / "target/debug" / ("neptune-inspect" + SUFFIX))
     parser.add_argument("--output", type=Path, default=REPO / "artifacts/native", help="Parent directory for unique run artifacts")
     parser.add_argument("--ready-timeout", type=float, default=30)
     restoration = parser.add_mutually_exclusive_group()

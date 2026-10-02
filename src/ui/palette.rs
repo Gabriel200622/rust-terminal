@@ -13,11 +13,11 @@ use eframe::egui::{
     self, Align, Align2, Id, Key, Layout, Modifiers, Pos2, Rect, Sense, Vec2, WidgetInfo,
     WidgetType, vec2,
 };
-use pace_model::{Axis, Destination, FocusDirection, PaneId, WorkspaceId};
+use neptune_model::{Axis, Destination, FocusDirection, PaneId, WorkspaceId};
 
 pub struct PaletteView<'a> {
     pub pane: Option<PaneId>,
-    pub layout: Option<&'a pace_model::Layout>,
+    pub layout: Option<&'a neptune_model::Layout>,
     pub workspaces: &'a [WorkspaceView],
     pub active: Option<WorkspaceId>,
     pub config: &'a Config,
@@ -745,12 +745,12 @@ mod tests {
     #[test]
     fn pane_navigation_commands_capture_available_neighbours() {
         let config = Config::default();
-        let layout = pace_model::Layout::Split {
-            id: pace_model::SplitId::new(1),
+        let layout = neptune_model::Layout::Split {
+            id: neptune_model::SplitId::new(1),
             axis: Axis::Vertical,
             ratio: 0.5,
-            first: Box::new(pace_model::Layout::Leaf(PaneId::new(1))),
-            second: Box::new(pace_model::Layout::Leaf(PaneId::new(2))),
+            first: Box::new(neptune_model::Layout::Leaf(PaneId::new(1))),
+            second: Box::new(neptune_model::Layout::Leaf(PaneId::new(2))),
         };
         let list = commands(&PaletteView {
             pane: Some(PaneId::new(1)),

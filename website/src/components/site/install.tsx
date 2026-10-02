@@ -6,8 +6,8 @@ import { REPO } from "@/lib/site";
 
 const COMMANDS = [
   `git clone ${REPO}`,
-  "cd rust-terminal",
-  "cargo run --release --locked --bin pace",
+  "cd neptune",
+  "cargo run --release --locked --bin neptune",
 ];
 
 const PLATFORMS = [
@@ -37,7 +37,7 @@ export function Install() {
           Build it.
         </h2>
         <p className="mt-4 max-w-[26rem] text-[16px] text-secondary">
-          Pace is early and has no packaged release yet. With Rust installed, it is
+          Neptune is early and has no packaged release yet. With Rust installed, it is
           three commands.
         </p>
         <ul className="mt-8 space-y-3">

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify a dedicated Pace instance through the native inspection protocol.
+"""Verify a dedicated Neptune instance through the native inspection protocol.
 
 Prefer scripts/native-harness.py, which owns launch, endpoint, data and cleanup.
 For a manually launched instance pass its exact --addr and --data-root.
@@ -21,12 +21,12 @@ import tomllib
 repo_root = Path(__file__).resolve().parents[1]
 binary_suffix = '.exe' if os.name == 'nt' else ''
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-parser.add_argument('--client', type=Path, default=repo_root / 'target' / 'debug' / ('pace-inspect' + binary_suffix), help='Path to the inspection client binary')
+parser.add_argument('--client', type=Path, default=repo_root / 'target' / 'debug' / ('neptune-inspect' + binary_suffix), help='Path to the inspection client binary')
 parser.add_argument('--data-root', '--config-root', dest='data_root', type=Path, required=True, help='Exact --data-root used by the app')
 parser.add_argument('--addr', required=True, help='Run-owned inspection endpoint HOST:PORT')
 parser.add_argument('--output', type=Path, default=repo_root / 'artifacts' / 'final-review')
 parser.add_argument('--restore', action='store_true', help='Close and restart the isolated app to verify restoration')
-parser.add_argument('--app', type=Path, default=repo_root / 'target' / 'debug' / ('pace' + binary_suffix), help='Inspection-enabled app binary for --restore')
+parser.add_argument('--app', type=Path, default=repo_root / 'target' / 'debug' / ('neptune' + binary_suffix), help='Inspection-enabled app binary for --restore')
 args = parser.parse_args()
 if hasattr(signal, 'SIGTERM'):
     signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt('Regression stopped by its harness')))

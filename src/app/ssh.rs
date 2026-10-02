@@ -1,7 +1,7 @@
 //! SSH launch commands. Remote paths are data, never terminal input or local cwd.
 use std::path::Path;
 
-use pace_model::Remote;
+use neptune_model::Remote;
 
 const BOOTSTRAP: &str = include_str!("ssh-bootstrap.sh");
 
@@ -17,7 +17,7 @@ pub(super) fn arguments(remote: &Remote, cwd: Option<&Path>) -> Vec<String> {
         "-t".into(),
         "--".into(),
         remote.destination().into(),
-        format!("sh -c {} pace {}", quote(BOOTSTRAP), quote(directory)),
+        format!("sh -c {} neptune {}", quote(BOOTSTRAP), quote(directory)),
     ]
 }
 
@@ -54,7 +54,7 @@ mod tests {
             ),
         ];
         // Fixtures load test-owned user startup files.
-        env.push(("PACE_STARTUP".into(), String::new()));
+        env.push(("NEPTUNE_STARTUP".into(), String::new()));
         TerminalSession::spawn(
             SessionOptions {
                 shell: Some("/bin/sh".into()),
@@ -83,7 +83,7 @@ mod tests {
         for (file, stage) in [(".zprofile", "profile"), (".zshrc", "rc")] {
             std::fs::write(
                 dotdir.join(file),
-                format!("PACE_STARTUP+=\"{stage} \"\nPROMPT='PACE> '\n"),
+                format!("NEPTUNE_STARTUP+=\"{stage} \"\nPROMPT='NEPTUNE> '\n"),
             )
             .unwrap();
         }
@@ -91,12 +91,12 @@ mod tests {
             dotdir.join(".zshenv"),
             // Keep the real bootstrap and user login ordering while excluding
             // unrelated system startup such as Ubuntu's interactive compinit.
-            "unsetopt GLOBAL_RCS\nfpath=(\"$ZDOTDIR/insecure-completions\" $fpath)\nPACE_STARTUP+=\"env \"\n",
+            "unsetopt GLOBAL_RCS\nfpath=(\"$ZDOTDIR/insecure-completions\" $fpath)\nNEPTUNE_STARTUP+=\"env \"\n",
         )
         .unwrap();
         std::fs::write(
             dotdir.join(".zlogin"),
-            "printf '%slogin' \"$PACE_STARTUP\" > \"$HOME/startup\"\ncd \"$HOME\"\n",
+            "printf '%slogin' \"$NEPTUNE_STARTUP\" > \"$HOME/startup\"\ncd \"$HOME\"\n",
         )
         .unwrap();
         let session = bootstrap(root.path(), Some(&dotdir), Some(&project));
@@ -111,7 +111,7 @@ mod tests {
                 .unwrap()
                 .file_name()
                 .to_string_lossy()
-                .starts_with("pace-zsh.")
+                .starts_with("neptune-zsh.")
         }));
         session.write(b"cd -- \"$HOME\"\r").unwrap();
         wait_for(|| session.metadata().reported_cwd.as_deref() == Some(root.path()));

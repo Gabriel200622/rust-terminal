@@ -1,8 +1,8 @@
 # Issue tracker: GitHub
 
-Issues and specs for Pace live in [zevem/rust-terminal](https://github.com/zevem/rust-terminal/issues). Use the `gh` CLI.
+Issues and specs for Neptune live in [zevem/neptune](https://github.com/zevem/neptune/issues). Use the `gh` CLI.
 
-Run commands inside this checkout, where `gh` infers the repository from `origin`. Outside the checkout, pass `--repo zevem/rust-terminal` to `gh issue` and `gh pr` commands. Use `repos/zevem/rust-terminal` for REST API paths.
+Run commands inside this checkout, where `gh` infers the repository from `origin`. Outside the checkout, pass `--repo zevem/neptune` to `gh issue` and `gh pr` commands. Use `repos/zevem/neptune` for REST API paths.
 
 ## Conventions
 
@@ -28,7 +28,7 @@ For every change, including hotfixes:
 
 Use issues for requests and specs; use PRs to deliver changes.
 
-GitHub issues and PRs share a number space. Resolve an ambiguous number with `gh api repos/zevem/rust-terminal/issues/<number>`: a `pull_request` field identifies a PR. For an explicitly named PR, use `gh pr view <number> --comments` and `gh pr diff <number>`.
+GitHub issues and PRs share a number space. Resolve an ambiguous number with `gh api repos/zevem/neptune/issues/<number>`: a `pull_request` field identifies a PR. For an explicitly named PR, use `gh pr view <number> --comments` and `gh pr diff <number>`.
 
 ## When a skill says "publish to the issue tracker"
 
@@ -43,9 +43,9 @@ Run `gh issue view <number> --comments`.
 Used by `/wayfinder`. The map is a single issue with child issues as tickets.
 
 - **Map**: an issue labelled `wayfinder:map`, holding the Notes / Decisions-so-far / Fog body. Create it with `gh issue create --title "..." --label wayfinder:map --body-file <path>`.
-- **Child ticket**: create an issue and link it as a GitHub sub-issue with `gh api --method POST repos/zevem/rust-terminal/issues/<map>/sub_issues -F sub_issue_id=<child-db-id>`. Obtain the numeric database id with `gh api repos/zevem/rust-terminal/issues/<child> --jq .id`. Where sub-issues are unavailable, add the child to an ordered task list in the map and put `Part of #<map>` at the top of the child body. Labels are `wayfinder:<type>` (`research`, `prototype`, `grilling`, or `task`).
-- **Blocking**: use native issue dependencies with `gh api --method POST repos/zevem/rust-terminal/issues/<child>/dependencies/blocked_by -F issue_id=<blocker-db-id>`. Obtain the blocker's database id with `gh api repos/zevem/rust-terminal/issues/<blocker> --jq .id`; use the database id rather than the issue number or node id. If dependencies are unavailable, record `Blocked by: #<number>, #<number>` at the top of the child body. A ticket is unblocked when every blocker is closed.
-- **Frontier query**: list the map's children with `gh api --paginate repos/zevem/rust-terminal/issues/<map>/sub_issues`, or read the fallback task list. Keep open, unassigned children. For each child, list blockers with `gh api --paginate repos/zevem/rust-terminal/issues/<child>/dependencies/blocked_by`, or read the fallback `Blocked by` line, and exclude children with an open blocker. The first remaining child in map order wins.
+- **Child ticket**: create an issue and link it as a GitHub sub-issue with `gh api --method POST repos/zevem/neptune/issues/<map>/sub_issues -F sub_issue_id=<child-db-id>`. Obtain the numeric database id with `gh api repos/zevem/neptune/issues/<child> --jq .id`. Where sub-issues are unavailable, add the child to an ordered task list in the map and put `Part of #<map>` at the top of the child body. Labels are `wayfinder:<type>` (`research`, `prototype`, `grilling`, or `task`).
+- **Blocking**: use native issue dependencies with `gh api --method POST repos/zevem/neptune/issues/<child>/dependencies/blocked_by -F issue_id=<blocker-db-id>`. Obtain the blocker's database id with `gh api repos/zevem/neptune/issues/<blocker> --jq .id`; use the database id rather than the issue number or node id. If dependencies are unavailable, record `Blocked by: #<number>, #<number>` at the top of the child body. A ticket is unblocked when every blocker is closed.
+- **Frontier query**: list the map's children with `gh api --paginate repos/zevem/neptune/issues/<map>/sub_issues`, or read the fallback task list. Keep open, unassigned children. For each child, list blockers with `gh api --paginate repos/zevem/neptune/issues/<child>/dependencies/blocked_by`, or read the fallback `Blocked by` line, and exclude children with an open blocker. The first remaining child in map order wins.
 - **Claim**: `gh issue edit <number> --add-assignee @me`, the session's first write.
 - **Resolve**: comment with `gh issue comment <number> --body-file <path>`, close the child, then append a context pointer (gist + link) to the map's Decisions-so-far using `gh issue edit <map> --body-file <path>`.
 

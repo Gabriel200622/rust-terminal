@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Linux/X11 adapter: inspect, capture, and drive an explicitly selected Pace window.
+"""Linux/X11 adapter: inspect, capture, and drive an explicitly selected Neptune window.
 
-This script does not start the app. On a Wayland desktop, launch Pace with
+This script does not start the app. On a Wayland desktop, launch Neptune with
 WAYLAND_DISPLAY unset so its window is available to this X11 helper.
 Requires Python 3, Pillow for screenshots, libX11, and libXtst for input.
 
@@ -154,8 +154,8 @@ class X11:
             matches = requested in actual
             # The default must not accidentally select another application's
             # window titled "Workspace" or "Workspaces".
-            if requested == "pace":
-                matches = actual == "pace" or actual.startswith(("pace —", "pace -")) or actual.endswith((" — pace", " - pace"))
+            if requested == "neptune":
+                matches = actual == "neptune" or actual.startswith(("neptune —", "neptune -")) or actual.endswith((" — neptune", " - neptune"))
             if current != self.root and matches:
                 width, height = self.geometry(current)
                 if width > 100 and height > 100:
@@ -356,7 +356,7 @@ class X11:
 
 def arguments():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--title", default="Pace", help="case-insensitive window title substring")
+    parser.add_argument("--title", default="Neptune", help="case-insensitive window title substring")
     parser.add_argument("--window-id", type=lambda value: int(value, 0), help="explicit X11 window ID, decimal or hexadecimal")
     parser.add_argument("--wait", type=float, default=0, help="seconds to wait for a matching window")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -394,7 +394,7 @@ def main() -> int:
                 break
             time.sleep(0.1)
         if not window:
-            raise RuntimeError(f"No X11 window matching {args.title!r}; launch Pace with WAYLAND_DISPLAY unset")
+            raise RuntimeError(f"No X11 window matching {args.title!r}; launch Neptune with WAYLAND_DISPLAY unset")
         if args.command == "info":
             width, height = x11.geometry(window)
             print(json.dumps({"window": hex(window), "title": x11.title(window), "width": width, "height": height}))

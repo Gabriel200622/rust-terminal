@@ -24,8 +24,8 @@ the sibling [persistence guide](../persistence/AGENTS.md).
 Choose the affected behavior, not both suites by default:
 
 ```sh
-cargo test -p pace-terminal --lib runtime::sessions::tests --locked
-cargo test -p pace-terminal --lib runtime::persistence::tests --locked
+cargo test -p neptune-terminal --lib runtime::sessions::tests --locked
+cargo test -p neptune-terminal --lib runtime::persistence::tests --locked
 ```
 
 Session fixtures use real Unix shells; `/bin/sh` is required. Writer tests use

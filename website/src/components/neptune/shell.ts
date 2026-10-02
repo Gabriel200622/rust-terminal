@@ -1,5 +1,5 @@
 // A stand-in shell for the in-page window. It answers a handful of commands so
-// a visitor can type; it is a demonstration, not Pace's terminal engine.
+// a visitor can type; it is a demonstration, not Neptune's terminal engine.
 
 import { ACCENTS, THEMES, type Accent, type Prefs, type Theme } from "../prefs";
 import { out, row, type Action, type Line, type Pane } from "./model";
@@ -13,8 +13,8 @@ const dir = (name: string) => ({ t: name, c: 4, b: true });
 
 const LISTINGS: Record<string, string[]> = {
   "~": ["code/", "notes/"],
-  "~/code": ["api/", "pace/"],
-  "~/code/pace": [
+  "~/code": ["api/", "neptune/"],
+  "~/code/neptune": [
     "assets/",
     "crates/",
     "docs/",
@@ -23,16 +23,16 @@ const LISTINGS: Record<string, string[]> = {
     "README.md",
     "config.example.toml",
   ],
-  "~/code/pace/crates": ["pace-model/", "terminal-core/"],
+  "~/code/neptune/crates": ["neptune-model/", "terminal-core/"],
   "~/code/api": ["src/", "package.json", "bun.lock"],
   "~/notes": ["ideas.md", "today.md"],
 };
 
-/** `pace --help`, as printed by `src/main.rs`. */
-export const PACE_HELP = [
-  "Pace — a native GPU terminal",
+/** `neptune --help`, as printed by `src/main.rs`. */
+export const NEPTUNE_HELP = [
+  "Neptune — a native GPU terminal",
   "",
-  "Usage: pace [OPTIONS]",
+  "Usage: neptune [OPTIONS]",
   "  --cwd PATH         Open a workspace at PATH",
   "  --ssh DESTINATION  Open a workspace whose terminals run on an SSH host",
   "  --config PATH      Use a TOML configuration",
@@ -46,7 +46,7 @@ export const PACE_HELP = [
   "  --help",
 ];
 
-/** `cargo test -p pace-model -q`: the model crate has 33 tests. */
+/** `cargo test -p neptune-model -q`: the model crate has 33 tests. */
 export const TEST_COUNT = 33;
 export const CARGO_TEST: Line[] = [
   out(""),
@@ -68,7 +68,7 @@ const HELP: Line[] = [
   out("This window is a demonstration. It answers:"),
   row({ t: "  ls  cd  pwd  echo  clear  exit", c: 6 }),
   row({ t: "  cargo test   git log   git status", c: 6 }),
-  row({ t: "  pace --help  pace --version", c: 6 }),
+  row({ t: "  neptune --help  neptune --version", c: 6 }),
   row({ t: "  theme dusk   accent pink", c: 6 }),
 ];
 
@@ -155,9 +155,9 @@ export function execute(env: ShellEnv, pane: Pane) {
       // The pane stays, stating plainly that its process ended.
       dispatch({ type: "patch", pane: id, patch: { status: "exited", prompt: false } });
       return;
-    case "pace":
-      if (args[0] === "--version" || args[0] === "-V") print(out("Pace 0.1.0"));
-      else print(...PACE_HELP.map((line) => out(line)));
+    case "neptune":
+      if (args[0] === "--version" || args[0] === "-V") print(out("Neptune 0.1.0"));
+      else print(...NEPTUNE_HELP.map((line) => out(line)));
       break;
     case "cargo":
       if (args[0] === "test") print(...CARGO_TEST);

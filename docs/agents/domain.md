@@ -1,6 +1,6 @@
 # Domain docs
 
-Pace uses a single domain context across the desktop application, `pace-model`, and `terminal-core`.
+Neptune uses a single domain context across the desktop application, `neptune-model`, and `terminal-core`.
 
 ## Layout and reading
 

@@ -1,8 +1,8 @@
 "use client";
 
-import { PreferencesBody } from "../pace/preferences";
+import { PreferencesBody } from "../neptune/preferences";
 import { usePrefs } from "../prefs";
-import { Button } from "../pace/controls";
+import { Button } from "../neptune/controls";
 
 function Setting({
   name,
@@ -30,7 +30,7 @@ function ConfigPane() {
   const { prefs } = usePrefs();
   const prompt = (
     <div className="term-row">
-      <span style={{ color: "var(--ansi-4)", fontWeight: 700 }}>~/.config/pace</span>
+      <span style={{ color: "var(--ansi-4)", fontWeight: 700 }}>~/.config/neptune</span>
     </div>
   );
   const chevron = (

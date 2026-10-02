@@ -1,6 +1,6 @@
 //! Owns live, starting and closing sessions. No PTY is opened on the UI thread.
 //! Closing sessions retain their reservation until every worker has stopped.
-use pace_model::PaneId;
+use neptune_model::PaneId;
 use std::{
     collections::{BTreeMap, VecDeque},
     sync::{Arc, Mutex, mpsc},
@@ -105,7 +105,7 @@ impl SessionManager {
             let jobs = jobs.clone();
             let sender = sender.clone();
             if let Ok(worker) = thread::Builder::new()
-                .name(format!("pace-spawn-{index}"))
+                .name(format!("neptune-spawn-{index}"))
                 .spawn(move || {
                     loop {
                         let request = {
@@ -581,7 +581,7 @@ mod tests {
         let mut manager = SessionManager::new(policy(), false);
         let pane = PaneId::new(1);
         let mut bad = options();
-        bad.shell = Some("/missing/pace-test-shell".into());
+        bad.shell = Some("/missing/neptune-test-shell".into());
         manager.start(pane, 7, false, bad, Arc::new(|| {})).unwrap();
         until(&mut manager, |_, events| {
             events.iter().any(|event|matches!(event,SessionCompletion::Failed{pane:id,generation:7,..} if *id==pane))

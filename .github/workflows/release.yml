@@ -57,12 +57,12 @@ jobs:
       - name: Test before packaging
         run: cargo test --workspace --locked --target ${{ matrix.target }}
       - name: Build optimized native binary
-        run: cargo build --release --locked --bin pace --target ${{ matrix.target }}
+        run: cargo build --release --locked --bin neptune --target ${{ matrix.target }}
       - name: Create archive and dependency notices
         shell: python
         env:
-          PACE_TARGET: ${{ matrix.target }}
-          PACE_TAG: ${{ github.ref_name }}
+          NEPTUNE_TARGET: ${{ matrix.target }}
+          NEPTUNE_TAG: ${{ github.ref_name }}
         run: |
           import hashlib
           import json
@@ -75,22 +75,22 @@ jobs:
           import tomllib
           import zipfile
 
-          target = os.environ['PACE_TARGET']
-          tag = os.environ['PACE_TAG']
+          target = os.environ['NEPTUNE_TARGET']
+          tag = os.environ['NEPTUNE_TAG']
           version = tomllib.loads(Path('Cargo.toml').read_text())['package']['version']
           if tag != f'v{version}' or not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?', tag):
               raise SystemExit('Release tag must match the package version in Cargo.toml')
-          name = f'pace-{tag}-{target}'
+          name = f'neptune-{tag}-{target}'
           stage = Path('package') / name
           stage.mkdir(parents=True)
-          executable = 'pace.exe' if 'windows' in target else 'pace'
+          executable = 'neptune.exe' if 'windows' in target else 'neptune'
           shutil.copy2(Path('target') / target / 'release' / executable, stage / executable)
           for filename in ('LICENSE', 'README.md', 'config.example.toml'):
               shutil.copy2(filename, stage / filename)
           (stage / 'assets').mkdir()
-          shutil.copy2('assets/pace.svg', stage / 'assets' / 'pace.svg')
+          shutil.copy2('assets/neptune.svg', stage / 'assets' / 'neptune.svg')
           if 'linux' in target:
-              shutil.copy2('packaging/pace.desktop', stage / 'pace.desktop')
+              shutil.copy2('packaging/neptune.desktop', stage / 'neptune.desktop')
           font_notices = stage / 'licenses' / 'fonts'
           font_notices.mkdir(parents=True)
           for filename in Path('assets/fonts').glob('*LICENSE*'):
@@ -126,7 +126,7 @@ jobs:
           archive.with_name(archive.name + '.sha256').write_text(f'{digest}  {archive.name}\n')
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: pace-${{ matrix.target }}
+          name: neptune-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
 
@@ -140,17 +140,17 @@ jobs:
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: pace-*
+          pattern: neptune-*
           merge-multiple: true
           path: dist
       - name: Create or update draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          PACE_TAG: ${{ github.ref_name }}
+          NEPTUNE_TAG: ${{ github.ref_name }}
         run: |
-          if gh release view "$PACE_TAG" >/dev/null 2>&1; then
-            gh release upload "$PACE_TAG" dist/* --clobber
+          if gh release view "$NEPTUNE_TAG" >/dev/null 2>&1; then
+            gh release upload "$NEPTUNE_TAG" dist/* --clobber
           else
-            gh release create "$PACE_TAG" dist/* --verify-tag --draft --generate-notes --title "Pace $PACE_TAG"
+            gh release create "$NEPTUNE_TAG" dist/* --verify-tag --draft --generate-notes --title "Neptune $NEPTUNE_TAG"
           fi

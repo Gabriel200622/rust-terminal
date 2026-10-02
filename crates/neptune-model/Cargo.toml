@@ -1,0 +1,12 @@
+[package]
+name = "neptune-model"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"
+description = "Pure workspace state and application commands for Neptune"
+homepage = "https://neptune.rs"
+repository = "https://github.com/zevem/neptune"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }

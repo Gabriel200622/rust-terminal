@@ -22,7 +22,7 @@ import importlib.util
 import math
 
 REPO=Path(__file__).resolve().parents[1]
-spec=importlib.util.spec_from_file_location("pace_native_harness",REPO/"scripts/native-harness.py")
+spec=importlib.util.spec_from_file_location("neptune_native_harness",REPO/"scripts/native-harness.py")
 harness=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(harness)
 
@@ -166,8 +166,8 @@ def run_case(args,count,scenario,root):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__,formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--app',type=Path,default=REPO/'target/release/pace')
-    parser.add_argument('--client',type=Path,default=REPO/'target/release/pace-inspect')
+    parser.add_argument('--app',type=Path,default=REPO/'target/release/neptune')
+    parser.add_argument('--client',type=Path,default=REPO/'target/release/neptune-inspect')
     parser.add_argument('--counts',type=int,nargs='+',default=[1,8,32,64])
     parser.add_argument('--scenarios',nargs='+',choices=['idle','visible-output','several-output','hidden-output','lifecycle'],default=['idle','visible-output','several-output','hidden-output','lifecycle'])
     parser.add_argument('--seconds',type=float,default=5)

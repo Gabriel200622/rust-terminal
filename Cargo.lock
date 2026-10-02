@@ -2228,14 +2228,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "pace-model"
+name = "neptune-model"
 version = "0.1.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
-name = "pace-terminal"
+name = "neptune-terminal"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -2246,7 +2246,7 @@ dependencies = [
  "egui_inspection",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
- "pace-model",
+ "neptune-model",
  "png",
  "serde",
  "serde_json",

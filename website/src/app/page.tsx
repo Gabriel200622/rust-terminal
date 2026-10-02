@@ -1,4 +1,4 @@
-import { GitHubMark, Icon, PaceMark } from "@/components/icons";
+import { GitHubMark, Icon, NeptuneMark } from "@/components/icons";
 import { Customize } from "@/components/site/customize";
 import { HeroDemo } from "@/components/site/hero-demo";
 import { Install } from "@/components/site/install";
@@ -10,8 +10,8 @@ function Nav() {
     <header className="sticky top-0 z-50 border-b border-transparent bg-bg/75 backdrop-blur-xl">
       <nav className="mx-auto flex h-14 w-full max-w-[1180px] items-center justify-between px-5 sm:px-8">
         <a href="#top" className="flex items-center gap-2.5 rounded-control">
-          <PaceMark size={24} />
-          <span className="text-[15px] font-semibold tracking-[-0.01em]">Pace</span>
+          <NeptuneMark size={24} />
+          <span className="text-[15px] font-semibold tracking-[-0.01em]">Neptune</span>
         </a>
         <div className="flex items-center gap-1.5">
           <a
@@ -25,7 +25,7 @@ function Nav() {
             href="#install"
             className="flex h-[30px] items-center rounded-control bg-control px-3 text-[13px] font-medium text-fg transition-colors duration-100 hover:bg-pressed"
           >
-            Get Pace
+            Get Neptune
           </a>
         </div>
       </nav>
@@ -86,9 +86,9 @@ function Footer() {
     <footer className="mx-auto mt-32 w-full max-w-[1180px] px-5 pb-10 sm:px-8">
       <div className="flex flex-col gap-5 border-t border-separator pt-7 text-[12.5px] text-muted sm:flex-row sm:items-center sm:justify-between">
         <p className="flex items-center gap-2.5">
-          <PaceMark size={18} />
+          <NeptuneMark size={18} />
           <span>
-            <span className="font-medium text-secondary">Pace</span> · MIT licensed
+            <span className="font-medium text-secondary">Neptune</span> · MIT licensed
           </span>
         </p>
         <ul className="flex flex-wrap gap-x-5 gap-y-2">

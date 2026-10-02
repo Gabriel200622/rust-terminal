@@ -8,7 +8,7 @@ owners and validation paths; use it when navigating the current source.
 
 ## Assessment
 
-Pace has a sound starting architecture: one native desktop application and a UI-independent terminal session crate. Keep that shape. The next investment should be explicit ownership of application state, terminal access, and side effects, followed by smaller modules around those responsibilities.
+Neptune has a sound starting architecture: one native desktop application and a UI-independent terminal session crate. Keep that shape. The next investment should be explicit ownership of application state, terminal access, and side effects, followed by smaller modules around those responsibilities.
 
 The main constraint is change coupling. Adding a workspace feature, changing terminal behavior, or improving automation often requires understanding and editing the same application file. Smaller files alone will not resolve that: modules need narrow interfaces and rules about who may change state.
 
@@ -221,7 +221,7 @@ If these boundaries are later extracted into crates, package-scoped checks becom
 
 ### 12. Make native automation independent and explicit
 
-**Evidence:** the inspection feature is already opt-in, and `pace-inspect` supports an address argument. However, [inspect-regression.py:42](../scripts/inspect-regression.py#L42) does not pass a configurable address, restoration probes hardcode port 5719 at [243](../scripts/inspect-regression.py#L243), pane detection infers generic roles/action masks/bounds at [95](../scripts/inspect-regression.py#L95), and field identification partly depends on order. The workflow also assumes `/tmp`, Linux-style config paths and Ctrl+Shift shortcuts.
+**Evidence:** the inspection feature is already opt-in, and `neptune-inspect` supports an address argument. However, [inspect-regression.py:42](../scripts/inspect-regression.py#L42) does not pass a configurable address, restoration probes hardcode port 5719 at [243](../scripts/inspect-regression.py#L243), pane detection infers generic roles/action masks/bounds at [95](../scripts/inspect-regression.py#L95), and field identification partly depends on order. The workflow also assumes `/tmp`, Linux-style config paths and Ctrl+Shift shortcuts.
 
 Create a run-scoped launcher/harness that owns the process, endpoint, data directory, output directory and cleanup. Add explicit data/state-root options: [App::new](../src/app.rs#L182) uses `--config` only for the settings file, while workspaces remain in the default data path. A temporary config file alone is therefore insufficient isolation for an agent's GUI run.
 
@@ -291,10 +291,10 @@ src/
     window.rs
   theme.rs
   icons.rs
-  bin/pace-inspect.rs
+  bin/neptune-inspect.rs
 
 crates/
-  pace-model/
+  neptune-model/
     src/lib.rs
     src/workspace.rs
     src/layout.rs
@@ -350,7 +350,7 @@ historical line numbers above.
 
 | Recommendations | Current implementation and validation |
 | --- | --- |
-| 1, 2, 11 | `crates/pace-model/` contains stable newtype identities, private model/workspace fields, validated split trees, targeted commands, explicit effects, generation-tagged lifecycle and fake-runtime tests. Focus, workspace order, capacity replacement, stale results and saved-generation behavior are headless. |
+| 1, 2, 11 | `crates/neptune-model/` contains stable newtype identities, private model/workspace fields, validated split trees, targeted commands, explicit effects, generation-tagged lifecycle and fake-runtime tests. Focus, workspace order, capacity replacement, stale results and saved-generation behavior are headless. |
 | 3, 6 | `terminal-core/src/session.rs` exposes project-owned viewport/input/event/selection/search types. Backend locks/re-exports are removed; mapping, runtime, platform and shell integration have separate owners. Existing real PTY tests retain transport coverage. |
 | 4, 5 | `runtime/sessions.rs` bounds startup workers and aggregate reservations through close/restart/shutdown. Bootstrap loads settings/state on a worker; bounded pending actions replay after loading, and launch commands retain the original pane/generation. Budgeted, cancellable search avoids unlimited locked scans. `runtime/persistence.rs` provides two coalescing snapshot slots, 75 ms debounce, per-destination generations, acknowledgement/error events and bounded intentional flushing. |
 | 7 | `persistence/workspace_state.rs` owns a version-1 DTO independently of runtime layouts and migrates the checked-in unversioned fixture. Missing/invalid entries have diagnostics; corrupt/lossy recovery preserves original bytes before replacement, and unsupported/unreadable files block workspace saving. Preferences retain independent validation/writes. |

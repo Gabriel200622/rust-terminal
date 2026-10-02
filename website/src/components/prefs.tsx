@@ -11,7 +11,7 @@ import {
   useSyncExternalStore,
 } from "react";
 
-// The settings of `config.example.toml` that change how Pace looks.
+// The settings of `config.example.toml` that change how Neptune looks.
 export const THEMES = ["graphite", "dusk", "light"] as const;
 export type Theme = (typeof THEMES)[number];
 

@@ -1,7 +1,7 @@
 # Desktop composition
 
-`pace-terminal` is the desktop package; `src/lib.rs` is its testable composition
-surface, `main.rs` launches Pace, and `bin/pace-inspect.rs` is an optional
+`neptune-terminal` is the desktop package; `src/lib.rs` is its testable composition
+surface, `main.rs` launches Neptune, and `bin/neptune-inspect.rs` is an optional
 developer client. Do not move desktop services into the pure model or expose
 terminal backend internals to satisfy a desktop caller.
 
@@ -44,17 +44,17 @@ not actual OS integration.
 Choose the relevant filter/target; these are alternatives, not a checklist:
 
 ```sh
-cargo test -p pace-terminal --lib app::tests --locked
-cargo test -p pace-terminal --lib input::tests --locked
-cargo test -p pace-terminal --lib config::tests --locked
-cargo test -p pace-terminal --lib platform:: --locked
-cargo check -p pace-terminal --lib --locked
-cargo clippy -p pace-terminal --lib --locked -- -D warnings
+cargo test -p neptune-terminal --lib app::tests --locked
+cargo test -p neptune-terminal --lib input::tests --locked
+cargo test -p neptune-terminal --lib config::tests --locked
+cargo test -p neptune-terminal --lib platform:: --locked
+cargo check -p neptune-terminal --lib --locked
+cargo clippy -p neptune-terminal --lib --locked -- -D warnings
 ```
 
 Narrow tests further by function name when appropriate. CLI changes can use
-`cargo check -p pace-terminal --bin pace --locked`; inspection-client changes use
-`cargo test -p pace-terminal --bin pace-inspect --features inspection --locked`.
+`cargo check -p neptune-terminal --bin neptune --locked`; inspection-client changes use
+`cargo test -p neptune-terminal --bin neptune-inspect --features inspection --locked`.
 Enable `inspection` only for affected feature paths. Format changed Rust files
 with the pinned rustfmt. Dependency/seam changes can use the lightweight
 `python3 scripts/check-architecture.py` boundary check.

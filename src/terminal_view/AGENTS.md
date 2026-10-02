@@ -21,9 +21,9 @@ Choose synthetic/geometry proof first; use real PTY fixtures for transport-relat
 changes:
 
 ```sh
-cargo test -p pace-terminal --lib terminal_view::geometry::tests --locked
-cargo test -p pace-terminal --lib terminal_view::cache::synthetic_tests --locked
-cargo test -p pace-terminal --lib terminal_view::cache::tests --locked
+cargo test -p neptune-terminal --lib terminal_view::geometry::tests --locked
+cargo test -p neptune-terminal --lib terminal_view::cache::synthetic_tests --locked
+cargo test -p neptune-terminal --lib terminal_view::cache::tests --locked
 ```
 
 The real-PTY set requires Unix and `/bin/sh`. These tests do not submit GPU work.

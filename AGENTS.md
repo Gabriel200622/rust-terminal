@@ -1,8 +1,8 @@
-# Pace
+# Neptune
 
 ## Never compromise on
 
-- **A real, native terminal.** Pace is a Rust desktop application with independent
+- **A real, native terminal.** Neptune is a Rust desktop application with independent
   PTY shell sessions and GPU rendering, without a browser/webview. Terminal
   content takes priority over chrome; the default view is a working shell.
 - **Responsiveness under load.** Keep startup, I/O, parsing and storage work out
@@ -21,7 +21,7 @@
 
 ## Architecture and change impact
 
-Keep `desktop → pace-model` and `desktop → terminal-core`. The pure model has no
+Keep `desktop → neptune-model` and `desktop → terminal-core`. The pure model has no
 GUI, filesystem, worker, PTY or terminal-engine dependency. Runtime owns processes;
 rendering consumes owned viewport snapshots, without live sessions or locks.
 Terminal backend types stay private to terminal-core.
@@ -65,7 +65,7 @@ Read only the sources relevant to the change:
 | When changing | Guidance / source of truth |
 | --- | --- |
 | Ownership, dependencies, engine or renderer choice | [docs/architecture.md](docs/architecture.md) |
-| Workspace model and controller | [crates/pace-model/AGENTS.md](crates/pace-model/AGENTS.md) |
+| Workspace model and controller | [crates/neptune-model/AGENTS.md](crates/neptune-model/AGENTS.md) |
 | Terminal semantics and transport | [crates/terminal-core/AGENTS.md](crates/terminal-core/AGENTS.md) |
 | Desktop composition, input, platform or UI | [src/AGENTS.md](src/AGENTS.md) and the touched directory's guide |
 | Native automation or resource measurements | [scripts/AGENTS.md](scripts/AGENTS.md) |
@@ -96,7 +96,7 @@ these repository constraints also apply when following a skill.
   by application name, path or worktree pattern, or stop another task's services.
   Native test launches use fresh `--data-root` storage; `--config` and
   `--no-restore` do not isolate saved workspace writes. Follow the script guide
-  before launching or driving Pace; desktop input focus is shared across tasks.
+  before launching or driving Neptune; desktop input focus is shared across tasks.
 - **Do not run repo-wide checks locally unless explicitly requested.** This
   includes `cargo build`, `cargo check`, `cargo clippy` and full test suites.
   CI owns full workspace validation; a designated validation agent runs only
@@ -137,7 +137,7 @@ these repository constraints also apply when following a skill.
 
 ### Issue tracker
 
-Issues and specs live in GitHub Issues for `zevem/rust-terminal`. For ticket operations, read [the issue tracker guide](docs/agents/issue-tracker.md).
+Issues and specs live in GitHub Issues for `zevem/neptune`. For ticket operations, read [the issue tracker guide](docs/agents/issue-tracker.md).
 
 ### Triage labels
 

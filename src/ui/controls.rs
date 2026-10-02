@@ -775,7 +775,7 @@ pub fn capsule(painter: &Painter, rect: Rect, p: Palette) {
 pub fn toast(ctx: &egui::Context, p: Palette, message: &str) -> bool {
     let screen = ctx.content_rect();
     let mut dismissed = false;
-    egui::Area::new(Id::new("pace-toast"))
+    egui::Area::new(Id::new("neptune-toast"))
         // Above sheets, so a failure reported during a dialog stays reachable.
         .order(egui::Order::Tooltip)
         .anchor(

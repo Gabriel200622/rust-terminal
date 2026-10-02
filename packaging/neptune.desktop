@@ -1,10 +1,10 @@
 [Desktop Entry]
 Type=Application
-Name=Pace
+Name=Neptune
 Comment=Native GPU terminal
-Exec=pace
-Icon=pace
+Exec=neptune
+Icon=neptune
 Terminal=false
 Categories=System;TerminalEmulator;
-StartupWMClass=dev.pace.terminal
+StartupWMClass=rs.neptune.terminal
 Keywords=terminal;shell;console;
