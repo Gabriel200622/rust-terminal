@@ -367,6 +367,23 @@ pub fn show(
                         "Restoring reopens folders and layouts with fresh shells. Process warnings also apply when quitting, even with close confirmation off.",
                     );
                     ui.add_space(14.0);
+                    section_label(ui, p, "Notifications");
+                    group(ui, p, |ui, rows| {
+                        rows.row(ui, "Desktop banners", |ui| {
+                            toggle(
+                                ui,
+                                p,
+                                &mut config.desktop_notifications,
+                                "Desktop banners",
+                            );
+                        });
+                    });
+                    caption(
+                        ui,
+                        p,
+                        "Show a system banner when a terminal asks for attention. Pane rings, unread counts and history stay on.",
+                    );
+                    ui.add_space(14.0);
                     section_label(ui, p, "Updates");
                     group(ui, p, |ui, rows| {
                         rows.row(ui, "Check automatically", |ui| {

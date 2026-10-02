@@ -65,6 +65,8 @@ pub struct Palette {
     pub green: Color32,
     pub yellow: Color32,
     pub red: Color32,
+    /// Unread terminal alerts: the pane ring, the bell dot and unread counts.
+    pub attention: Color32,
     pub scrim: Color32,
     pub shadow: Color32,
     pub dark: bool,
@@ -142,6 +144,15 @@ impl Palette {
 
     pub fn with_accent(theme: Theme, accent: Accent) -> Self {
         let dark = theme != Theme::Light;
+        // Attention is amber, and stays apart from an amber focus accent.
+        let attention = accent_color(
+            if accent == Accent::Orange {
+                Accent::Yellow
+            } else {
+                Accent::Orange
+            },
+            dark,
+        );
         let accent = accent_color(accent, dark);
         let on_accent = if luminance(accent) > 170.0 {
             color(0x1d1d1f)
@@ -168,6 +179,7 @@ impl Palette {
             green: color(0x30d158),
             yellow: color(0xffd60a),
             red: color(0xff5a52),
+            attention,
             scrim: black(120),
             shadow: black(110),
             dark,
@@ -334,6 +346,8 @@ mod tests {
                 // Selected terminal cells stay distinct from the surface.
                 assert_ne!(p.selection, p.bg);
                 assert_eq!(p.selection.a(), 255);
+                // An unread ring is never mistaken for the focus ring.
+                assert_ne!(p.attention, p.accent, "{theme:?}/{accent:?}");
             }
         }
     }

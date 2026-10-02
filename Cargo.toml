@@ -4,7 +4,7 @@ resolver = "3"
 
 [package]
 name = "neptune-terminal"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.97.1"
 description = "A quiet, native GPU terminal for focused work"
@@ -38,6 +38,7 @@ directories = "6"
 arboard = "3"
 png = "0.18"
 tempfile = "3.27"
+notify-rust = "4.18.1"
 semver = "1"
 sha2 = "0.10"
 hex = "0.4"
@@ -54,8 +55,12 @@ winit = { version = "0.30", default-features = false, features = ["x11", "waylan
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6.2"
+mac-notification-sys = "0.6.15"
 objc2 = "0.6.4"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "NSEvent", "NSWindow"] }
+
+[target."cfg(windows)".dependencies]
+winreg = "0.10.1"
 
 [profile.release]
 lto = "thin"

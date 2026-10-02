@@ -327,6 +327,14 @@ pub fn toolbar(
                         actions.push(Action::New);
                     }
                 }
+                if notification_bell(
+                    ui,
+                    p,
+                    view.workspaces.iter().any(|w| w.unread > 0),
+                    state.overlay == super::OverlayState::Notifications,
+                ) {
+                    actions.push(Action::Notifications);
+                }
                 if let Some(pane) = view.pane {
                     if icons::button_with_hint(
                         ui,
@@ -506,6 +514,36 @@ pub fn toolbar(
     }
 }
 
+/// The bell stays pressed while its popover is open, and carries a dot in the
+/// attention colour while any terminal has an unread alert.
+fn notification_bell(ui: &mut Ui, p: Palette, unread: bool, open: bool) -> bool {
+    let surface = ui.painter().add(egui::Shape::Noop);
+    let response = icons::button(ui, Icon::Bell, "Notifications");
+    if open {
+        ui.painter().set(
+            surface,
+            egui::Shape::rect_filled(response.rect.shrink(1.0), 7, p.pressed),
+        );
+    }
+    let dot = animate(ui.ctx(), response.id.with("unread"), unread, 0.16);
+    if dot > 0.0 {
+        // Cut out of the glyph, on whatever the button is showing beneath.
+        let beneath = if open || response.is_pointer_button_down_on() {
+            p.pressed
+        } else if response.hovered() {
+            p.hover
+        } else {
+            Color32::TRANSPARENT
+        };
+        let centre = response.rect.center() + vec2(5.0, -5.0);
+        let painter = ui.painter();
+        painter.circle_filled(centre, 5.0 * dot, p.chrome);
+        painter.circle_filled(centre, 5.0 * dot, beneath);
+        painter.circle_filled(centre, 3.5 * dot, p.attention);
+    }
+    response.clicked()
+}
+
 fn workspace_menu(
     ui: &mut Ui,
     p: Palette,
@@ -572,7 +610,7 @@ fn workspace_menu(
     }
 }
 
-fn initial(name: &str) -> String {
+pub(super) fn initial(name: &str) -> String {
     name.chars()
         .find(|c| c.is_alphanumeric())
         .map(|c| c.to_uppercase().collect())
@@ -751,7 +789,12 @@ fn workspace_row(
     } else {
         0.0
     };
-    let trailing = 30.0;
+    // An unread count takes the trailing edge; wider counts need more room.
+    let trailing = if workspace.unread > 0 {
+        super::notifications::pill_width(workspace.unread) + 14.0
+    } else {
+        30.0
+    };
     let text_width = row.right() - text_left - trailing;
     galley_at(
         &painter,
@@ -760,7 +803,7 @@ fn workspace_row(
             &painter,
             &workspace.name,
             theme::medium(13.0),
-            if selected || hovered {
+            if selected || hovered || workspace.unread > 0 {
                 p.fg
             } else {
                 theme::mix(p.secondary, p.fg, 0.45)
@@ -769,7 +812,26 @@ fn workspace_row(
         ),
     );
     let detail = Pos2::new(text_left, row.center().y + 9.0);
-    if let Some(destination) = &workspace.remote {
+    if let Some(alert) = &workspace.alert {
+        // What the workspace is asking for, until it is read.
+        icons::paint(
+            &painter,
+            Rect::from_center_size(detail + vec2(5.5, 0.0), Vec2::splat(11.0)),
+            Icon::Bell,
+            p.attention,
+        );
+        galley_at(
+            &painter,
+            detail + vec2(15.0, 0.0),
+            elided(
+                &painter,
+                alert,
+                theme::regular(11.0),
+                p.secondary,
+                text_width - 15.0,
+            ),
+        );
+    } else if let Some(destination) = &workspace.remote {
         // A remote workspace shows its host where a local one shows its folder.
         icons::paint(
             &painter,
@@ -799,7 +861,12 @@ fn workspace_row(
     }
 
     response.widget_info(|| {
-        WidgetInfo::selected(WidgetType::SelectableLabel, true, selected, &workspace.name)
+        let label = match workspace.unread {
+            0 => workspace.name.clone(),
+            1 => format!("{}, 1 unread notification", workspace.name),
+            unread => format!("{}, {unread} unread notifications", workspace.name),
+        };
+        WidgetInfo::selected(WidgetType::SelectableLabel, true, selected, label)
     });
     if response.clicked() {
         actions.push(Action::SelectWorkspace(workspace.id));
@@ -842,6 +909,14 @@ fn workspace_row(
             } else {
                 p.secondary
             },
+        );
+    } else if workspace.unread > 0 {
+        super::notifications::pill(
+            &painter,
+            Pos2::new(row.right() - 8.0, more.center().y),
+            Align2::RIGHT_CENTER,
+            workspace.unread,
+            p,
         );
     } else if workspace.panes > 1 {
         painter.text(
@@ -1088,6 +1163,13 @@ fn group_row(
         .workspaces
         .iter()
         .any(|w| w.group == Some(group.id()) && Some(w.id) == view.active);
+    // Open folders show each workspace's own count; a closed one sums them.
+    let unread: usize = view
+        .workspaces
+        .iter()
+        .filter(|w| group.collapsed() && w.group == Some(group.id()))
+        .map(|w| w.unread)
+        .sum();
     let painter = ui.painter();
     if hovered {
         painter.rect_filled(row, metrics::ROW_RADIUS, p.hover);
@@ -1169,7 +1251,15 @@ fn group_row(
             .iter()
             .filter(|w| w.group == Some(group.id()))
             .count();
-        if count > 0 {
+        if unread > 0 {
+            super::notifications::pill(
+                painter,
+                Pos2::new(row.right() - 8.0, row.center().y),
+                Align2::RIGHT_CENTER,
+                unread,
+                p,
+            );
+        } else if count > 0 {
             painter.text(
                 plus.center(),
                 Align2::CENTER_CENTER,
@@ -1180,11 +1270,16 @@ fn group_row(
         }
     }
     response.widget_info(|| {
+        let label = match unread {
+            0 => group.name().to_owned(),
+            1 => format!("{}, 1 unread notification", group.name()),
+            unread => format!("{}, {unread} unread notifications", group.name()),
+        };
         WidgetInfo::selected(
             WidgetType::CollapsingHeader,
             true,
             !group.collapsed(),
-            group.name(),
+            label,
         )
     });
     create.widget_info(|| {
@@ -1888,6 +1983,8 @@ mod tests {
     fn workspaces(ids: &[u64]) -> Vec<WorkspaceView> {
         ids.iter()
             .map(|id| WorkspaceView {
+                unread: 0,
+                alert: None,
                 group: None,
                 id: WorkspaceId::new(*id),
                 name: format!("workspace {id}"),
@@ -2585,6 +2682,8 @@ mod tests {
         let workspaces: Vec<WorkspaceView> = [(1, None), (2, None), (3, Some("me@devbox"))]
             .into_iter()
             .map(|(id, remote): (u64, Option<&str>)| WorkspaceView {
+                unread: 0,
+                alert: None,
                 group: None,
                 id: WorkspaceId::new(id),
                 name: format!("workspace {id}"),

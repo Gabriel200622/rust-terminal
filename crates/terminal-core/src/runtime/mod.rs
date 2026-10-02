@@ -174,6 +174,7 @@ pub(super) fn engine_loop(
     terminal: Arc<Mutex<Term<EventProxy>>>,
     output: Receiver<Output>,
     pool: SyncSender<Vec<u8>>,
+    notification_input: SyncSender<Input>,
     mut child: Box<dyn Child + Send + Sync>,
     shared: Arc<Shared>,
     master: Master,
@@ -181,6 +182,7 @@ pub(super) fn engine_loop(
     let mut processor: Processor = Processor::new();
     let mut cwd_tracker = Osc7Tracker::default();
     let mut prompt_scanner = PromptScanner::default();
+    let mut notifications = notifications::Scanner::default();
     let mut eof = false;
     let mut exit = None;
     let mut last_cwd = Instant::now();
@@ -216,6 +218,14 @@ pub(super) fn engine_loop(
         match output.recv_timeout(timeout) {
             Ok(Output::Bytes(buffer, len)) => {
                 for chunk in buffer[..len].chunks(PARSE_SLICE) {
+                    notifications.advance(chunk, |command| match command {
+                        notifications::Command::Event(event) => shared.push_event(event),
+                        notifications::Command::Reply(text) => {
+                            // Use the same bounded writer as terminal protocol replies.
+                            let _ = shared
+                                .enqueue(&notification_input, Input::Write(text.into_bytes()));
+                        }
+                    });
                     let marks = prompt_scanner.advance(chunk);
                     let mut grid = terminal.lock();
                     let started = Instant::now();

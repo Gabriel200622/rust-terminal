@@ -91,6 +91,8 @@ pub struct App {
     _font_shortcut_monitor: crate::platform::keyboard::FontShortcutMonitor,
     diagnostics: diagnostics::Diagnostics,
     link_opener: crate::platform::links::LinkOpener,
+    notifications: crate::notifications::Notifications,
+    desktop_notifier: crate::platform::notifications::DesktopNotifier,
     updates: crate::runtime::updates::Updates,
 }
 impl App {
@@ -192,6 +194,8 @@ impl App {
             overlay_was_open: false,
             diagnostics: diagnostics::Diagnostics::new(launch.diagnostics),
             link_opener: Default::default(),
+            notifications: Default::default(),
+            desktop_notifier: Default::default(),
             updates: Default::default(),
         }
     }
@@ -299,11 +303,53 @@ impl App {
                 self.dispatch(ctx, Command::SessionExited { pane, generation });
             }
         }
-        // The coordinator is the sole consumer of bounded clipboard events.
+        // The coordinator consumes bounded clipboard and process notification events.
         // Selection stores are unsupported by the portable desktop clipboard.
-        for (_, session) in self.sessions.iter() {
+        self.notifications.retain_sessions(self.controller.model());
+        self.desktop_notifier.poll();
+        for (pane, session) in self.sessions.iter() {
+            let Some(item) = self.controller.model().pane(pane) else {
+                continue;
+            };
+            let generation = item.generation();
+            if self.sessions.generation(pane) != Some(generation) {
+                continue;
+            }
             for event in session.drain_events() {
                 match event {
+                    terminal_core::TerminalEvent::Notification(notification) => {
+                        let focused = ctx.input(|i| i.focused)
+                            && self.controller.model().active_pane() == Some(pane);
+                        let visible = ctx
+                            .input(|i| i.focused && !i.viewport().minimized.unwrap_or(false))
+                            && self.controller.model().workspace_for_pane(pane)
+                                == self.controller.model().active_workspace()
+                            && (!self.ui.zoomed
+                                || self.controller.model().active_pane() == Some(pane));
+                        if matches!(
+                            notification.occasion,
+                            terminal_core::NotificationOccasion::Unfocused
+                        ) && focused
+                            || matches!(
+                                notification.occasion,
+                                terminal_core::NotificationOccasion::Invisible
+                            ) && visible
+                        {
+                            continue;
+                        }
+                        if self.config.desktop_notifications {
+                            self.desktop_notifier.show(
+                                pane,
+                                notification.title.clone(),
+                                notification.body.clone(),
+                                ctx,
+                            );
+                        }
+                        self.notifications.push(pane, generation, notification);
+                    }
+                    terminal_core::TerminalEvent::CloseNotification { id } => {
+                        self.notifications.close(pane, generation, &id)
+                    }
                     terminal_core::TerminalEvent::ClipboardStore {
                         selection: false,
                         text,
@@ -386,17 +432,27 @@ impl App {
             .model()
             .workspaces()
             .iter()
-            .map(|w| WorkspaceView {
-                id: w.id(),
-                group: w.group(),
-                name: w.name().into(),
-                cwd: w.cwd().into(),
-                remote: w.remote().map(|remote| remote.destination().to_owned()),
-                panes: w.panes().len(),
-                running: w
-                    .panes()
-                    .iter()
-                    .any(|p| matches!(p.lifecycle(), Lifecycle::Starting | Lifecycle::Running)),
+            .map(|w| {
+                let (unread, latest) = self
+                    .notifications
+                    .attention(|pane| w.panes().iter().any(|p| p.id() == pane));
+                WorkspaceView {
+                    id: w.id(),
+                    group: w.group(),
+                    name: w.name().into(),
+                    cwd: w.cwd().into(),
+                    remote: w.remote().map(|remote| remote.destination().to_owned()),
+                    panes: w.panes().len(),
+                    unread,
+                    // A row shows one line; the popover has the whole alert.
+                    alert: latest
+                        .map(|entry| entry.headline().chars().take(120).collect::<String>())
+                        .filter(|headline| !headline.is_empty()),
+                    running: w
+                        .panes()
+                        .iter()
+                        .any(|p| matches!(p.lifecycle(), Lifecycle::Starting | Lifecycle::Running)),
+                }
             })
             .collect()
     }
@@ -420,6 +476,7 @@ impl App {
                 let presentation = if let Some(session) = self.sessions.get(pane.id()) {
                     session.acknowledge_repaint();
                     PanePresentation {
+                        unread: self.notifications.unread(Some(pane.id())),
                         metadata: session.metadata(),
                         snapshot: session.viewport(),
                         starting: false,
@@ -431,6 +488,7 @@ impl App {
                         _ => "Starting shell…".into(),
                     };
                     PanePresentation {
+                        unread: self.notifications.unread(Some(pane.id())),
                         metadata: SessionMetadata {
                             title,
                             shell: if remote.is_some() {
@@ -611,8 +669,12 @@ impl eframe::App for App {
         let menu_open = egui::Popup::is_any_open(&ctx);
         // Tab and the arrow keys move focus only inside sheets and menus.
         // Everywhere else they belong to the terminal or the focused field,
-        // so the toolkit must not walk focus into the chrome.
-        let sheet_open = !matches!(self.ui.overlay, OverlayState::None | OverlayState::Palette);
+        // so the toolkit must not walk focus into the chrome. The palette and
+        // the notification popover move their own highlight.
+        let sheet_open = !matches!(
+            self.ui.overlay,
+            OverlayState::None | OverlayState::Palette | OverlayState::Notifications
+        );
         if !sheet_open && !menu_open {
             ctx.memory_mut(|memory| memory.move_focus(egui::FocusDirection::None));
         }
@@ -818,7 +880,10 @@ impl eframe::App for App {
         let dim = ui::helpers::animate(
             &ctx,
             egui::Id::new("overlay-scrim"),
-            !matches!(self.ui.overlay, OverlayState::None | OverlayState::Palette),
+            !matches!(
+                self.ui.overlay,
+                OverlayState::None | OverlayState::Palette | OverlayState::Notifications
+            ),
             0.16,
         );
         let dim = if self.ui.overlay == OverlayState::Palette {
@@ -831,6 +896,49 @@ impl eframe::App for App {
         let zoomed = self.ui.zoomed;
         let message = self.ui.error.is_some();
         match self.ui.overlay {
+            OverlayState::Notifications => {
+                let model = self.controller.model();
+                let mut programs = BTreeMap::new();
+                let items: Vec<_> = self
+                    .notifications
+                    .entries()
+                    .rev()
+                    .map(|entry| {
+                        let workspace = model
+                            .workspace_for_pane(entry.pane)
+                            .and_then(|id| model.workspace(id));
+                        ui::notifications::NotificationItem {
+                            sequence: entry.sequence,
+                            pane: entry.pane,
+                            generation: entry.generation,
+                            identity: workspace.map_or(0, |w| w.id().get()),
+                            workspace: workspace.map_or("Terminal", |w| w.name()),
+                            program: programs
+                                .entry(entry.pane)
+                                .or_insert_with(|| {
+                                    self.sessions.get(entry.pane).map_or_else(String::new, |s| {
+                                        ui::workspace::pane_label(&s.metadata())
+                                    })
+                                })
+                                .clone(),
+                            title: &entry.notification.title,
+                            body: &entry.notification.body,
+                            unread: entry.unread,
+                            age: entry.received.elapsed(),
+                        }
+                    })
+                    .collect();
+                ui::notifications::show(
+                    &ctx,
+                    p,
+                    ui::notifications::NotificationView {
+                        items: &items,
+                        unavailable: self.desktop_notifier.unavailable,
+                        first_frame: &mut self.ui.overlay_focus,
+                    },
+                    &mut actions,
+                );
+            }
             OverlayState::Settings => {
                 ui::preferences::show(&ctx, &self.config, &self.updates, &mut actions)
             }

@@ -272,4 +272,36 @@ impl ViewportSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TerminalEvent {
     ClipboardStore { selection: bool, text: String },
+    Notification(Notification),
+    CloseNotification { id: String },
+}
+
+/// Plain text supplied explicitly by a terminal program, never inferred from output.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Notification {
+    pub id: Option<String>,
+    pub title: String,
+    pub body: String,
+    pub occasion: NotificationOccasion,
+}
+
+/// OSC 99's optional visibility condition.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum NotificationOccasion {
+    #[default]
+    Always,
+    Unfocused,
+    Invisible,
+}
+
+impl TerminalEvent {
+    pub(crate) fn payload_len(&self) -> usize {
+        match self {
+            Self::ClipboardStore { text, .. } => text.len(),
+            Self::Notification(n) => {
+                n.title.len() + n.body.len() + n.id.as_ref().map_or(0, String::len)
+            }
+            Self::CloseNotification { id } => id.len(),
+        }
+    }
 }
