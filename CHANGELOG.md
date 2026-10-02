@@ -9,6 +9,8 @@ the signed desktop update manifest; do not maintain a second release-notes file.
 
 ### What's New
 
+- Keep the macOS Dock icon at the same size while Neptune is running and closed.
+
 ## [0.1.2] - 2026-10-02
 
 ### What's New
