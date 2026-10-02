@@ -256,6 +256,7 @@ pub fn show(
                 if button(ui, p, "Reset to defaults", ButtonKind::Quiet).clicked() {
                     config = Config {
                         custom_themes: config.custom_themes.clone(),
+                        favorite_themes: config.favorite_themes.clone(),
                         ..Config::default()
                     };
                 }

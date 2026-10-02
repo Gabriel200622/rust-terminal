@@ -9,7 +9,11 @@ theme = "graphite"
 # theme = "iterm:Dracula"
 # Custom themes are created/edited in Preferences and stored as [[custom_themes]]
 # entries in this file. Their stable selection IDs look like "custom:1".
-# Reset to defaults retains the custom theme library.
+# Themes starred in the catalog are listed by ID in the order they were starred
+# and lead the catalog as "Favorites". A favorite whose theme no longer exists
+# is dropped on load. For example:
+# favorite_themes = ["iterm:Dracula", "dusk"]
+# Reset to defaults retains the custom theme library and the favorites.
 
 # Legacy accent setting for Graphite, Dusk and Light only. Imported/custom
 # themes derive their interface accent from the palette:

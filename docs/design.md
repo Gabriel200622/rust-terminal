@@ -200,19 +200,26 @@ icon buttons keep a 28-point target around a 16-point glyph.
   Below it are a window zoom percentage stepper, a font size stepper with its
   Ctrl+Shift+Plus/Minus and Ctrl+Shift+0 shortcuts (Command+Shift on macOS), a
   slider for line spacing, a segmented cursor style, and switches for boolean
-  settings. Reset retains the custom themes.
+  settings. Reset retains the custom themes and the favorites.
 - **Themes.** The catalog and the editor are screens of the Preferences sheet.
   A back control leads the title, and the sheet widens over 160 ms to make room
   for the grid. The search field takes the keyboard and shares a line with the
-  All/Dark/Light/Custom filter. Cards are grouped as "Your themes", "Neptune"
-  and "iTerm2 collection"; each is a miniature of the window with sample text
-  in the theme's colours, never terminal contents. Only the rows in view are
-  laid out. The catalog opens at the theme in use, which carries the accent
-  ring and a check; choosing a card applies it to the window and every terminal
-  at once. On hover or focus a card shows a "more" control with the same menu
-  as a secondary click: "Use theme" and "Duplicate…", and for a custom theme
-  "Edit…" and "Delete…". Deleting asks in the action bar, in place of "New
-  theme" and "Done", so nothing reflows.
+  All/Dark/Light/Custom/Favorites filter. Cards are grouped as "Favorites",
+  "Your themes", "Neptune" and "iTerm2 collection"; each is a miniature of the
+  window with sample text in the theme's colours, never terminal contents. Only
+  the rows in view are laid out. The catalog opens at the theme in use, which
+  carries the accent ring and a check; choosing a card applies it to the window
+  and every terminal at once. On hover or focus a card shows a "more" control
+  with the same menu as a secondary click: "Use theme", "Add to favorites" or
+  "Remove from favorites" and "Duplicate…", and for a custom theme "Edit…" and
+  "Delete…". Deleting asks in the action bar, in place of "New theme" and
+  "Done", so nothing reflows.
+  A star at the end of a card's name keeps the theme as a favorite without
+  applying it. A favorite's star is always shown, in the accent; any other
+  card shows a quiet one on hover or focus. Favorites lead the catalog in the
+  order they were starred and stay listed where they come from; the Favorites
+  filter shows them alone, and a search lists each theme once. A card starred
+  where it stands stays under the pointer while the section above it changes.
   The editor keeps the name and a live preview beside the colours while there
   is room and stacks them in a narrow window. Colours are grouped rows: text
   and background, cursor and selection, and each ANSI colour beside its bright
@@ -351,3 +358,27 @@ Corrections made during that review:
 On native Wayland, preferences, the catalog, a search and the editor were
 captured once from the same build and matched. The remaining states there,
 macOS and Windows were not reviewed for these screens.
+
+### Review record: 2026-10-02 theme favorites
+
+Reviewed on Linux (X11 through the inspection protocol, 1 px per logical point,
+debug build with the `inspection` feature) from fresh captures after the last
+build: the catalog without favorites; a hovered card, its star and the star's
+tooltip; a card starred where it stands; the favorites leading the catalog in
+Light, Graphite and a custom theme; the Favorites filter with and without
+favorites; both menu items; a search; a long name on the theme in use; the star
+focused and toggled from the keyboard; a starred custom theme and its removal;
+and the catalog at 640×400 and at 150% window zoom.
+
+Corrections made during that review:
+
+- A favorite's star was first a filled glyph, which swapped the icon for
+  state. It is the one outline star, recoloured in the accent.
+- Five filters at the width of four crowded "Favorites" against the control's
+  edge. The filter is wider and moves under the search field sooner.
+- The star's focus ring touched the ring of the theme in use; its hover and
+  focus surfaces are inset.
+
+On native Wayland, the catalog and the Favorites filter with a hovered star
+were captured once from the same build and matched. macOS and Windows were not
+reviewed for this change.

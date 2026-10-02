@@ -121,9 +121,13 @@ Open **Preferences** and choose the theme row under Appearance (or **Browse
 themes** in the command palette) to pick one theme for the whole app. Neptune's
 Graphite, Dusk and Light themes sit alongside all 712 palettes from the
 [iTerm2 collection](https://iterm2colorschemes.com/). Search by name or filter
-Dark, Light and Custom; each card previews the window and terminal, and the
-catalog opens at the theme in use. Choosing a card updates existing and new
-terminals, the sidebar, toolbar and dialogs at once.
+Dark, Light, Custom and Favorites; each card previews the window and terminal,
+and the catalog opens at the theme in use. Choosing a card updates existing and
+new terminals, the sidebar, toolbar and dialogs at once.
+Star a theme (the star beside its name, or **Add to favorites** in its menu) to
+keep it: favorites lead the catalog in the order you starred them, and the
+**Favorites** filter shows them alone. Starring does not change the theme in
+use. Favorites are saved as `favorite_themes` in `config.toml`.
 The collection works offline; [its pinned source and author
 credits](assets/themes/README.md) ship with Neptune. Window surfaces and readable
 interface colors are derived from each imported palette.
@@ -137,7 +141,7 @@ changes asks before discarding them. A custom theme's menu also offers
 **Edit…** and **Delete…**; deletion asks for confirmation, and deleting the
 theme in use returns to Graphite. Up to 128 custom themes are saved in
 `config.toml`, with names up to 64 characters. Reset to defaults retains your
-saved custom themes.
+saved custom themes and favorites; deleting a custom theme removes its star.
 Terminal programs can still override terminal colors through escape sequences.
 Older settings with a separate `terminal_theme` migrate that selection to the
 single `theme` setting on load; the next settings save writes the unified format.
