@@ -9,6 +9,11 @@ the signed desktop update manifest; do not maintain a second release-notes file.
 
 ### What's New
 
+- Keep working after minimizing on macOS. A window minimized with the yellow
+  button no longer comes back from the Dock frozen.
+- Receive terminal alerts while Neptune is minimized or covered, and confirm
+  before a hidden window closes running terminals.
+
 ## [0.1.3-rc.1] - 2026-10-02
 
 ### What's New

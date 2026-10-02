@@ -31,6 +31,7 @@ pub(super) fn fixture(root: &std::path::Path) -> (App, mpsc::SyncSender<Startup>
         search_query: None,
         search_task: None,
         started: Instant::now() - Duration::from_secs(1),
+        frame_started: Instant::now(),
         command: Some("printf startup".into()),
         command_target: None,
         screenshot: None,
@@ -237,6 +238,80 @@ fn window_saves_flush_on_exit_even_when_workspace_writes_are_protected() {
     assert_eq!(saved.state.inner_size, [900.0, 640.0]);
     assert!(saved.state.maximized);
     assert!(!app.state_path.exists());
+}
+
+/// One tick of a minimized, unfocused window: eframe runs `logic` but no `ui`.
+fn hidden_tick(app: &mut App, ctx: &egui::Context, close: bool) -> Vec<egui::ViewportCommand> {
+    let mut input = egui::RawInput {
+        focused: false,
+        ..Default::default()
+    };
+    let viewport = input.viewports.get_mut(&egui::ViewportId::ROOT).unwrap();
+    viewport.minimized = Some(true);
+    if close {
+        viewport.events.push(egui::ViewportEvent::Close);
+    }
+    let mut frame = eframe::Frame::_new_kittest();
+    ctx.run_logic(&input, |ctx| eframe::App::logic(app, ctx, &mut frame))
+        .viewport_commands
+        .remove(&egui::ViewportId::ROOT)
+        .unwrap_or_default()
+}
+
+#[test]
+fn hidden_window_keeps_polling() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    sender
+        .send(loaded(app.config.clone(), Model::default()))
+        .unwrap();
+    hidden_tick(&mut app, &ctx, false);
+    assert!(app.startup.is_none());
+    assert_eq!(app.controller.model().workspaces().len(), 1);
+}
+
+#[test]
+fn hidden_window_close_shows_the_confirmation() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    app.startup = None;
+    let ctx = egui::Context::default();
+    let commands = hidden_tick(&mut app, &ctx, true);
+    assert_eq!(app.ui.overlay, OverlayState::ConfirmClose(Close::App));
+    assert!(!app.exit_approved);
+    assert_eq!(
+        commands,
+        [
+            egui::ViewportCommand::CancelClose,
+            egui::ViewportCommand::Minimized(false),
+            egui::ViewportCommand::Focus,
+        ]
+    );
+}
+
+#[test]
+fn hidden_window_closes_when_nothing_needs_confirming() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    app.startup = None;
+    app.config.confirm_close = false;
+    app.config.warn_running_processes = false;
+    let ctx = egui::Context::default();
+    let commands = hidden_tick(&mut app, &ctx, true);
+    assert!(app.exit_approved);
+    assert_eq!(
+        commands,
+        [
+            egui::ViewportCommand::CancelClose,
+            egui::ViewportCommand::Close
+        ]
+    );
+    // The repeated request is no longer cancelled, so eframe closes.
+    assert_eq!(
+        hidden_tick(&mut app, &ctx, true),
+        Vec::<egui::ViewportCommand>::new()
+    );
 }
 
 #[test]
@@ -2430,6 +2505,9 @@ fn capture_update_native() {
         size: [f32; 2],
     }
     impl eframe::App for NativeCapture {
+        fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+            eframe::App::logic(&mut self.app, ctx, frame);
+        }
         fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
             if self.app.startup.is_none() && !self.applied {
                 self.app.ui.overlay = self.overlay;
