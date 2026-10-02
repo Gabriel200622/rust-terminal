@@ -538,8 +538,10 @@ fn process_activity_tracks_interactive_jobs(shell_path: &str, args: Vec<String>)
     wait_for(|| activity(&session) == Idle);
     // Wait for the marker rather than echoed input; the child is in place.
     let prompts = session.history_text().matches("ACTIVITY_READY>").count();
+    // Bash 3.2 on macOS treats `$!;` as history expansion in an interactive
+    // shell. Whitespace after `!` preserves the background-PID expansion.
     session
-        .write(b"sleep 30 & job=$!; printf 'BACKGROUND_%s\\n' ready\r")
+        .write(b"sleep 30 & job=$! ; printf 'BACKGROUND_%s\\n' ready\r")
         .unwrap();
     wait_for_activity_output(&session, "BACKGROUND_ready");
     wait_for(|| session.history_text().matches("ACTIVITY_READY>").count() > prompts);
