@@ -331,7 +331,7 @@ impl App {
                 if self.ui.pane_drag.is_some() {
                     self.cancel_pane_drag(ctx);
                 } else if self.ui.overlay != OverlayState::None {
-                    self.ui.overlay = OverlayState::None;
+                    self.action(ctx, Action::CloseOverlay);
                 } else if searching {
                     self.ui.search_open = false;
                     self.search_task = None;

@@ -116,6 +116,11 @@ pub enum Command {
         pane: PaneId,
         generation: u64,
     },
+    PaneAgentChanged {
+        pane: PaneId,
+        generation: u64,
+        agent: Option<crate::AgentSession>,
+    },
     PaneCwdChanged {
         pane: PaneId,
         generation: u64,
@@ -289,6 +294,7 @@ impl Controller {
                         id: pane_id,
                         cwd: cwd.clone(),
                         remote_cwd: None,
+                        agent: None,
                         generation: 1,
                         lifecycle: Lifecycle::Starting,
                     }],
@@ -466,6 +472,7 @@ impl Controller {
                     id,
                     cwd: cwd.clone(),
                     remote_cwd: remote_cwd.clone(),
+                    agent: None,
                     generation: 1,
                     lifecycle: Lifecycle::Starting,
                 });
@@ -584,6 +591,7 @@ impl Controller {
                         pane.generation += 1;
                         pane.lifecycle = Lifecycle::Starting;
                         pane.remote_cwd = None;
+                        pane.agent = None;
                         effects.push(Effect::StopSession {
                             pane: pane.id,
                             generation: previous,
@@ -627,6 +635,7 @@ impl Controller {
                     .checked_add(1)
                     .ok_or(Error::IdentityExhausted)?;
                 item.lifecycle = Lifecycle::Starting;
+                dirty |= item.agent.take().is_some();
                 effects.push(Effect::StopSession {
                     pane,
                     generation: previous,
@@ -664,7 +673,33 @@ impl Controller {
                 error,
             } => self.lifecycle(pane, generation, Lifecycle::Failed(error)),
             Command::SessionExited { pane, generation } => {
-                self.lifecycle(pane, generation, Lifecycle::Exited)
+                self.lifecycle(pane, generation, Lifecycle::Exited);
+                if let Ok(item) = self.model.pane_mut(pane)
+                    && item.generation == generation
+                {
+                    dirty |= item.agent.take().is_some();
+                }
+            }
+            Command::PaneAgentChanged {
+                pane,
+                generation,
+                agent,
+            } => {
+                let local = self
+                    .model
+                    .workspace_for_pane(pane)
+                    .and_then(|id| self.model.workspace(id))
+                    .is_some_and(|ws| ws.remote.is_none());
+                if local
+                    && agent.as_ref().is_none_or(crate::AgentSession::is_valid)
+                    && let Ok(item) = self.model.pane_mut(pane)
+                    && item.generation == generation
+                    && matches!(item.lifecycle, Lifecycle::Starting | Lifecycle::Running)
+                    && item.agent != agent
+                {
+                    item.agent = agent;
+                    dirty = true;
+                }
             }
             Command::PaneCwdChanged {
                 pane,
@@ -2121,11 +2156,13 @@ mod tests {
                     id: PaneId::new(1),
                     cwd: PathBuf::new(),
                     remote_cwd: None,
+                    agent: None,
                 },
                 PaneSpec {
                     id: PaneId::new(2),
                     cwd: PathBuf::new(),
                     remote_cwd: None,
+                    agent: None,
                 },
             ],
             layout: Layout::Leaf(PaneId::new(1)),

@@ -39,9 +39,19 @@ arboard = "3"
 png = "0.18"
 tempfile = "3.27"
 notify-rust = "4.18.1"
+semver = "1"
+sha2 = "0.10"
+hex = "0.4"
+ed25519-dalek = { version = "2.2", default-features = false, features = ["std"] }
+ureq = { version = "3.4", default-features = false, features = ["rustls"] }
 
 [build-dependencies]
 winresource = { version = "0.1.31", default-features = false }
+
+[dev-dependencies]
+# Already Neptune's window backend. Allows the Linux native visual test to run
+# its event loop on the Rust test thread, without a production fixture switch.
+winit = { version = "0.30", default-features = false, features = ["x11", "wayland"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6.2"

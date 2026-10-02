@@ -34,6 +34,26 @@ only relevant scenarios; use each script's `--help` for current arguments.
 
 ## Evidence and focused checks
 
+Release scripts and packaging follow [docs/releases.md](../docs/releases.md).
+Use `python3 -m unittest discover -s scripts -p test_release.py` for SemVer,
+changelog, signed checksums and private-draft failure behavior; use actionlint
+for changed workflows. Package only task-owned built executables. Never create
+a tag/release to test this pipeline without explicit release authorization.
+
+Linux native updater visuals can be captured from the real app with test-only
+release data (no production fixture switch), in fresh task-owned storage:
+
+```sh
+NEPTUNE_UPDATE_CAPTURE="$PWD/artifacts/native-update.png" \
+  cargo test -p neptune-terminal --lib app::tests::capture_update_native --release --locked -- --ignored --nocapture
+```
+
+`NEPTUNE_UPDATE_SCREEN=notification` selects the notification; `preferences`
+selects Preferences; `ready` and `error` review those sheet states.
+`NEPTUNE_UPDATE_NARROW=1` uses a 640×400 window. Each launch
+exits after its capture and removes its temporary data root. These are visual
+fixtures, not proof of an actual published/signed installer download.
+
 The integrated shell regression needs a POSIX shell. X11 injection verifies
 Linux/X11 input, not Wayland, macOS or Windows input. Inspection events verify
 application routing; clipboard, IME and real OS keyboard behavior need native

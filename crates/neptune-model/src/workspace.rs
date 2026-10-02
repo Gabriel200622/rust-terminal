@@ -84,10 +84,14 @@ pub struct Pane {
     pub(crate) id: PaneId,
     pub(crate) cwd: PathBuf,
     pub(crate) remote_cwd: Option<PathBuf>,
+    pub(crate) agent: Option<crate::AgentSession>,
     pub(crate) generation: u64,
     pub(crate) lifecycle: Lifecycle,
 }
 impl Pane {
+    pub fn agent(&self) -> Option<&crate::AgentSession> {
+        self.agent.as_ref()
+    }
     pub fn id(&self) -> PaneId {
         self.id
     }
@@ -112,6 +116,7 @@ pub struct PaneSpec {
     pub id: PaneId,
     pub cwd: PathBuf,
     pub remote_cwd: Option<PathBuf>,
+    pub agent: Option<crate::AgentSession>,
 }
 #[derive(Debug, Clone)]
 pub struct WorkspaceSpec {
@@ -355,6 +360,13 @@ impl Model {
             }
             let mut members = HashSet::new();
             for pane in &spec.panes {
+                if pane
+                    .agent
+                    .as_ref()
+                    .is_some_and(|agent| !agent.is_valid() || remote.is_some())
+                {
+                    return Err(Error::InvalidLayout("invalid agent resume reference"));
+                }
                 if remote.is_none() && pane.remote_cwd.is_some() {
                     return Err(Error::InvalidLayout("local pane has a remote directory"));
                 }
@@ -398,6 +410,7 @@ impl Model {
                         id: pane.id,
                         cwd: pane.cwd,
                         remote_cwd: pane.remote_cwd,
+                        agent: pane.agent,
                         generation: 1,
                         lifecycle: Lifecycle::Starting,
                     })
@@ -439,6 +452,7 @@ impl Model {
                         id: pane.id,
                         cwd: pane.cwd.clone(),
                         remote_cwd: pane.remote_cwd.clone(),
+                        agent: pane.agent.clone(),
                     })
                     .collect(),
                 layout: workspace.layout.clone(),

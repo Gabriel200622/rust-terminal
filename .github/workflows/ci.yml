@@ -23,6 +23,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       code: ${{ steps.changes.outputs.code }}
+      website: ${{ steps.changes.outputs.website }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -47,11 +48,14 @@ jobs:
                   subprocess.run(['git', 'fetch', '--no-tags', '--depth=1', 'origin', base], check=True)
           # A newly created main branch has no previous tree: run all checks.
           code = True
+          website = True
           if base != '0' * 40:
               paths = subprocess.check_output(['git', 'diff', '--name-only', '-z', base, 'HEAD']).decode('utf-8').split('\0')
-              code = any(path and not (path.endswith('.md') or path.startswith('artifacts/')) for path in paths)
+              code = any(path and not (path.endswith('.md') or path.startswith(('artifacts/', 'website/'))) for path in paths)
+              website = any(path.startswith(('website/', 'packaging/update-public-key.hex', '.github/workflows/ci.yml')) for path in paths)
           with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:
               output.write(f'code={str(code).lower()}\n')
+              output.write(f'website={str(website).lower()}\n')
           print('Source/configuration changes: run native matrix' if code else 'Documentation/evidence only: skip compilation')
 
   # Formatting and architecture checks do not gate independent native builds.
@@ -74,6 +78,33 @@ jobs:
         run: |
           python3 scripts/check-architecture.py
           python3 scripts/check-architecture.py --self-test
+      - name: Check release primitives and failure behavior without releasing
+        run: python3 -m unittest discover -s scripts -p test_release.py
+
+  website:
+    name: Website downloads
+    needs: preflight
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Require successful classification
+        if: needs.preflight.result != 'success'
+        run: exit 1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        if: needs.preflight.outputs.website == 'true'
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        if: needs.preflight.outputs.website == 'true'
+        with:
+          bun-version: 1.3.14
+      - name: Verify server release discovery, platform choices and website
+        if: needs.preflight.outputs.website == 'true'
+        working-directory: website
+        run: |
+          bun install --frozen-lockfile
+          bun run test
+          bun run lint
+          bun run build
 
   native:
     name: Check (${{ matrix.check-name }})
@@ -197,7 +228,7 @@ jobs:
   # Require this single status in the main ruleset. Add every CI job to needs.
   check:
     name: Check
-    needs: [preflight, validate, native, latest, native-linux]
+    needs: [preflight, validate, native, latest, native-linux, website]
     # Run even after failures/cancellations; a skipped gate cannot enforce results.
     if: always()
     runs-on: ubuntu-latest

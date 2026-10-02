@@ -39,6 +39,10 @@ sidebar_width = 216.0
 # Restore workspace organization; every terminal starts a new process.
 restore_workspaces = true
 confirm_close = true
+# Public release checks run on a worker after startup and every 24 hours.
+# Beta includes prereleases and stable releases; neither channel downgrades.
+check_updates = true
+release_channel = "stable" # stable | beta
 
 # Native desktop banners for OSC notifications. Pane rings and history stay enabled.
 desktop_notifications = true
