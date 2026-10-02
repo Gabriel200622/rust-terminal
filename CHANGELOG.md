@@ -9,7 +9,36 @@ the signed desktop update manifest; do not maintain a second release-notes file.
 
 ### What's New
 
+## [0.1.3-rc.1] - 2026-10-02
+
+### What's New
+
 - Keep the macOS Dock icon at the same size while Neptune is running and closed.
+- Follow the Linux AppImage launch instructions to enable execution after a
+  browser download, including when using Gear Lever.
+- See which terminal needs you. Programs that send OSC 9, 99 or 777 alerts ring
+  their pane, show the latest alert and an unread count on their workspace, and
+  collect in a notification popover that opens the right terminal. Desktop
+  banners are optional.
+- Use native installers for macOS Apple Silicon and Intel, Windows x64, and
+  Linux x64, with checksums and build provenance.
+- Choose Stable or Beta updates in Preferences. Neptune checks in the background
+  and offers verified downloads without interrupting your running shells.
+- Organize independent terminals into workspaces and groups, restore directories
+  and layouts with fresh shells, and connect remote workspaces using OpenSSH.
+- Resume supported coding-agent sessions when reopening a workspace.
+
+### Known limitations
+
+- This release candidate is for acceptance testing. Native platform acceptance
+  remains pending before a stable release can be prepared.
+- Browser downloads of Linux AppImages require execute permission before launch.
+- The Windows installer is unsigned while SignPath OSS setup is pending; Windows
+  may show an unverified-publisher or SmartScreen warning.
+- Workspace restoration starts fresh shells and SSH connections. Running commands
+  and process memory are not restored.
+- Kitty graphics and comprehensive complex-script shaping are not supported.
+  Keypad identity and some keyboard-layout information depend on the window backend.
 
 ## [0.1.2] - 2026-10-02
 
