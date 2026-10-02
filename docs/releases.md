@@ -347,7 +347,13 @@ same workflow run and signs only the complete set.
   main ancestry, trust key and exact main SHA's successful CI run. Wait for CI and
   rerun if it was pending. Do not disable checks or force-move the tag.
 - **Apple:** check certificate expiry/private-key export, identity, team-key role,
-  key ID and issuer. Retrieve `xcrun notarytool log <submission-id> --key <secure-p8>
+  key ID and issuer. OpenSSL 3's default PKCS#12 protection may fail Keychain
+  import even with the correct password. Prefer a Keychain Access export; for an
+  OpenSSL export use `-keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1`
+  with the matching Developer ID intermediate certificate included. Keep the
+  encrypted original private key backup. See [Apple's compatibility explanation](https://developer.apple.com/forums/thread/723242)
+  and [OpenSSL export parameters](https://docs.openssl.org/3.5/man1/openssl-pkcs12/).
+  Retrieve `xcrun notarytool log <submission-id> --key <secure-p8>
   --key-id <id> --issuer <issuer>` on a trusted Mac. First submissions can take
   longer than 30 minutes; inspect Apple's status/history and rerun as appropriate.
   Never bypass notarization/stapling or publish unsigned DMGs.

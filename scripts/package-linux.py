@@ -19,6 +19,16 @@ def run(*args, **kwargs):
     return subprocess.run(args, check=True, **kwargs)
 
 
+def library_package(path):
+    # Ubuntu's merged /usr can expose /lib aliases through ldconfig/ldd while
+    # dpkg records the /usr/lib path. Query both names before rejecting notices.
+    for candidate in dict.fromkeys((path, path.resolve())):
+        result = subprocess.run(["dpkg-query", "-S", str(candidate)], capture_output=True, text=True)
+        if result.returncode == 0:
+            return result.stdout.split(": ", 1)[0].split(":", 1)[0]
+    raise ValueError(f"No installed package owns bundled library {path}")
+
+
 def bundle_libraries(appdir):
     library_dir = appdir / "usr/lib"
     library_dir.mkdir()
@@ -43,7 +53,7 @@ def bundle_libraries(appdir):
         seen.add(path)
         if path.name != "neptune":
             shutil.copy2(path.resolve(), library_dir / path.name)
-            owner = subprocess.check_output(["dpkg-query", "-S", str(path)], text=True).split(": ")[0].split(":")[0]
+            owner = library_package(path)
             copyright_file = Path("/usr/share/doc") / owner / "copyright"
             if not copyright_file.is_file():
                 raise ValueError(f"Missing bundled library notice for {owner}")

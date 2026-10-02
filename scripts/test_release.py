@@ -11,6 +11,29 @@ import release
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_linux_library_notice_lookup_handles_merged_usr_aliases(self):
+        spec = importlib.util.spec_from_file_location('package_linux', Path(__file__).with_name('package-linux.py'))
+        packaging = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(packaging)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            registered = root / 'usr/lib/libXinerama.so.1.0.0'
+            registered.parent.mkdir(parents=True)
+            registered.touch()
+            (root / 'lib').symlink_to(root / 'usr/lib')
+            alias = root / 'lib/libXinerama.so.1'
+            alias.symlink_to('libXinerama.so.1.0.0')
+
+            def lookup(command, **kwargs):
+                status = 0 if command[-1] == str(registered) else 1
+                return subprocess.CompletedProcess(command, status, f'libxinerama1:amd64: {registered}\n' if status == 0 else '', '')
+
+            with patch.object(packaging.subprocess, 'run', side_effect=lookup):
+                self.assertEqual(packaging.library_package(alias), 'libxinerama1')
+            with patch.object(packaging.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1, '', '')):
+                with self.assertRaisesRegex(ValueError, 'No installed package owns'):
+                    packaging.library_package(alias)
+
     def test_semver_classification_and_names(self):
         for version, pre in [('0.1.0', False), ('0.2.0-beta.1', True), ('0.2.0-rc.1+build.5', True), ('0.2.0+build.5', False)]:
             self.assertEqual(release.version_info(version)[1], pre)
