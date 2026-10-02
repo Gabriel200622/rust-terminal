@@ -1,4 +1,4 @@
-name: Release artifacts
+name: Desktop release
 
 on:
   push:
@@ -15,151 +15,177 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  preflight:
+    name: Validate deliberate release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Validate SemVer, package/lock versions, signing key and changelog
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 scripts/release.py validate "$RELEASE_TAG" --github-output "$GITHUB_OUTPUT"
+      - name: Require exact main commit to have passed CI
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git merge-base --is-ancestor HEAD origin/main
+          sha=$(git rev-parse HEAD)
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$sha&event=push&per_page=100" --jq '.workflow_runs | any(.head_branch == "main" and .status == "completed" and .conclusion == "success")' | jq -e '. == true'
+      - name: Refuse published release reruns
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: python
+        run: |
+          import json, os, subprocess
+          result = subprocess.run(['gh', 'api', f"repos/{os.environ['GITHUB_REPOSITORY']}/releases/tags/{os.environ['RELEASE_TAG']}"], capture_output=True, text=True)
+          if result.returncode == 0:
+              assert json.loads(result.stdout)['draft'], 'Published releases are immutable'
+          elif 'HTTP 404' not in result.stderr:
+              raise SystemExit('Could not establish release state')
+
   build:
-    name: Package ${{ matrix.target }}
+    name: Package ${{ matrix.platform }}
+    needs: preflight
+    # Only v* tags may access this environment. Add reviewers/tag protection
+    # before the first real release; PR CI cannot access these credentials.
+    environment: desktop-release
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-          # Primary macOS archive, built and tested natively on Apple Silicon.
-          - os: macos-latest
+            platform: linux-x64
+          - os: macos-15
             target: aarch64-apple-darwin
-          # Additional Intel compatibility archive; built only on release tags.
-          # Use a native Intel runner because macos-latest is arm64.
+            platform: macos-arm64
           - os: macos-15-intel
             target: x86_64-apple-darwin
-          - os: windows-latest
+            platform: macos-x64
+          - os: windows-2025
             target: x86_64-pc-windows-msvc
+            platform: windows-x64
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Install Linux build dependencies
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Install Linux build and packaging dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y pkg-config libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev zsh
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+          sudo apt-get install --no-install-recommends -y pkg-config libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcursor1 libxi6 libxrandr2 libxinerama1 libegl1 libvulkan1 desktop-file-utils squashfs-tools
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
         with:
           toolchain: 1.97.1
           targets: ${{ matrix.target }}
-          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           key: release-${{ matrix.target }}
-      - name: Check formatting
-        if: runner.os == 'Linux'
-        run: cargo fmt --all -- --check
-      - name: Check lints
-        run: cargo clippy --workspace --all-targets --locked --target ${{ matrix.target }} -- -D warnings
-      - name: Test before packaging
-        run: cargo test --workspace --locked --target ${{ matrix.target }}
-      - name: Build optimized native binary
-        run: cargo build --release --locked --bin neptune --target ${{ matrix.target }}
-      - name: Create archive and dependency notices
-        shell: python
+      - name: Test Intel macOS seam not covered by main CI
+        if: matrix.platform == 'macos-x64'
+        run: cargo test -p neptune-terminal --lib --locked --target x86_64-apple-darwin
+      - name: Build optimized native executable
+        run: cargo build -p neptune-terminal --release --locked --bin neptune --target ${{ matrix.target }}
+      - name: Sign and notarize macOS app and DMG
+        if: runner.os == 'macOS'
         env:
-          NEPTUNE_TARGET: ${{ matrix.target }}
-          NEPTUNE_TAG: ${{ github.ref_name }}
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+          RELEASE_PLATFORM: ${{ matrix.platform }}
+          RELEASE_TARGET: ${{ matrix.target }}
+        run: python3 scripts/sign-macos.py --version "$RELEASE_VERSION" --platform "$RELEASE_PLATFORM" --binary "target/$RELEASE_TARGET/release/neptune"
+      - name: Package Windows installer (currently unsigned)
+        if: runner.os == 'Windows'
+        env:
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+        shell: pwsh
         run: |
-          import hashlib
-          import json
-          import os
-          from pathlib import Path
-          import re
-          import shutil
-          import subprocess
-          import tarfile
-          import tomllib
-          import zipfile
-
-          target = os.environ['NEPTUNE_TARGET']
-          tag = os.environ['NEPTUNE_TAG']
-          version = tomllib.loads(Path('Cargo.toml').read_text())['package']['version']
-          if tag != f'v{version}' or not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?', tag):
-              raise SystemExit('Release tag must match the package version in Cargo.toml')
-          name = f'neptune-{tag}-{target}'
-          stage = Path('package') / name
-          stage.mkdir(parents=True)
-          executable = 'neptune.exe' if 'windows' in target else 'neptune'
-          shutil.copy2(Path('target') / target / 'release' / executable, stage / executable)
-          for filename in ('LICENSE', 'README.md', 'config.example.toml'):
-              shutil.copy2(filename, stage / filename)
-          shutil.copytree('assets/icons', stage / 'assets' / 'icons')
-          if 'apple-darwin' in target:
-              subprocess.run([
-                  'python3', 'scripts/package-macos.py',
-                  '--binary', str(stage / executable),
-                  '--output', str(stage / 'Neptune.app'),
-              ], check=True)
-          if 'linux' in target:
-              shutil.copy2('packaging/neptune.desktop', stage / 'neptune.desktop')
-          font_notices = stage / 'licenses' / 'fonts'
-          font_notices.mkdir(parents=True)
-          for filename in Path('assets/fonts').glob('*LICENSE*'):
-              shutil.copy2(filename, font_notices / filename.name)
-          metadata = json.loads(subprocess.check_output(['cargo', 'metadata', '--locked', '--format-version', '1'], text=True))
-          theme_notices = stage / 'licenses' / 'themes'
-          theme_notices.mkdir(parents=True)
-          for filename in ('LICENSE', 'CREDITS.md', 'README.md', 'source.json'):
-              shutil.copy2(Path('assets/themes') / filename, theme_notices / filename)
-          notices = ['Bundled iTerm2-Color-Schemes: see licenses/themes for license, authors and provenance.\n']
-          for package in sorted(metadata['packages'], key=lambda p: (p['name'], p['version'])):
-              notices.append(f"{package['name']} {package['version']}\nLicense: {package.get('license') or 'see license file'}\n")
-              root = Path(package['manifest_path']).parent
-              paths = set()
-              if package.get('license_file'):
-                  paths.add(root / package['license_file'])
-              for pattern in ('LICENSE*', 'LICENCE*', 'COPYING*', 'NOTICE*', 'COPYRIGHT*'):
-                  paths.update(root.glob(pattern))
-              for path in sorted(paths):
-                  if path.is_file():
-                      notices.append(f"\n--- {path.name} ---\n{path.read_text(errors='replace')}\n")
-              notices.append('\n' + '=' * 72 + '\n')
-          (stage / 'THIRD-PARTY-NOTICES.txt').write_text('\n'.join(notices), encoding='utf-8')
-          dist = Path('dist')
-          dist.mkdir()
-          if 'windows' in target:
-              archive = dist / f'{name}.zip'
-              with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as bundle:
-                  for path in sorted(stage.rglob('*')):
-                      if path.is_file():
-                          bundle.write(path, path.relative_to(stage.parent))
-          else:
-              archive = dist / f'{name}.tar.gz'
-              with tarfile.open(archive, 'w:gz') as bundle:
-                  bundle.add(stage, arcname=name)
-          digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-          archive.with_name(archive.name + '.sha256').write_text(f'{digest}  {archive.name}\n')
+          python -c "import sys; sys.path.insert(0, 'scripts'); import importlib; common = importlib.import_module('package-common'); from pathlib import Path; common.notices(Path('package/windows'))"
+          if ($LASTEXITCODE -ne 0) { throw 'License collection failed' }
+          $numeric = ($env:RELEASE_VERSION -split '[-+]')[0] + '.0'
+          & 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' "/DVersion=$env:RELEASE_VERSION" "/DNumericVersion=$numeric" packaging/windows.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed' }
+      - name: Fetch hash-pinned AppImage tooling
+        if: runner.os == 'Linux'
+        run: |
+          mkdir tools
+          curl --fail --location --proto '=https' --tlsv1.2 https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage -o tools/appimagetool
+          curl --fail --location --proto '=https' --tlsv1.2 https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64 -o tools/runtime
+          echo 'ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  tools/appimagetool' | sha256sum -c -
+          echo '2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  tools/runtime' | sha256sum -c -
+          chmod +x tools/appimagetool
+      - name: Package and inspect Linux installers
+        if: runner.os == 'Linux'
+        env:
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          desktop-file-validate packaging/neptune.desktop
+          python3 scripts/package-linux.py --version "$RELEASE_VERSION" --binary target/x86_64-unknown-linux-gnu/release/neptune --appimagetool tools/appimagetool --runtime tools/runtime
+          dpkg-deb --info dist/*.deb
+          dpkg-deb --contents dist/*.deb
+          chmod +x dist/*.AppImage
+          for appimage in dist/*.AppImage; do
+            APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --version
+          done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: neptune-${{ matrix.target }}
+          name: installer-${{ matrix.platform }}
           path: dist/*
           if-no-files-found: error
+          retention-days: 14
 
-  draft-release:
-    name: Stage draft release
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+  draft:
+    name: Verify, attest and stage complete draft
+    needs: [preflight, build]
+    runs-on: ubuntu-24.04
+    environment: desktop-release
+    timeout-minutes: 15
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: neptune-*
+          pattern: installer-*
           merge-multiple: true
           path: dist
-      - name: Create or update draft
+      - name: Require all five artifacts, sign update metadata and generate SHA256SUMS
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          python3 scripts/release.py validate "$RELEASE_TAG" --notes release-notes.md
+          python3 scripts/release.py manifest "$RELEASE_VERSION" dist --commit "$(git rev-parse HEAD)"
+          cd dist
+          sha256sum -c SHA256SUMS
+      - name: Attest final installer bytes and signed metadata
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: dist/*
+      - name: Upload complete private draft; never publish or overwrite public assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          NEPTUNE_TAG: ${{ github.ref_name }}
-        run: |
-          if gh release view "$NEPTUNE_TAG" >/dev/null 2>&1; then
-            gh release upload "$NEPTUNE_TAG" dist/* --clobber
-          else
-            gh release create "$NEPTUNE_TAG" dist/* --verify-tag --draft --generate-notes --title "Neptune $NEPTUNE_TAG"
-          fi
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 scripts/release.py stage "$RELEASE_TAG" dist

@@ -14,6 +14,7 @@ use eframe::egui::{self, Align, Align2, Id, Layout, WidgetInfo, WidgetType, vec2
 pub fn show(
     ctx: &egui::Context,
     current: &Config,
+    updates: &crate::runtime::updates::Updates,
     state: &mut theme_browser::State,
     actions: &mut Vec<Action>,
 ) {
@@ -203,6 +204,19 @@ pub fn show(
                         p,
                         "Restoring reopens folders and layouts with fresh shells.",
                     );
+                    ui.add_space(14.0);
+                    section_label(ui, p, "Updates");
+                    group(ui, p, |ui, rows| {
+                        rows.row(ui, "Check automatically", |ui| {
+                            toggle(ui, p, &mut config.check_updates, "Check for updates automatically");
+                        });
+                        rows.row(ui, "Release channel", |ui| {
+                            use crate::runtime::updates::ReleaseChannel;
+                            segmented(ui, p, "release-channel", &mut config.release_channel, &[(ReleaseChannel::Stable, "Stable"), (ReleaseChannel::Beta, "Beta")], 150.0);
+                        });
+                    });
+                    caption(ui, p, "Beta includes previews and newer stable releases. Updates are installed only when you choose.");
+                    crate::ui::updates::preferences_status(ui, p, updates, actions);
                     ui.add_space(18.0);
                 });
             });

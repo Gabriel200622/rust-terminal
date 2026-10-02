@@ -58,6 +58,15 @@ Secondary-click the **Workspaces** heading or empty sidebar space for **New work
 
 Use **Move to group** in a workspace's menu to organize existing workspaces, or choose **Ungrouped** to move one out. Workspaces can be reordered within their group by dragging or with **Move up** and **Move down**. Drag a group by its folder row to place it at the top, between ungrouped workspaces, or beside another group; its workspaces move with it. Ungrouped workspace rows can also be dragged around groups. Escape cancels the drag, and the new order is saved on release. Group commands are also available in the palette. Collapsing or removing a group keeps its shells running; removing it leaves its workspaces ungrouped in the folder's former position. Names, membership, empty groups, mixed sidebar order, and collapsed state are saved with the workspace organization. Groups do not nest.
 
+### Coding agent sessions
+
+Local Unix terminals can reopen Claude Code and Codex in their original panes
+when Neptune restarts, using each CLI's own saved session ID. Start `claude` or
+`codex` normally. Codex asks you to review Neptune's SessionStart hook before it
+can report IDs. Exiting the CLI or restarting its terminal clears the resume
+reference; closing Neptune retains it. See [agent sessions](docs/agent-sessions.md)
+for setup, exact-session requirements and platform limitations.
+
 ### SSH workspaces
 
 A workspace can be connected to another machine over SSH. Every terminal in it, including new splits and restarted terminals, then opens on that host instead of in a local shell. Secondary-click a workspace and choose **Connect over SSH…** to move all of its terminals to a host, or run **New SSH workspace** from the command palette. **Disconnect from SSH** returns the workspace to local shells. Connecting or disconnecting replaces the workspace's terminals, so processes running in them stop. A terminal keeps its session when it is moved, so it can be moved only between workspaces on the same machine.
@@ -80,7 +89,7 @@ neptune --no-restore
 neptune --help
 ```
 
-[config.example.toml](config.example.toml) documents the supported settings: 715 themes shared by the window and terminal, custom themes, window zoom, font size and line height, scrollback limit, shell executable, cursor style/blink, sidebar width, workspace restoration, and close confirmation. Window zoom is available in Preferences under Appearance; changes there or through zoom shortcuts are saved and restored on the next launch, including with workspace restoration disabled. Settings are validated; unknown keys are rejected. Workspace restoration restores directories, split positions, and focused panes, and launches fresh shell processes; a remote workspace opens new SSH connections to its host. Commands and process memory are never serialized.
+[config.example.toml](config.example.toml) documents the supported settings: 715 themes shared by the window and terminal, custom themes, window zoom, font size and line height, scrollback limit, shell executable, cursor style/blink, sidebar width, workspace restoration, and close confirmation. Window zoom is available in Preferences under Appearance; changes there or through zoom shortcuts are saved and restored on the next launch, including with workspace restoration disabled. Settings are validated; unknown keys are rejected. Workspace restoration restores directories, split positions, and focused panes, and launches fresh shell processes; a remote workspace opens new SSH connections to its host. Recognized coding agents can resume their provider-owned conversations through saved session references; arbitrary commands and process memory are never serialized.
 
 Open **Preferences** and choose the theme row under Appearance (or **Browse
 themes** in the command palette) to pick one theme for the whole app. Neptune's
@@ -134,7 +143,7 @@ python3 scripts/package-macos.py
 open target/release/Neptune.app
 ```
 
-The bundle is unsigned; macOS signing and notarization remain release work.
+Local bundles are unsigned. Official release DMGs require Developer ID signing, Apple notarization and stapling; see [the release guide](docs/releases.md).
 On Linux, install the [desktop entry](packaging/neptune.desktop) and PNG icons
 in the standard application/icon locations.
 
@@ -150,7 +159,7 @@ done
 
 ## Website
 
-The landing page for [neptune.rs](https://neptune.rs) lives in [`website/`](website/README.md): a static Next.js site that rebuilds the window from the app's theme tokens and layout code. It is separate from the Cargo workspace and uses Bun.
+The landing page and downloads for [neptune.rs](https://neptune.rs) live in [`website/`](website/README.md): a Vercel-hosted Next.js site with server-cached GitHub release discovery. Its window demo follows the app's theme and layout code. It is separate from the Cargo workspace and uses Bun.
 
 ## Verification
 
@@ -172,11 +181,30 @@ CI uses read-only repository permissions and a timeout for every job. New commit
 
 The active `main` ruleset requires only a pull request and passing CI. It does not require approvals, resolved review threads, a merge queue, or the PR branch to be up to date before merging. CI runs again on the resulting `main` commit after the merge.
 
-CI and release workflows use the standard GitHub-hosted `ubuntu-latest`, `macos-latest` (Apple Silicon), and `windows-latest` runners. Apple Silicon (`aarch64-apple-darwin`) is the primary macOS target for pull-request CI and release downloads. An additional Intel compatibility archive (`x86_64-apple-darwin`) is built and tested natively on `macos-15-intel` when release tags are pushed, using the same packaging steps.
+Official desktop releases are deliberate SemVer tags, never normal merges to `main`.
+[CHANGELOG.md](CHANGELOG.md) owns What's New; the release workflow copies its
+version section into GitHub Release notes and authenticated update metadata.
+Native runners package macOS ARM64/Intel signed and notarized DMGs, a Windows x64
+per-user EXE installer (currently unsigned), and Linux x64 AppImage/DEB.
+All five artifacts must succeed before a draft is staged with SHA256SUMS,
+Ed25519-signed update metadata and GitHub provenance attestations. Publication
+is manual after review and native acceptance.
 
-Pushing a tag matching the package version, such as `v0.1.0`, runs release checks and packages Linux x64, macOS arm64/Intel, and Windows x64 binaries. The archives include configuration, licenses, dependency notices, icon exports, and SHA-256 checksums, and are staged in a draft GitHub release for review. macOS archives include an unsigned `Neptune.app` bundle; Windows executables carry the embedded icon.
+Download published stable builds at [neptune.rs/download](https://neptune.rs/download)
+and prereleases at [neptune.rs/download/beta](https://neptune.rs/download/beta).
+GitHub Releases hosts the binaries; the Vercel website caches and verifies release
+metadata server-side and always offers all platform/architecture choices.
+Preferences → Updates controls automatic checks and Stable/Beta channels.
+Checks/downloads run off the UI thread; updates require signature/hash verification
+and explicit download/install actions. Running shells are never silently closed
+or replaced. Beta can advance to a newer stable; neither channel downgrades.
 
-These are binary archives, not installers. macOS signing/notarization, Windows signing, an update mechanism, and distribution-specific integration remain release work. Kitty graphics, full font fallback/shaping, keypad identification and some advanced keyboard modes, and platform accessibility need dedicated coverage before they are advertised. Running a GUI and reviewing screenshots on each OS remains necessary even after CI passes.
+[The release guide](docs/releases.md) contains exact version/tag commands,
+GitHub environment secrets, one-time Apple setup, download verification and
+failure recovery. AI agents must not create/push release tags or create/publish
+Neptune releases unless explicitly asked to release that version.
+Packaging automation does not replace the native/platform acceptance gates in
+[docs/verification.md](docs/verification.md).
 
 Neptune is MIT licensed. Bundled fonts retain their SIL Open Font License notices; third-party dependencies and vendored development skills retain their respective licenses. See [third-party notices](THIRD-PARTY-NOTICES.md) for skill attribution and the full upstream license texts.
 

@@ -44,6 +44,7 @@ fn fixture(root: &std::path::Path) -> (App, mpsc::SyncSender<Startup>) {
         _font_shortcut_monitor: Default::default(),
         diagnostics: diagnostics::Diagnostics::new(false),
         link_opener: Default::default(),
+        updates: Default::default(),
     };
     (app, sender)
 }
@@ -59,6 +60,37 @@ fn loaded(config: Config, model: Model) -> Startup {
         },
         error: None,
     }
+}
+
+#[test]
+fn explicit_startup_commands_replace_agent_restoration_with_a_shell() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    let mut controller = Controller::new(Model::default());
+    controller
+        .dispatch(Command::AddWorkspace {
+            cwd: root.path().into(),
+            name: "agent".into(),
+            remote: None,
+            group: None,
+        })
+        .unwrap();
+    let pane = controller.model().active_pane().unwrap();
+    controller
+        .dispatch(Command::PaneAgentChanged {
+            pane,
+            generation: 1,
+            agent: Some(neptune_model::AgentSession {
+                kind: neptune_model::AgentKind::Claude,
+                session_id: Some("019a1234-5678-7000-8000-123456789abc".into()),
+                cwd: root.path().into(),
+            }),
+        })
+        .unwrap();
+    app.complete_startup(&ctx, loaded(app.config.clone(), controller.model().clone()));
+    assert!(app.controller.model().pane(pane).unwrap().agent().is_none());
+    assert_eq!(app.command_target, Some((pane, 1)));
 }
 
 #[test]
@@ -2265,4 +2297,137 @@ fn preferences_reopen_on_the_general_settings_and_themes_on_the_catalog() {
     app.action(&ctx, Action::Settings);
     assert_eq!(app.ui.overlay, OverlayState::Settings);
     assert!(!app.ui.preferences.open);
+}
+
+#[test]
+fn update_channel_preferences_are_saved_and_stale_buttons_cannot_download() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    app.ephemeral = false;
+    let ctx = egui::Context::default();
+    app.complete_startup(&ctx, loaded(app.config.clone(), Model::default()));
+    let config = Config {
+        release_channel: crate::runtime::updates::ReleaseChannel::Beta,
+        check_updates: false,
+        ..app.config.clone()
+    };
+    app.action(&ctx, Action::Preferences(config));
+    app.action(&ctx, Action::DownloadUpdate("0.2.0".into()));
+    assert!(!app.updates.busy());
+    assert_eq!(
+        app.config.release_channel,
+        crate::runtime::updates::ReleaseChannel::Beta
+    );
+    eframe::App::on_exit(&mut app);
+    let saved = Config::load(&app.config_path).unwrap();
+    assert_eq!(
+        saved.release_channel,
+        crate::runtime::updates::ReleaseChannel::Beta
+    );
+    assert!(!saved.check_updates);
+    app.action(&ctx, Action::CloseOverlay);
+    assert_eq!(app.ui.overlay, OverlayState::None);
+}
+
+/// A real Neptune window using authenticated, deterministic test release data.
+/// Deliberately ignored in headless CI; no fixture switch exists in production.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "Manual native visual QA; needs a desktop and NEPTUNE_UPDATE_CAPTURE"]
+fn capture_update_native() {
+    use winit::platform::x11::EventLoopBuilderExtX11;
+    let output = PathBuf::from(
+        std::env::var("NEPTUNE_UPDATE_CAPTURE").expect("Set a task-owned capture path"),
+    );
+    let screen = std::env::var("NEPTUNE_UPDATE_SCREEN").unwrap_or_else(|_| "update".into());
+    let narrow = std::env::var_os("NEPTUNE_UPDATE_NARROW").is_some();
+    let data = tempfile::tempdir().unwrap();
+    let data_path = data.path().to_path_buf();
+    let size = if narrow {
+        [640.0, 400.0]
+    } else {
+        [900.0, 640.0]
+    };
+    let options = eframe::NativeOptions {
+        renderer: eframe::Renderer::Wgpu,
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size(size)
+            .with_decorations(false),
+        event_loop_builder: Some(Box::new(|builder| {
+            builder.with_any_thread(true);
+        })),
+        ..Default::default()
+    };
+    struct NativeCapture {
+        app: App,
+        overlay: OverlayState,
+        applied: bool,
+        size: [f32; 2],
+    }
+    impl eframe::App for NativeCapture {
+        fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+            if self.app.startup.is_none() && !self.applied {
+                self.app.ui.overlay = self.overlay;
+                self.applied = true;
+            }
+            eframe::App::ui(&mut self.app, ui, frame);
+        }
+        fn raw_input_hook(&mut self, _ctx: &egui::Context, input: &mut egui::RawInput) {
+            if self.applied
+                && self.overlay == OverlayState::Settings
+                && self.app.started.elapsed() > Duration::from_millis(1500)
+                && self.app.started.elapsed() < Duration::from_millis(2500)
+            {
+                input.events.push(egui::Event::PointerMoved(egui::pos2(
+                    self.size[0] * 0.5,
+                    self.size[1] * 0.5,
+                )));
+                input.events.push(egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    phase: egui::TouchPhase::Move,
+                    delta: egui::vec2(0.0, -400.0),
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+        }
+        fn on_exit(&mut self) {
+            eframe::App::on_exit(&mut self.app);
+        }
+    }
+    eframe::run_native(
+        "Neptune update visual QA",
+        options,
+        Box::new(move |cc| {
+            let mut app = App::new(
+                cc,
+                Launch {
+                    data_root: Some(data_path),
+                    screenshot: Some(output),
+                    ..Default::default()
+                },
+                window_state::LoadReport::default(),
+            );
+            if screen != "preferences" {
+                app.updates.release = Some(crate::runtime::updates::tests::visual_release());
+                use crate::runtime::updates::UpdateStatus;
+                app.updates.status = match screen.as_str() {
+                    "ready" => UpdateStatus::Ready,
+                    "error" => UpdateStatus::Error("Could not complete the update. Check your connection and try again. Unverified downloads are never opened.".into()),
+                    _ => UpdateStatus::Available,
+                };
+            }
+            let overlay = match screen.as_str() {
+                "preferences" => OverlayState::Settings,
+                "notification" => OverlayState::None,
+                _ => OverlayState::Update,
+            };
+            Ok(Box::new(NativeCapture {
+                app,
+                overlay,
+                applied: false,
+                size,
+            }))
+        }),
+    )
+    .unwrap();
 }

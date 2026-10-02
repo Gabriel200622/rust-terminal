@@ -2,6 +2,11 @@
 use neptune_terminal::{Launch, app, config, persistence::window_state};
 
 fn main() -> anyhow::Result<()> {
+    if let Some(code) =
+        neptune_terminal::runtime::agents::cli(&std::env::args().skip(1).collect::<Vec<_>>())?
+    {
+        std::process::exit(code);
+    }
     let mut launch = Launch::default();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {

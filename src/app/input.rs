@@ -330,7 +330,7 @@ impl App {
                     self.cancel_pane_drag(ctx);
                 } else if self.ui.overlay != OverlayState::None {
                     if self.ui.overlay != OverlayState::Settings || !self.ui.preferences.back() {
-                        self.ui.overlay = OverlayState::None;
+                        self.action(ctx, Action::CloseOverlay);
                     }
                 } else if searching {
                     self.ui.search_open = false;

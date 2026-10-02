@@ -117,6 +117,14 @@ these repository constraints also apply when following a skill.
   the owning guide. Report actual checks, host/features and any unverified
   native/platform behavior.
 
+## Desktop releases
+
+For version/changelog preparation, tags, packaging/signing, update channels,
+website downloads or release failures, read [the release guide](docs/releases.md).
+Releases are deliberate SemVer tags and end as private drafts; `main` merges
+never release. **AI agents must not create/push release tags or create/publish
+Neptune releases unless explicitly asked to release that version.**
+
 ## Pull requests
 
 - Never make a PR unless the developer explicitly asks you to do so.

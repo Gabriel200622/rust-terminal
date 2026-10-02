@@ -28,6 +28,9 @@ def main() -> None:
     executable.chmod(executable.stat().st_mode | 0o111)
     shutil.copy2(REPO / "assets/icons/neptune.icns", contents / "Resources/neptune.icns")
     version = tomllib.loads((REPO / "Cargo.toml").read_text())["package"]["version"]
+    # Apple requires numeric bundle versions. Full SemVer remains in the binary,
+    # release tag, DMG filename and authenticated update metadata.
+    bundle_version = version.split("-")[0].split("+")[0]
     info = {
         "CFBundleInfoDictionaryVersion": "6.0",
         "CFBundleIdentifier": "rs.neptune.terminal",
@@ -36,8 +39,8 @@ def main() -> None:
         "CFBundleExecutable": "neptune",
         "CFBundleIconFile": "neptune.icns",
         "CFBundlePackageType": "APPL",
-        "CFBundleShortVersionString": version,
-        "CFBundleVersion": version,
+        "CFBundleShortVersionString": bundle_version,
+        "CFBundleVersion": bundle_version,
         "LSApplicationCategoryType": "public.app-category.developer-tools",
         "NSHighResolutionCapable": True,
     }

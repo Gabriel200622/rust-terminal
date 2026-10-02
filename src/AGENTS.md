@@ -18,6 +18,7 @@ terminal backend internals to satisfy a desktop caller.
 | Geometry, snapshot preparation and painting | [terminal_view/AGENTS.md](terminal_view/AGENTS.md) |
 | Clipboard, font loading and window effects | `platform/` |
 | Settings validation, palette and icons | `config.rs`, `theme.rs`, `icons.rs` |
+| Release discovery, verification and installation handoff | `runtime/updates.rs`, `platform/updates.rs`, `ui/updates.rs`; [release guide](../docs/releases.md) |
 
 The coordinator executes controller effects and feeds completions back through
 the controller. Keep session handles, render caches, directory validation,
