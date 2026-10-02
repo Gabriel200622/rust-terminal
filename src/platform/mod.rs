@@ -5,3 +5,5 @@ pub mod fonts;
 pub(crate) mod keyboard;
 pub mod links;
 pub mod window;
+
+pub mod notifications;

@@ -18,6 +18,8 @@ pub struct Config {
     pub sidebar_width: f32,
     pub restore_workspaces: bool,
     pub confirm_close: bool,
+    /// Allow terminal programs to send native OS notifications.
+    pub desktop_notifications: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
@@ -83,6 +85,7 @@ impl Default for Config {
             sidebar_width: 216.0,
             restore_workspaces: true,
             confirm_close: true,
+            desktop_notifications: true,
         }
     }
 }

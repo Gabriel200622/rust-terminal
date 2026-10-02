@@ -331,6 +331,9 @@ pub fn show(ctx: &egui::Context, current: &Config, actions: &mut Vec<Action>) {
                     ui.add_space(14.0);
                     section_label(ui, p, "Sessions");
                     group(ui, p, |ui, rows| {
+                        rows.row(ui, "Desktop notifications", |ui| {
+                            toggle(ui, p, &mut config.desktop_notifications, "Desktop notifications");
+                        });
                         rows.row(ui, "Restore workspaces on launch", |ui| {
                             toggle(
                                 ui,

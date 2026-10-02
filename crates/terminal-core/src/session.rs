@@ -7,7 +7,9 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError
 use std::thread;
 use std::time::{Duration, Instant};
 
-use alacritty_terminal::event::{Event, EventListener};
+#[cfg(test)]
+use alacritty_terminal::event::Event;
+use alacritty_terminal::event::EventListener;
 use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
@@ -34,6 +36,8 @@ use shell_integration::{Osc7Tracker, PromptScanner, PromptState};
 use shell_integration::{PromptMark, decode_cwd, row_identity};
 #[path = "engine.rs"]
 mod engine;
+#[path = "notifications.rs"]
+mod notifications;
 use crate::{SessionError, SessionErrorKind};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize};
 
@@ -55,7 +59,9 @@ pub const TRANSPORT_BUFFER_BUDGET: usize = MAX_QUEUED_INPUT
     + MAX_INPUT
     + (2 * OUTPUT_QUEUE + 2) * READ_SIZE
     + 2 * 1024 * 1024
-    + EVENT_BYTE_QUEUE;
+    + EVENT_BYTE_QUEUE
+    + 16 * (2 * 4096 + 2 * 8192 + 128)
+    + 8192;
 const MAX_OSC: usize = 8192;
 
 pub type Repaint = Arc<dyn Fn() + Send + Sync>;
@@ -286,6 +292,7 @@ impl TerminalSession {
             .context("Start PTY writer worker")?;
 
         let engine_worker = runtime::Worker::new(shared.clone());
+        let notification_input = session.input.clone();
         thread::Builder::new()
             .name("terminal-engine".into())
             .spawn(move || {
@@ -294,6 +301,7 @@ impl TerminalSession {
                     terminal,
                     output_rx,
                     pool_tx,
+                    notification_input,
                     child_guard.0.take().unwrap(),
                     shared,
                     master,
@@ -405,21 +413,12 @@ impl TerminalSession {
         self.shared.metadata.lock().clone()
     }
 
-    /// Drain optional clipboard events. OSC 52 clipboard reads are disabled by
+    /// Drain bounded clipboard and process notification events. OSC 52 clipboard reads are disabled by
     /// the parser's default policy; renderers may handle copy events explicitly.
     pub fn drain_events(&self) -> Vec<crate::TerminalEvent> {
         let mut events = self.shared.events.lock();
         self.shared.queued_event_bytes.store(0, Ordering::Relaxed);
-        events
-            .drain(..)
-            .filter_map(|event| match event {
-                Event::ClipboardStore(kind, text) => Some(crate::TerminalEvent::ClipboardStore {
-                    selection: matches!(kind, alacritty_terminal::term::ClipboardType::Selection),
-                    text,
-                }),
-                _ => None,
-            })
-            .collect()
+        events.drain(..).collect()
     }
 
     pub fn set_color(&self, index: usize, color: crate::Rgb) {

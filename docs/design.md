@@ -155,6 +155,13 @@ icon buttons keep a 28-point target around a 16-point glyph.
   exit is stated plainly; only failures use the problem colour. A remote
   terminal offers "Reconnect" where a local one offers "Restart". "Back to
   bottom" appears at the bottom trailing corner while scrolled into history.
+- **Notifications.** Explicit OSC alerts add a steady amber ring inset from the
+  pane edge, including a single pane. Workspace and folder rows show unread
+  count pills; the toolbar bell carries a dot. Its popover lists bounded session
+  history and opens the originating pane, with mark-read and dismiss actions.
+  The popover does not resize shells or dim the window. Desktop banners are
+  optional; [notification behavior and agent setup](notifications.md) describes
+  acknowledgement, lifetime and protocol limits.
 - **Workspace creation.** New workspace immediately opens and selects a fresh
   shell in the home directory (`~`). Its name can be changed afterward from the
   sidebar or command palette. A new SSH workspace asks only for its host and

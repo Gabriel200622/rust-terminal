@@ -36,10 +36,14 @@ impl App {
         for input in crate::input::route_events(context, &normalized, mode) {
             let result = match input.action {
                 InputAction::Write(bytes) => {
+                    self.notifications.acknowledge(Some(id));
                     session.scroll_to_bottom();
                     session.write(&bytes)
                 }
-                InputAction::Paste(text) => session.paste(&text),
+                InputAction::Paste(text) => {
+                    self.notifications.acknowledge(Some(id));
+                    session.paste(&text)
+                }
                 InputAction::Copy => {
                     if let Some(text) = session.selected_text() {
                         crate::platform::clipboard::copy(ctx, text);

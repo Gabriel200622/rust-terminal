@@ -44,6 +44,8 @@ fn fixture(root: &std::path::Path) -> (App, mpsc::SyncSender<Startup>) {
         _font_shortcut_monitor: Default::default(),
         diagnostics: diagnostics::Diagnostics::new(false),
         link_opener: Default::default(),
+        notifications: Default::default(),
+        desktop_notifier: Default::default(),
     };
     (app, sender)
 }
@@ -2135,4 +2137,42 @@ fn group_creation_waits_for_restoration_instead_of_being_replaced() {
     app.complete_startup(&ctx, loaded(app.config.clone(), Model::default()));
     assert_eq!(app.controller.model().groups()[0].name(), "Queued");
     assert!(app.deferred_actions.is_empty());
+}
+
+#[test]
+fn notifications_navigate_to_the_captured_pane_and_ignore_restarted_sessions() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _) = fixture(root.path());
+    app.startup = None;
+    let first = add_workspace(&mut app, root.path(), None);
+    let pane = app.controller.model().workspace(first).unwrap().active();
+    let generation = app.controller.model().pane(pane).unwrap().generation();
+    let second = add_workspace(&mut app, root.path(), None);
+    let ctx = egui::Context::default();
+    app.notifications.push(
+        pane,
+        generation,
+        terminal_core::Notification {
+            title: "Review".into(),
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        app.views().iter().find(|w| w.id == first).unwrap().unread,
+        1
+    );
+    app.ui.overlay = OverlayState::Notifications;
+    app.ui.zoomed = true;
+    app.action(&ctx, Action::OpenNotification(pane, generation));
+    assert_eq!(app.controller.model().active_pane(), Some(pane));
+    assert_eq!(app.notifications.unread(None), 0);
+    assert!(!app.ui.zoomed);
+    app.controller.dispatch(Command::RestartPane(pane)).unwrap();
+    app.controller
+        .dispatch(Command::SelectWorkspace(second))
+        .unwrap();
+    app.action(&ctx, Action::OpenNotification(pane, generation));
+    assert_eq!(app.controller.model().active_workspace(), Some(second));
+    app.notifications.retain_sessions(app.controller.model());
+    assert_eq!(app.notifications.entries().count(), 0);
 }

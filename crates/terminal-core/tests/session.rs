@@ -468,3 +468,39 @@ RPROMPT=
     session.shutdown();
     wait_for(|| session.metrics().active_workers == 0);
 }
+
+#[test]
+fn notification_osc_events_cross_the_real_pty_without_polluting_screen_text() {
+    let session = shell(
+        r"printf '\033]9;Attention\007\033]777;notify;Build;Done\033\\'; printf '\033]99;i=one:d=0;Review\007'; printf '\033]99;i=one:p=body;Ready\007VISIBLE'",
+    );
+    wait_for(|| matches!(session.metadata().status, SessionStatus::Exited { .. }));
+    let events = session.drain_events();
+    assert_eq!(events.len(), 3);
+    assert!(
+        matches!(&events[2], terminal_core::TerminalEvent::Notification(n) if n.title == "Review" && n.body == "Ready")
+    );
+    assert!(screen(&session).contains("VISIBLE"));
+    assert!(!screen(&session).contains("Attention"));
+    wait_for(|| session.metrics().active_workers == 0);
+}
+
+#[test]
+fn notification_flood_keeps_the_event_queue_bounded() {
+    let session =
+        shell(r"i=0; while [ $i -lt 1000 ]; do printf '\033]9;Ready\007'; i=$((i + 1)); done");
+    wait_for(|| matches!(session.metadata().status, SessionStatus::Exited { .. }));
+    assert_eq!(session.drain_events().len(), 64);
+    assert!(session.metrics().dropped_events >= 936);
+    wait_for(|| session.metrics().active_workers == 0);
+}
+
+#[test]
+fn notification_query_reply_precedes_the_device_attributes_reply() {
+    let session = shell(
+        r"stty raw -echo; printf '\033]99;i=probe:p=?;\033\\\033[c'; dd bs=1 count=10 2>/dev/null | od -An -tx1",
+    );
+    wait_for(|| matches!(session.metadata().status, SessionStatus::Exited { .. }));
+    assert!(screen(&session).contains("1b 5d 39 39 3b 69 3d 70 72 6f"));
+    wait_for(|| session.metrics().active_workers == 0);
+}

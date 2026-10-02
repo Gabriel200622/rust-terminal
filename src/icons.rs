@@ -7,6 +7,7 @@ use eframe::egui::{
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Icon {
+    Bell,
     Terminal,
     Plus,
     Close,
@@ -76,6 +77,22 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
     };
 
     match icon {
+        Icon::Bell => {
+            line(&[
+                [5.0, 17.0],
+                [7.0, 14.0],
+                [7.0, 9.0],
+                [8.0, 6.0],
+                [10.0, 4.0],
+                [14.0, 4.0],
+                [16.0, 6.0],
+                [17.0, 9.0],
+                [17.0, 14.0],
+                [19.0, 17.0],
+                [5.0, 17.0],
+            ]);
+            line(&[[10.0, 20.0], [14.0, 20.0]]);
+        }
         Icon::Terminal => {
             rectangle(3.0, 5.0, 18.0, 14.0, 3.0);
             line(&[[7.0, 9.0], [10.0, 12.0], [7.0, 15.0]]);

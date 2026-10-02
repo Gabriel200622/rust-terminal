@@ -38,14 +38,19 @@ directories = "6"
 arboard = "3"
 png = "0.18"
 tempfile = "3.27"
+notify-rust = "4.18.1"
 
 [build-dependencies]
 winresource = { version = "0.1.31", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6.2"
+mac-notification-sys = "0.6.15"
 objc2 = "0.6.4"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "NSEvent", "NSWindow"] }
+
+[target."cfg(windows)".dependencies]
+winreg = "0.10.1"
 
 [profile.release]
 lto = "thin"

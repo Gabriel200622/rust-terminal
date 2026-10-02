@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 use terminal_core::{Mode as TermMode, SessionMetadata, SessionStatus, ViewportSnapshot};
 
 pub struct PanePresentation {
+    pub unread: usize,
     pub metadata: SessionMetadata,
     pub snapshot: ViewportSnapshot,
     /// The shell has been requested but has not started yet.
@@ -578,6 +579,14 @@ fn draw_pane(
             StrokeKind::Inside,
         );
     }
+    if presentation.unread > 0 {
+        painter.rect_stroke(
+            card.shrink(3.0),
+            metrics::PANE_RADIUS - 3,
+            Stroke::new(2.0, p.yellow),
+            StrokeKind::Inside,
+        );
+    }
     // A carried terminal recedes where it was; any other pane can receive it.
     let lifted = animate(
         ui.ctx(),
@@ -1042,6 +1051,7 @@ mod tests {
                         (
                             id,
                             PanePresentation {
+                                unread: 0,
                                 metadata: metadata(""),
                                 snapshot: ViewportSnapshot::blank(80, 24),
                                 starting: false,
@@ -1241,6 +1251,7 @@ mod tests {
         let presentations: BTreeMap<_, _> = [left, right]
             .map(|id| {
                 let presentation = PanePresentation {
+                    unread: 0,
                     metadata: metadata("zsh"),
                     snapshot: ViewportSnapshot::blank(80, 24),
                     starting: false,

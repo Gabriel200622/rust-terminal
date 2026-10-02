@@ -89,6 +89,8 @@ pub struct App {
     _font_shortcut_monitor: crate::platform::keyboard::FontShortcutMonitor,
     diagnostics: diagnostics::Diagnostics,
     link_opener: crate::platform::links::LinkOpener,
+    notifications: crate::notifications::Notifications,
+    desktop_notifier: crate::platform::notifications::DesktopNotifier,
 }
 impl App {
     pub fn new(
@@ -188,6 +190,8 @@ impl App {
             overlay_was_open: false,
             diagnostics: diagnostics::Diagnostics::new(launch.diagnostics),
             link_opener: Default::default(),
+            notifications: Default::default(),
+            desktop_notifier: Default::default(),
         }
     }
     fn poll(&mut self, ctx: &egui::Context) {
@@ -276,11 +280,53 @@ impl App {
                 self.dispatch(ctx, Command::SessionExited { pane, generation });
             }
         }
-        // The coordinator is the sole consumer of bounded clipboard events.
+        // The coordinator consumes bounded clipboard and process notification events.
         // Selection stores are unsupported by the portable desktop clipboard.
-        for (_, session) in self.sessions.iter() {
+        self.notifications.retain_sessions(self.controller.model());
+        self.desktop_notifier.poll();
+        for (pane, session) in self.sessions.iter() {
+            let Some(item) = self.controller.model().pane(pane) else {
+                continue;
+            };
+            let generation = item.generation();
+            if self.sessions.generation(pane) != Some(generation) {
+                continue;
+            }
             for event in session.drain_events() {
                 match event {
+                    terminal_core::TerminalEvent::Notification(notification) => {
+                        let focused = ctx.input(|i| i.focused)
+                            && self.controller.model().active_pane() == Some(pane);
+                        let visible = ctx
+                            .input(|i| i.focused && !i.viewport().minimized.unwrap_or(false))
+                            && self.controller.model().workspace_for_pane(pane)
+                                == self.controller.model().active_workspace()
+                            && (!self.ui.zoomed
+                                || self.controller.model().active_pane() == Some(pane));
+                        if matches!(
+                            notification.occasion,
+                            terminal_core::NotificationOccasion::Unfocused
+                        ) && focused
+                            || matches!(
+                                notification.occasion,
+                                terminal_core::NotificationOccasion::Invisible
+                            ) && visible
+                        {
+                            continue;
+                        }
+                        if self.config.desktop_notifications {
+                            self.desktop_notifier.show(
+                                pane,
+                                notification.title.clone(),
+                                notification.body.clone(),
+                                ctx,
+                            );
+                        }
+                        self.notifications.push(pane, generation, notification);
+                    }
+                    terminal_core::TerminalEvent::CloseNotification { id } => {
+                        self.notifications.close(pane, generation, &id)
+                    }
                     terminal_core::TerminalEvent::ClipboardStore {
                         selection: false,
                         text,
@@ -370,6 +416,11 @@ impl App {
                 cwd: w.cwd().into(),
                 remote: w.remote().map(|remote| remote.destination().to_owned()),
                 panes: w.panes().len(),
+                unread: w
+                    .panes()
+                    .iter()
+                    .map(|p| self.notifications.unread(Some(p.id())))
+                    .sum(),
                 running: w
                     .panes()
                     .iter()
@@ -397,6 +448,7 @@ impl App {
                 let presentation = if let Some(session) = self.sessions.get(pane.id()) {
                     session.acknowledge_repaint();
                     PanePresentation {
+                        unread: self.notifications.unread(Some(pane.id())),
                         metadata: session.metadata(),
                         snapshot: session.viewport(),
                         starting: false,
@@ -408,6 +460,7 @@ impl App {
                         _ => "Starting shell…".into(),
                     };
                     PanePresentation {
+                        unread: self.notifications.unread(Some(pane.id())),
                         metadata: SessionMetadata {
                             title,
                             shell: if remote.is_some() {
@@ -798,7 +851,10 @@ impl eframe::App for App {
         let dim = ui::helpers::animate(
             &ctx,
             egui::Id::new("overlay-scrim"),
-            !matches!(self.ui.overlay, OverlayState::None | OverlayState::Palette),
+            !matches!(
+                self.ui.overlay,
+                OverlayState::None | OverlayState::Palette | OverlayState::Notifications
+            ),
             0.16,
         );
         let dim = if self.ui.overlay == OverlayState::Palette {
@@ -811,6 +867,19 @@ impl eframe::App for App {
         let zoomed = self.ui.zoomed;
         let message = self.ui.error.is_some();
         match self.ui.overlay {
+            OverlayState::Notifications => {
+                ui::notifications::show(
+                    &ctx,
+                    p,
+                    ui::notifications::NotificationView {
+                        history: &self.notifications,
+                        model: self.controller.model(),
+                        unavailable: self.desktop_notifier.unavailable,
+                        first_frame: &mut self.ui.overlay_focus,
+                    },
+                    &mut actions,
+                );
+            }
             OverlayState::Settings => ui::preferences::show(&ctx, &self.config, &mut actions),
             OverlayState::Palette => ui::palette::show(
                 &ctx,

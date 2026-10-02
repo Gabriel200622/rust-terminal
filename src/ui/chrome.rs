@@ -327,6 +327,18 @@ pub fn toolbar(
                         actions.push(Action::New);
                     }
                 }
+                let unread: usize = view.workspaces.iter().map(|w| w.unread).sum();
+                let notifications = icons::button(ui, Icon::Bell, "Notifications");
+                if unread > 0 {
+                    ui.painter().circle_filled(
+                        notifications.rect.right_top() + vec2(-4.0, 4.0),
+                        3.0,
+                        p.accent,
+                    );
+                }
+                if notifications.clicked() {
+                    actions.push(Action::Notifications);
+                }
                 if let Some(pane) = view.pane {
                     if icons::button_with_hint(
                         ui,
@@ -799,7 +811,15 @@ fn workspace_row(
     }
 
     response.widget_info(|| {
-        WidgetInfo::selected(WidgetType::SelectableLabel, true, selected, &workspace.name)
+        let label = if workspace.unread > 0 {
+            format!(
+                "{}, {} unread notifications",
+                workspace.name, workspace.unread
+            )
+        } else {
+            workspace.name.clone()
+        };
+        WidgetInfo::selected(WidgetType::SelectableLabel, true, selected, label)
     });
     if response.clicked() {
         actions.push(Action::SelectWorkspace(workspace.id));
@@ -843,6 +863,8 @@ fn workspace_row(
                 p.secondary
             },
         );
+    } else if workspace.unread > 0 {
+        super::notifications::badge(ui, more.center(), workspace.unread, p);
     } else if workspace.panes > 1 {
         painter.text(
             more.center(),
@@ -1169,7 +1191,15 @@ fn group_row(
             .iter()
             .filter(|w| w.group == Some(group.id()))
             .count();
-        if count > 0 {
+        let unread = view
+            .workspaces
+            .iter()
+            .filter(|w| w.group == Some(group.id()))
+            .map(|w| w.unread)
+            .sum();
+        if unread > 0 {
+            super::notifications::badge(ui, plus.center(), unread, p);
+        } else if count > 0 {
             painter.text(
                 plus.center(),
                 Align2::CENTER_CENTER,
@@ -1888,6 +1918,7 @@ mod tests {
     fn workspaces(ids: &[u64]) -> Vec<WorkspaceView> {
         ids.iter()
             .map(|id| WorkspaceView {
+                unread: 0,
                 group: None,
                 id: WorkspaceId::new(*id),
                 name: format!("workspace {id}"),
@@ -2584,6 +2615,7 @@ mod tests {
         let workspaces: Vec<WorkspaceView> = [(1, None), (2, None), (3, Some("me@devbox"))]
             .into_iter()
             .map(|(id, remote): (u64, Option<&str>)| WorkspaceView {
+                unread: 0,
                 group: None,
                 id: WorkspaceId::new(id),
                 name: format!("workspace {id}"),

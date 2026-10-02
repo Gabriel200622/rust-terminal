@@ -5,7 +5,7 @@ The native session layer uses `alacritty_terminal` 0.26 for VT emulation and
 
 `TerminalSession::spawn(SessionOptions, Repaint)` creates a session. Its public
 API provides byte input, bracketed paste, resize, bounded scrollback, metadata,
-revision counters, bounded clipboard events, selection, and budgeted regex search.
+revision counters, bounded clipboard/notification events, selection, and budgeted regex search.
 `viewport()` returns project-owned immutable cells, colors, cursor, modes and
 selection coordinates; its revision is captured under the grid mutex. No backend
 re-export or mutable lock is public. The adapter copies damaged rows and shares
@@ -16,8 +16,9 @@ Call `acknowledge_repaint()` once at the beginning of each UI frame for visible
 sessions, **before** reading their metadata, revisions, or grids. Output wakeups
 coalesce until that acknowledgement; every parsed batch still advances its
 revision. The first change after acknowledgement immediately requests a frame.
-Lifecycle, errors, title, working-directory, bell, and clipboard notifications
-bypass coalescing so hidden sessions remain observable. Acknowledge hidden
+Lifecycle, errors, title, working-directory and bell notifications bypass grid
+coalescing. A newly nonempty event queue also schedules a frame, including for
+hidden sessions. Acknowledge hidden
 sessions when they become visible. Acknowledging after a snapshot can lose a
 change that arrived between that snapshot and acknowledgement.
 
@@ -32,7 +33,9 @@ grid mutex between 16 KiB slices. Input accepts at most one MiB per call and two
 MiB pending across at most 64 messages. Clipboard delivery holds at most 64
 notifications and one MiB of payload, with a 64 KiB per-event maximum. Overflow
 drops oldest notifications, oversized events are discarded, and metrics count
-both. Clipboard reads remain disabled; the application runtime consumes stores. Slow child processes apply PTY
+both. OSC 9/99/777 process notifications share this queue; their observer bounds
+sequences, text and incomplete chunks independently. See [notification protocol
+scope](../../docs/notifications.md#protocol-scope-and-limits). Clipboard reads remain disabled; the application runtime consumes stores. Slow child processes apply PTY
 backpressure instead of blocking the UI or accumulating unlimited output.
 Synchronized application frames suppress redundant redraws and flush on the
 parser's 150 ms deadline even if no additional output arrives.

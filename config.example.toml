@@ -39,3 +39,6 @@ sidebar_width = 216.0
 # Restore workspace organization; every terminal starts a new process.
 restore_workspaces = true
 confirm_close = true
+
+# Native desktop banners for OSC notifications. Pane rings and history stay enabled.
+desktop_notifications = true
