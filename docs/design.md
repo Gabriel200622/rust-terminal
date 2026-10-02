@@ -89,7 +89,17 @@ icon buttons keep a 28-point target around a 16-point glyph.
   connected over SSH shows a globe and its host in place of the path, and its
   menu offers "Disconnect from SSH" where a local one offers "Connect over
   SSH…". Double-click renames.
-  Dragging a row reorders the workspaces: the row lifts onto the elevated
+  Secondary-click the heading or empty list space for "New workspace", "New SSH
+  workspace", and "New workspace group". Ungrouped workspaces appear first,
+  followed by folder groups. A folder row shows a disclosure chevron, an outline
+  folder and its name; its count yields to a plus control on hover or focus.
+  Clicking the row reveals or hides indented workspaces with the native 120 ms
+  ease-out collapse animation and a matching fade. Double-click renames; the
+  folder menu creates local or SSH workspaces, renames, or removes the folder
+  while retaining its workspaces. Workspace menus offer "Move to group" and
+  "Ungrouped". Collapse never suspends output. Group organization and collapsed
+  state restore, and shortcut/palette selection reveals the selected workspace.
+  Dragging a row reorders the workspaces within its group: the row lifts onto the elevated
   material and follows the pointer, its neighbours ease aside to show where it
   will land, and it settles into that gap on release. Holding it at the list's
   edge scrolls a long list, Escape puts it back, and nothing is saved before

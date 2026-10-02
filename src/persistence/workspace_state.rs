@@ -1,5 +1,6 @@
 use neptune_model::{
-    Axis, Layout, Limits, Model, PaneId, PaneSpec, SplitId, WorkspaceId, WorkspaceSpec,
+    Axis, Layout, Limits, Model, PaneId, PaneSpec, SplitId, WorkspaceGroupId, WorkspaceGroupSpec,
+    WorkspaceId, WorkspaceSpec,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -8,9 +9,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Version 3 stores each pane's remote directory separately from its local cwd.
-/// Versions 1 and 2 remain readable; older builds refuse to replace version 3.
-pub const SCHEMA_VERSION: u32 = 3;
+/// Version 4 adds workspace folders and membership. Version 3 introduced each
+/// pane's remote directory; versions 1–3 remain readable. Older builds refuse
+/// to replace version 4 state with the new organization.
+pub const SCHEMA_VERSION: u32 = 4;
 const MAX_STATE_BYTES: u64 = 8 * 1024 * 1024;
 
 /// This DTO is the disk contract. Runtime layout serialization cannot change it.
@@ -19,14 +21,35 @@ const MAX_STATE_BYTES: u64 = 8 * 1024 * 1024;
 pub struct StateSnapshot {
     pub version: u32,
     pub workspaces: Vec<SavedWorkspace>,
+    #[serde(default)]
+    pub groups: Vec<SavedWorkspaceGroup>,
     pub active: Option<WorkspaceId>,
     pub sidebar: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct SavedWorkspaceGroup {
+    pub id: WorkspaceGroupId,
+    pub name: String,
+    pub collapsed: bool,
+}
+impl SavedWorkspaceGroup {
+    fn into_spec(self) -> WorkspaceGroupSpec {
+        WorkspaceGroupSpec {
+            id: self.id,
+            name: self.name,
+            collapsed: self.collapsed,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SavedWorkspace {
     pub id: WorkspaceId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<WorkspaceGroupId>,
     pub name: String,
     pub cwd: PathBuf,
     /// SSH destination of a remote workspace. Never a credential.
@@ -77,6 +100,7 @@ impl StateSnapshot {
                 .iter()
                 .map(|workspace| SavedWorkspace {
                     id: workspace.id(),
+                    group: workspace.group(),
                     name: workspace.name().into(),
                     cwd: workspace.cwd().into(),
                     ssh: workspace
@@ -95,6 +119,15 @@ impl StateSnapshot {
                     active: workspace.active(),
                 })
                 .collect(),
+            groups: model
+                .groups()
+                .iter()
+                .map(|group| SavedWorkspaceGroup {
+                    id: group.id(),
+                    name: group.name().into(),
+                    collapsed: group.collapsed(),
+                })
+                .collect(),
             active: model.active_workspace(),
             sidebar: model.sidebar(),
         }
@@ -103,10 +136,14 @@ impl StateSnapshot {
     /// Conversion enforces the same invariants as new commands without checking
     /// directories; callers can use it for headless snapshots and round trips.
     pub fn into_model(self, limits: Limits) -> Result<Model, neptune_model::Error> {
-        Model::restore(
+        Model::restore_grouped(
             self.workspaces
                 .into_iter()
                 .map(SavedWorkspace::into_spec)
+                .collect(),
+            self.groups
+                .into_iter()
+                .map(SavedWorkspaceGroup::into_spec)
                 .collect(),
             self.active,
             self.sidebar,
@@ -118,6 +155,7 @@ impl StateSnapshot {
 impl SavedWorkspace {
     fn into_spec(self) -> WorkspaceSpec {
         WorkspaceSpec {
+            group: self.group,
             id: self.id,
             name: self.name,
             cwd: self.cwd,
@@ -318,9 +356,36 @@ fn read_state(path: &Path) -> std::io::Result<Vec<u8>> {
 
 fn restore_versioned(snapshot: StateSnapshot, limits: Limits, report: &mut LoadReport) {
     let requested_active = snapshot.active;
+    let mut groups = Vec::new();
+    for group in snapshot.groups {
+        let name = group.name.clone();
+        let mut candidate = groups.clone();
+        candidate.push(group.into_spec());
+        match Model::restore_grouped(
+            Vec::new(),
+            candidate.clone(),
+            None,
+            snapshot.sidebar,
+            limits,
+        ) {
+            Ok(_) => groups = candidate,
+            Err(error) => report
+                .diagnostics
+                .push(format!("Skipped invalid workspace group {name:?}: {error}")),
+        }
+    }
     let mut specs = Vec::new();
     let mut total = 0;
     for mut workspace in snapshot.workspaces {
+        if let Some(group) = workspace.group
+            && !groups.iter().any(|folder| folder.id == group)
+        {
+            report.diagnostics.push(format!(
+                "Workspace {:?}: group {group} was unavailable; restored ungrouped",
+                workspace.name
+            ));
+            workspace.group = None;
+        }
         if !workspace.cwd.is_dir() {
             report.diagnostics.push(format!(
                 "Skipped workspace {:?}: directory {} does not exist",
@@ -352,7 +417,7 @@ fn restore_versioned(snapshot: StateSnapshot, limits: Limits, report: &mut LoadR
         let spec = workspace.into_spec();
         let mut candidate = specs.clone();
         candidate.push(spec.clone());
-        match Model::restore(candidate, None, snapshot.sidebar, limits) {
+        match Model::restore_grouped(candidate, groups.clone(), None, snapshot.sidebar, limits) {
             Ok(_) => {
                 total += spec.panes.len();
                 specs.push(spec);
@@ -369,7 +434,7 @@ fn restore_versioned(snapshot: StateSnapshot, limits: Limits, report: &mut LoadR
                 .into(),
         );
     }
-    match Model::restore(specs, active, snapshot.sidebar, limits) {
+    match Model::restore_grouped(specs, groups, active, snapshot.sidebar, limits) {
         Ok(model) => report.model = Some(model),
         Err(error) => report
             .diagnostics
@@ -491,6 +556,7 @@ fn restore_legacy(legacy: LegacyState, limits: Limits, report: &mut LoadReport) 
             active = Some(id);
         }
         specs.push(WorkspaceSpec {
+            group: None,
             id,
             name: workspace.name,
             cwd: workspace.cwd,
@@ -592,6 +658,7 @@ mod tests {
         let mut controller = Controller::new(Model::default());
         controller
             .dispatch(Command::AddWorkspace {
+                group: None,
                 cwd: directory.into(),
                 name: "fixture".into(),
                 remote: None,
@@ -642,7 +709,7 @@ mod tests {
     }
 
     #[test]
-    fn a_remote_workspace_round_trips_its_destination_and_local_ones_stay_unchanged() {
+    fn a_grouped_remote_workspace_round_trips_its_directory_and_destination() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("workspaces.json");
         let mut controller = Controller::new(
@@ -651,7 +718,14 @@ mod tests {
                 .unwrap(),
         );
         controller
+            .dispatch(Command::AddWorkspaceGroup {
+                name: "Servers".into(),
+            })
+            .unwrap();
+        let group = controller.model().groups()[0].id();
+        controller
             .dispatch(Command::AddWorkspace {
+                group: Some(group),
                 cwd: directory.path().into(),
                 name: "devbox".into(),
                 remote: Some("me@devbox".into()),
@@ -665,6 +739,12 @@ mod tests {
                 pane,
                 generation: 1,
                 cwd: remote_cwd.clone(),
+            })
+            .unwrap();
+        controller
+            .dispatch(Command::SetWorkspaceGroupCollapsed {
+                group,
+                collapsed: true,
             })
             .unwrap();
         let saved = serde_json::to_value(StateSnapshot::from_model(controller.model())).unwrap();
@@ -685,6 +765,11 @@ mod tests {
         assert!(report.can_write && !report.migrated);
         assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
         let model = report.model.unwrap();
+        assert_eq!(model.groups()[0].id(), group);
+        assert_eq!(model.groups()[0].name(), "Servers");
+        assert!(model.groups()[0].collapsed());
+        assert_eq!(model.workspaces()[0].group(), None);
+        assert_eq!(model.workspaces()[1].group(), Some(group));
         assert_eq!(
             model.pane(pane).unwrap().remote_cwd(),
             Some(remote_cwd.as_path())
@@ -702,11 +787,16 @@ mod tests {
     fn earlier_schema_versions_are_read_without_loss_and_saved_as_the_current_version() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("workspaces.json");
-        for version in [1, 2] {
+        for version in [1, 2, 3] {
             let mut saved = serde_json::to_value(sample(directory.path())).unwrap();
             saved["version"] = version.into();
-            if version == 2 {
+            saved.as_object_mut().unwrap().remove("groups");
+            if version >= 2 {
                 saved["workspaces"][0]["ssh"] = "devbox".into();
+            }
+            if version == 3 {
+                saved["workspaces"][0]["panes"][0]["remote_cwd"] =
+                    "/neptune-test-remote-only/project".into();
             }
             std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
             let report = load_state(&path, Limits::default());
@@ -717,6 +807,7 @@ mod tests {
             let resaved =
                 serde_json::to_value(StateSnapshot::from_model(&report.model.unwrap())).unwrap();
             saved["version"] = SCHEMA_VERSION.into();
+            saved["groups"] = serde_json::json!([]);
             assert_eq!(resaved, saved);
         }
     }
@@ -922,5 +1013,125 @@ mod tests {
             assert!(!report.can_write);
         }
         assert_eq!(std::fs::read(path).unwrap(), original);
+    }
+}
+
+#[cfg(test)]
+mod group_tests {
+    use super::*;
+    use neptune_model::{Command, Controller};
+
+    #[test]
+    fn folders_membership_and_collapsed_state_survive_disk_restoration() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("workspaces.json");
+        let mut controller = Controller::new(Model::default());
+        controller
+            .dispatch(Command::AddWorkspaceGroup {
+                name: "Projects".into(),
+            })
+            .unwrap();
+        let group = controller.model().groups()[0].id();
+        controller
+            .dispatch(Command::AddWorkspace {
+                cwd: root.path().into(),
+                name: "app".into(),
+                remote: Some("me@host".into()),
+                group: Some(group),
+            })
+            .unwrap();
+        controller
+            .dispatch(Command::SetWorkspaceGroupCollapsed {
+                group,
+                collapsed: true,
+            })
+            .unwrap();
+        controller
+            .dispatch(Command::AddWorkspaceGroup {
+                name: "Empty".into(),
+            })
+            .unwrap();
+        let snapshot = StateSnapshot::from_model(controller.model());
+        std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+        let report = load_state(&path, Limits::default());
+        assert!(report.can_write && !report.migrated);
+        assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+        let restored = report.model.unwrap();
+        assert_eq!(restored.group_specs(), controller.model().group_specs());
+        assert_eq!(restored.workspaces()[0].group(), Some(group));
+        assert_eq!(
+            serde_json::to_value(StateSnapshot::from_model(&restored)).unwrap(),
+            serde_json::to_value(snapshot).unwrap()
+        );
+    }
+
+    #[test]
+    fn missing_or_invalid_folders_recover_workspaces_and_preserve_original_bytes() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("workspaces.json");
+        let mut controller = Controller::new(Model::default());
+        controller
+            .dispatch(Command::AddWorkspace {
+                cwd: root.path().into(),
+                name: "app".into(),
+                remote: None,
+                group: None,
+            })
+            .unwrap();
+        let mut snapshot = StateSnapshot::from_model(controller.model());
+        snapshot.workspaces[0].group = Some(WorkspaceGroupId::new(7));
+        snapshot.groups.push(SavedWorkspaceGroup {
+            id: WorkspaceGroupId::new(7),
+            name: " ".into(),
+            collapsed: true,
+        });
+        let bytes = serde_json::to_vec(&snapshot).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        let report = load_state(&path, Limits::default());
+        assert!(report.can_write);
+        let restored = report.model.unwrap();
+        assert!(restored.groups().is_empty());
+        assert_eq!(restored.workspaces()[0].group(), None);
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|m| m.contains("restored ungrouped"))
+        );
+        let recovery = std::fs::read_dir(root.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|file| file != &path)
+            .unwrap();
+        assert_eq!(std::fs::read(recovery).unwrap(), bytes);
+    }
+
+    #[test]
+    fn earlier_versions_without_folder_fields_restore_ungrouped() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("workspaces.json");
+        let mut controller = Controller::new(Model::default());
+        controller
+            .dispatch(Command::AddWorkspace {
+                cwd: root.path().into(),
+                name: "app".into(),
+                remote: None,
+                group: None,
+            })
+            .unwrap();
+        let mut saved =
+            serde_json::to_value(StateSnapshot::from_model(controller.model())).unwrap();
+        saved.as_object_mut().unwrap().remove("groups");
+        for version in [1, 2, 3] {
+            saved["version"] = version.into();
+            std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+            let report = load_state(&path, Limits::default());
+            assert!(report.can_write && report.migrated);
+            assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+            let model = report.model.unwrap();
+            assert!(model.groups().is_empty());
+            assert_eq!(model.workspaces()[0].group(), None);
+        }
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
     }
 }

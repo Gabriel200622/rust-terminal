@@ -1,4 +1,4 @@
-use crate::{Layout, PaneId, Remote, WorkspaceId};
+use crate::{Layout, PaneId, Remote, WorkspaceGroupId, WorkspaceId};
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
@@ -7,6 +7,8 @@ use std::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
     UnknownWorkspace(WorkspaceId),
+    UnknownWorkspaceGroup(WorkspaceGroupId),
+    WorkspaceGroupLimit,
     UnknownPane(PaneId),
     UnknownSplit(crate::SplitId),
     WorkspaceLimit,
@@ -25,6 +27,8 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::UnknownWorkspace(id) => write!(f, "Workspace {id} does not exist"),
+            Self::UnknownWorkspaceGroup(id) => write!(f, "Workspace group {id} does not exist"),
+            Self::WorkspaceGroupLimit => f.write_str("Workspace group limit reached"),
             Self::UnknownPane(id) => {
                 write!(f, "Pane {id} does not exist in the targeted workspace")
             }
@@ -35,7 +39,7 @@ impl std::fmt::Display for Error {
             Self::InvalidLayout(reason) => write!(f, "Invalid layout: {reason}"),
             Self::InvalidRatio => f.write_str("Split ratio must be finite and between 0.1 and 0.9"),
             Self::InvalidIdentity => f.write_str("Identities must be nonzero and unique"),
-            Self::InvalidName => f.write_str("Workspace name cannot be empty"),
+            Self::InvalidName => f.write_str("Name cannot be empty"),
             Self::InvalidRemote => f.write_str(
                 "SSH host must be a destination such as user@host, without spaces or a leading dash",
             ),
@@ -110,6 +114,7 @@ pub struct PaneSpec {
 #[derive(Debug, Clone)]
 pub struct WorkspaceSpec {
     pub id: WorkspaceId,
+    pub group: Option<WorkspaceGroupId>,
     pub name: String,
     pub cwd: PathBuf,
     /// An SSH destination; validated when the model adopts the workspace.
@@ -122,6 +127,7 @@ pub struct WorkspaceSpec {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Workspace {
     pub(crate) id: WorkspaceId,
+    pub(crate) group: Option<WorkspaceGroupId>,
     pub(crate) name: String,
     pub(crate) cwd: PathBuf,
     pub(crate) remote: Option<Remote>,
@@ -132,6 +138,9 @@ pub struct Workspace {
 impl Workspace {
     pub fn id(&self) -> WorkspaceId {
         self.id
+    }
+    pub fn group(&self) -> Option<WorkspaceGroupId> {
+        self.group
     }
     pub fn name(&self) -> &str {
         &self.name
@@ -159,12 +168,40 @@ impl Workspace {
     }
 }
 
+/// Construction data for a sidebar folder. Groups contain workspaces, never groups.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceGroupSpec {
+    pub id: WorkspaceGroupId,
+    pub name: String,
+    pub collapsed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceGroup {
+    pub(crate) id: WorkspaceGroupId,
+    pub(crate) name: String,
+    pub(crate) collapsed: bool,
+}
+impl WorkspaceGroup {
+    pub fn id(&self) -> WorkspaceGroupId {
+        self.id
+    }
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    pub fn collapsed(&self) -> bool {
+        self.collapsed
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Model {
     pub(crate) workspaces: Vec<Workspace>,
+    pub(crate) groups: Vec<WorkspaceGroup>,
     pub(crate) active: Option<WorkspaceId>,
     pub(crate) sidebar: bool,
     pub(crate) next_workspace: u64,
+    pub(crate) next_group: u64,
     pub(crate) next_pane: u64,
     pub(crate) next_split: u64,
     pub(crate) limits: Limits,
@@ -178,9 +215,11 @@ impl Model {
     pub fn new(limits: Limits) -> Self {
         Self {
             workspaces: Vec::new(),
+            groups: Vec::new(),
             active: None,
             sidebar: true,
             next_workspace: 1,
+            next_group: 1,
             next_pane: 1,
             next_split: 1,
             limits,
@@ -188,6 +227,12 @@ impl Model {
     }
     pub fn workspaces(&self) -> &[Workspace] {
         &self.workspaces
+    }
+    pub fn groups(&self) -> &[WorkspaceGroup] {
+        &self.groups
+    }
+    pub fn group(&self, id: WorkspaceGroupId) -> Option<&WorkspaceGroup> {
+        self.groups.iter().find(|group| group.id == id)
     }
     pub fn workspace(&self, id: WorkspaceId) -> Option<&Workspace> {
         self.workspaces.iter().find(|workspace| workspace.id == id)
@@ -232,14 +277,55 @@ impl Model {
         sidebar: bool,
         limits: Limits,
     ) -> Result<Self, Error> {
+        Self::restore_grouped(specs, Vec::new(), active, sidebar, limits)
+    }
+
+    /// Restores organization along with workspaces, validating membership atomically.
+    /// Empty groups are retained; their count shares the workspace resource limit.
+    pub fn restore_grouped(
+        specs: Vec<WorkspaceSpec>,
+        groups: Vec<WorkspaceGroupSpec>,
+        active: Option<WorkspaceId>,
+        sidebar: bool,
+        limits: Limits,
+    ) -> Result<Self, Error> {
         if specs.len() > limits.workspaces {
             return Err(Error::WorkspaceLimit);
         }
         let mut model = Self::new(limits);
+        if groups.len() > limits.workspaces {
+            return Err(Error::WorkspaceGroupLimit);
+        }
+        let mut group_ids = HashSet::new();
+        for group in groups {
+            if group.id.get() == 0 || !group_ids.insert(group.id) {
+                return Err(Error::InvalidIdentity);
+            }
+            if group.name.trim().is_empty() {
+                return Err(Error::InvalidName);
+            }
+            model.next_group = model.next_group.max(
+                group
+                    .id
+                    .get()
+                    .checked_add(1)
+                    .ok_or(Error::IdentityExhausted)?,
+            );
+            model.groups.push(WorkspaceGroup {
+                id: group.id,
+                name: group.name,
+                collapsed: group.collapsed,
+            });
+        }
         let mut workspace_ids = HashSet::new();
         let mut pane_ids = HashSet::new();
         let mut split_ids = HashSet::new();
         for spec in specs {
+            if let Some(group) = spec.group
+                && !group_ids.contains(&group)
+            {
+                return Err(Error::UnknownWorkspaceGroup(group));
+            }
             if spec.id.get() == 0 || !workspace_ids.insert(spec.id) {
                 return Err(Error::InvalidIdentity);
             }
@@ -287,6 +373,7 @@ impl Model {
             );
             model.workspaces.push(Workspace {
                 id: spec.id,
+                group: spec.group,
                 name: spec.name,
                 cwd: spec.cwd,
                 remote,
@@ -313,6 +400,7 @@ impl Model {
         {
             return Err(Error::UnknownWorkspace(id));
         }
+        model.order_workspaces();
         model.active = active.or_else(|| model.workspaces.first().map(Workspace::id));
         model.sidebar = sidebar;
         Ok(model)
@@ -323,6 +411,7 @@ impl Model {
             .iter()
             .map(|workspace| WorkspaceSpec {
                 id: workspace.id,
+                group: workspace.group,
                 name: workspace.name.clone(),
                 cwd: workspace.cwd.clone(),
                 remote: workspace
@@ -342,6 +431,35 @@ impl Model {
                 active: workspace.active,
             })
             .collect()
+    }
+
+    pub fn group_specs(&self) -> Vec<WorkspaceGroupSpec> {
+        self.groups
+            .iter()
+            .map(|group| WorkspaceGroupSpec {
+                id: group.id,
+                name: group.name.clone(),
+                collapsed: group.collapsed,
+            })
+            .collect()
+    }
+
+    pub(crate) fn group_mut(&mut self, id: WorkspaceGroupId) -> Result<&mut WorkspaceGroup, Error> {
+        self.groups
+            .iter_mut()
+            .find(|group| group.id == id)
+            .ok_or(Error::UnknownWorkspaceGroup(id))
+    }
+    /// Keep navigation indices identical to the visible folder order. Stable
+    /// sorting preserves workspace order within each folder and at the root.
+    pub(crate) fn order_workspaces(&mut self) {
+        let groups = &self.groups;
+        self.workspaces.sort_by_key(|workspace| {
+            workspace
+                .group
+                .and_then(|id| groups.iter().position(|group| group.id == id))
+                .map_or(0, |index| index + 1)
+        });
     }
 
     pub(crate) fn workspace_mut(&mut self, id: WorkspaceId) -> Result<&mut Workspace, Error> {

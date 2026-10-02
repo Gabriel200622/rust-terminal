@@ -232,6 +232,7 @@ fn startup_actions_wait_then_replay_on_restored_state_without_retargeting_the_cl
     let mut restored = Controller::new(Model::default());
     restored
         .dispatch(Command::AddWorkspace {
+            group: None,
             cwd: root.path().into(),
             name: "Restored".into(),
             remote: None,
@@ -280,6 +281,7 @@ fn cancelling_close_preserves_state_and_confirmation_keeps_the_original_target()
     for name in ["First", "Second"] {
         app.controller
             .dispatch(Command::AddWorkspace {
+                group: None,
                 cwd: root.path().into(),
                 name: name.into(),
                 remote: None,
@@ -453,6 +455,7 @@ fn navigation_fixture(root: &std::path::Path) -> (App, [PaneId; 4]) {
     app.startup = None;
     app.controller
         .dispatch(Command::AddWorkspace {
+            group: None,
             cwd: root.into(),
             name: "Navigation".into(),
             remote: None,
@@ -1136,6 +1139,7 @@ fn escape_leaves_one_surface_at_a_time_and_otherwise_belongs_to_the_shell() {
 
     app.controller
         .dispatch(Command::AddWorkspace {
+            group: None,
             cwd: root.path().into(),
             name: "Shell".into(),
             remote: None,
@@ -1163,6 +1167,7 @@ fn escape_cancels_a_terminal_drag_instead_of_reaching_the_shell() {
     app.startup = None;
     app.controller
         .dispatch(Command::AddWorkspace {
+            group: None,
             cwd: root.path().into(),
             name: "Shell".into(),
             remote: None,
@@ -1190,6 +1195,7 @@ fn a_terminal_moved_to_another_workspace_keeps_its_running_shell() {
         app.dispatch(
             &ctx,
             Command::AddWorkspace {
+                group: None,
                 cwd: root.path().into(),
                 name: name.into(),
                 remote: None,
@@ -1313,6 +1319,7 @@ fn rename_requests_field_focus_and_cancels_without_touching_workspaces() {
     app.startup = None;
     app.controller
         .dispatch(Command::AddWorkspace {
+            group: None,
             cwd: root.path().into(),
             name: "Only".into(),
             remote: None,
@@ -1343,6 +1350,7 @@ fn new_workspace_opens_at_home_without_a_dialog_and_can_be_renamed() {
     app.startup = None;
     app.controller
         .dispatch(Command::AddWorkspace {
+            group: None,
             cwd: root.path().into(),
             name: "Existing".into(),
             remote: None,
@@ -1420,6 +1428,7 @@ fn command_digits_select_workspaces_by_position_even_when_shift_changes_the_symb
     for name in ["First", "Second", "Third"] {
         app.controller
             .dispatch(Command::AddWorkspace {
+                group: None,
                 cwd: root.path().into(),
                 name: name.into(),
                 remote: None,
@@ -1469,6 +1478,7 @@ fn moving_a_workspace_keeps_focus_and_renumbers_the_position_shortcuts() {
     for name in ["First", "Second", "Third"] {
         app.controller
             .dispatch(Command::AddWorkspace {
+                group: None,
                 cwd: root.path().into(),
                 name: name.into(),
                 remote: None,
@@ -1512,6 +1522,7 @@ fn add_workspace(app: &mut App, root: &std::path::Path, remote: Option<&str>) ->
     // Dispatched on the controller alone, so no session is started.
     app.controller
         .dispatch(Command::AddWorkspace {
+            group: None,
             cwd: root.into(),
             name: "Workspace".into(),
             remote: remote.map(str::to_owned),
@@ -2003,4 +2014,71 @@ fn remote_splits_follow_their_source_pane_after_focus_and_directory_changes() {
     for pane in [source, right, below] {
         assert_eq!(app.controller.model().pane(pane).unwrap().cwd(), local);
     }
+}
+
+#[test]
+fn group_creation_and_ssh_dialog_keep_the_captured_group_target() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    app.startup = None;
+    app.action(&ctx, Action::NewGroup);
+    assert_eq!(app.ui.overlay, OverlayState::NewGroup);
+    app.action(&ctx, Action::CreateGroup("Projects".into()));
+    let group = app.controller.model().groups()[0].id();
+    app.action(&ctx, Action::NewInGroup(group));
+    let local = app.controller.model().active_workspace().unwrap();
+    assert_eq!(
+        app.controller.model().workspace(local).unwrap().group(),
+        Some(group)
+    );
+    app.action(&ctx, Action::SshInGroup(group));
+    assert_eq!(app.ui.overlay, OverlayState::SshInGroup(group));
+    app.action(&ctx, Action::CreateGroup("Other".into()));
+    app.action(&ctx, Action::ConnectInGroup(group, "me@host".into()));
+    let remote = app.controller.model().workspaces().last().unwrap();
+    assert_eq!(remote.group(), Some(group));
+    assert_eq!(remote.remote().unwrap().destination(), "me@host");
+    let remote_id = remote.id();
+    app.action(&ctx, Action::SetGroupCollapsed(group, true));
+    app.action(&ctx, Action::SelectWorkspace(local));
+    assert!(!app.controller.model().group(group).unwrap().collapsed());
+    let panes: Vec<_> = app
+        .controller
+        .model()
+        .workspaces()
+        .iter()
+        .map(|w| (w.active(), w.panes()[0].generation()))
+        .collect();
+    app.action(&ctx, Action::RemoveGroup(group));
+    assert_eq!(
+        app.controller.model().workspace(remote_id).unwrap().group(),
+        None
+    );
+    assert_eq!(
+        panes,
+        app.controller
+            .model()
+            .workspaces()
+            .iter()
+            .map(|w| (w.active(), w.panes()[0].generation()))
+            .collect::<Vec<_>>()
+    );
+    // A queued creation must not silently fall back to another folder.
+    let count = app.controller.model().workspaces().len();
+    app.action(&ctx, Action::CreateInGroup(root.path().into(), group));
+    assert_eq!(app.controller.model().workspaces().len(), count);
+    assert!(app.ui.error.as_ref().unwrap().contains("group"));
+}
+
+#[test]
+fn group_creation_waits_for_restoration_instead_of_being_replaced() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    app.action(&ctx, Action::CreateGroup("Queued".into()));
+    assert!(app.controller.model().groups().is_empty());
+    app.complete_startup(&ctx, loaded(app.config.clone(), Model::default()));
+    assert_eq!(app.controller.model().groups()[0].name(), "Queued");
+    assert!(app.deferred_actions.is_empty());
 }

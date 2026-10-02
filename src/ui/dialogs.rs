@@ -50,46 +50,69 @@ fn rename(
     ctx: &egui::Context,
     p: Palette,
     state: &mut UiState,
-    workspace: neptune_model::WorkspaceId,
+    target: OverlayState,
     actions: &mut Vec<Action>,
 ) {
+    let (title, hint, label, verb) = match target {
+        OverlayState::NewGroup => (
+            "New workspace group",
+            "Group name",
+            "Workspace group name",
+            "Create",
+        ),
+        OverlayState::RenameGroup(_) => (
+            "Rename workspace group",
+            "Group name",
+            "Workspace group rename",
+            "Save",
+        ),
+        _ => (
+            "Rename workspace",
+            "Workspace name",
+            "Workspace rename",
+            "Save",
+        ),
+    };
     let mut save = confirmed_by_enter(ctx, state);
     let mut cancel = false;
-    let output = sheet(
-        ctx,
-        p,
-        "Rename workspace",
-        380.0,
-        SheetPlacement::Center,
-        |ui| {
-            sheet_header(ui, p, "Rename workspace", None);
-            padded(ui, 20.0, |ui| {
-                let width = ui.available_width();
-                let field = text_field(
-                    ui,
-                    p,
-                    Id::new("workspace-rename"),
-                    &mut state.rename_name,
-                    "Workspace name",
-                    "Workspace rename",
-                    width,
-                );
-                if state.overlay_focus && accepts_focus(ui) {
-                    field.request_focus();
-                    state.overlay_focus = false;
-                }
-            });
-            ui.add_space(4.0);
-            footer(ui, "rename-actions", |ui| {
-                save |= button(ui, p, "Save", ButtonKind::Primary).clicked();
-                cancel = button(ui, p, "Cancel", ButtonKind::Secondary).clicked();
-            });
-        },
-    );
+    let output = sheet(ctx, p, title, 380.0, SheetPlacement::Center, |ui| {
+        sheet_header(ui, p, title, None);
+        padded(ui, 20.0, |ui| {
+            let width = ui.available_width();
+            let field = text_field(
+                ui,
+                p,
+                Id::new(if matches!(target, OverlayState::Rename(_)) {
+                    "workspace-rename"
+                } else {
+                    "workspace-group-name"
+                }),
+                &mut state.rename_name,
+                hint,
+                label,
+                width,
+            );
+            if state.overlay_focus && accepts_focus(ui) {
+                field.request_focus();
+                state.overlay_focus = false;
+            }
+        });
+        ui.add_space(4.0);
+        footer(ui, "rename-actions", |ui| {
+            save |= button(ui, p, verb, ButtonKind::Primary).clicked();
+            cancel = button(ui, p, "Cancel", ButtonKind::Secondary).clicked();
+        });
+    });
     if cancel || output.backdrop_clicked {
         actions.push(Action::CloseOverlay);
     } else if save && !state.rename_name.trim().is_empty() {
-        actions.push(Action::SetName(workspace, state.rename_name.trim().into()));
+        let name = state.rename_name.trim().to_owned();
+        actions.push(match target {
+            OverlayState::NewGroup => Action::CreateGroup(name),
+            OverlayState::RenameGroup(group) => Action::SetGroupName(group, name),
+            OverlayState::Rename(workspace) => Action::SetName(workspace, name),
+            _ => return,
+        });
         actions.push(Action::CloseOverlay);
     }
 }
@@ -102,6 +125,7 @@ fn ssh(
     p: Palette,
     state: &mut UiState,
     workspace: Option<neptune_model::WorkspaceId>,
+    group: Option<neptune_model::WorkspaceGroupId>,
     actions: &mut Vec<Action>,
 ) {
     let title = if workspace.is_some() {
@@ -165,9 +189,12 @@ fn ssh(
         actions.push(Action::CloseOverlay);
     } else if connect {
         match neptune_model::Remote::parse(&state.ssh_host) {
-            Ok(remote) => actions.push(Action::Connect {
-                workspace,
-                destination: remote.destination().to_owned(),
+            Ok(remote) => actions.push(match group {
+                Some(group) => Action::ConnectInGroup(group, remote.destination().to_owned()),
+                None => Action::Connect {
+                    workspace,
+                    destination: remote.destination().to_owned(),
+                },
             }),
             // Enter leaves a single-line field. Return the keyboard to the
             // host so it can be corrected without reaching for the pointer.
@@ -244,8 +271,11 @@ fn confirm_close(ctx: &egui::Context, p: Palette, close: Close, actions: &mut Ve
 
 pub fn show(ctx: &egui::Context, p: Palette, state: &mut UiState, actions: &mut Vec<Action>) {
     match state.overlay {
-        OverlayState::Rename(workspace) => rename(ctx, p, state, workspace, actions),
-        OverlayState::Ssh(workspace) => ssh(ctx, p, state, workspace, actions),
+        target @ (OverlayState::Rename(_)
+        | OverlayState::RenameGroup(_)
+        | OverlayState::NewGroup) => rename(ctx, p, state, target, actions),
+        OverlayState::Ssh(workspace) => ssh(ctx, p, state, workspace, None, actions),
+        OverlayState::SshInGroup(group) => ssh(ctx, p, state, None, Some(group), actions),
         OverlayState::ConfirmClose(close) => confirm_close(ctx, p, close, actions),
         _ => {}
     }

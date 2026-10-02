@@ -19,6 +19,7 @@ pub struct PaletteView<'a> {
     pub pane: Option<PaneId>,
     pub layout: Option<&'a neptune_model::Layout>,
     pub workspaces: &'a [WorkspaceView],
+    pub groups: &'a [neptune_model::WorkspaceGroup],
     pub active: Option<WorkspaceId>,
     pub config: &'a Config,
     pub zoomed: bool,
@@ -165,6 +166,79 @@ fn commands(view: &PaletteView) -> Vec<Command> {
         "",
         [Action::Ssh(None)],
     ));
+    list.push(command(
+        "Workspace",
+        Icon::Folder,
+        "New workspace group",
+        "",
+        [Action::NewGroup],
+    ));
+    for group in view.groups {
+        for (title, action) in [
+            (
+                format!("New workspace in {}", group.name()),
+                Action::NewInGroup(group.id()),
+            ),
+            (
+                format!("New SSH workspace in {}", group.name()),
+                Action::SshInGroup(group.id()),
+            ),
+            (
+                format!("Rename group {}", group.name()),
+                Action::RenameGroup(group.id()),
+            ),
+            (
+                format!(
+                    "{} group {}",
+                    if group.collapsed() {
+                        "Expand"
+                    } else {
+                        "Collapse"
+                    },
+                    group.name()
+                ),
+                Action::SetGroupCollapsed(group.id(), !group.collapsed()),
+            ),
+            (
+                format!("Remove group {} (keep workspaces)", group.name()),
+                Action::RemoveGroup(group.id()),
+            ),
+        ] {
+            list.push(Command {
+                target: group.id().get(),
+                ..command("Groups", Icon::Folder, title, "", [action])
+            });
+        }
+        if let Some(workspace) = view
+            .active
+            .and_then(|id| view.workspaces.iter().find(|w| w.id == id))
+            && workspace.group != Some(group.id())
+        {
+            list.push(Command {
+                target: group.id().get(),
+                ..command(
+                    "Groups",
+                    Icon::Folder,
+                    format!("Move workspace to {}", group.name()),
+                    "",
+                    [Action::MoveToGroup(workspace.id, Some(group.id()))],
+                )
+            });
+        }
+    }
+    if let Some(workspace) = view
+        .active
+        .and_then(|id| view.workspaces.iter().find(|w| w.id == id))
+        && workspace.group.is_some()
+    {
+        list.push(command(
+            "Groups",
+            Icon::Grid,
+            "Move workspace out of group",
+            "",
+            [Action::MoveToGroup(workspace.id, None)],
+        ));
+    }
     if let Some(active) = view.active {
         let remote = view
             .workspaces
@@ -204,23 +278,34 @@ fn commands(view: &PaletteView) -> Vec<Command> {
             ),
         ]);
         // Reordering by keyboard; the sidebar offers the same by dragging.
-        if let Some(index) = view.workspaces.iter().position(|w| w.id == active) {
+        if let Some(workspace) = view.workspaces.iter().find(|w| w.id == active) {
+            let siblings: Vec<usize> = view
+                .workspaces
+                .iter()
+                .enumerate()
+                .filter(|(_, w)| w.group == workspace.group)
+                .map(|(index, _)| index)
+                .collect();
+            let index = siblings
+                .iter()
+                .position(|index| view.workspaces[*index].id == active)
+                .unwrap_or(0);
             if index > 0 {
                 list.push(command(
                     "Workspace",
                     Icon::ArrowUp,
                     "Move workspace up",
                     "",
-                    [Action::MoveWorkspace(active, index - 1)],
+                    [Action::MoveWorkspace(active, siblings[index - 1])],
                 ));
             }
-            if index + 1 < view.workspaces.len() {
+            if index + 1 < siblings.len() {
                 list.push(command(
                     "Workspace",
                     Icon::ArrowDown,
                     "Move workspace down",
                     "",
-                    [Action::MoveWorkspace(active, index + 1)],
+                    [Action::MoveWorkspace(active, siblings[index + 1])],
                 ));
             }
         }
@@ -552,6 +637,7 @@ mod tests {
             pane: None,
             layout: None,
             workspaces,
+            groups: &[],
             active: None,
             config,
             zoomed: false,
@@ -565,6 +651,7 @@ mod tests {
         let workspaces: Vec<WorkspaceView> = [1, 2]
             .into_iter()
             .map(|id| WorkspaceView {
+                group: None,
                 id: WorkspaceId::new(id),
                 name: "app".into(),
                 cwd: "/srv/app".into(),
@@ -600,6 +687,7 @@ mod tests {
         let workspaces: Vec<WorkspaceView> = [4, 7, 9]
             .into_iter()
             .map(|id| WorkspaceView {
+                group: None,
                 id: WorkspaceId::new(id),
                 name: "app".into(),
                 cwd: "/srv/app".into(),
@@ -639,6 +727,7 @@ mod tests {
         let workspaces: Vec<WorkspaceView> = [(1, None), (2, Some("me@devbox"))]
             .into_iter()
             .map(|(id, remote): (u64, Option<&str>)| WorkspaceView {
+                group: None,
                 id: WorkspaceId::new(id),
                 name: "app".into(),
                 cwd: "/srv/app".into(),
@@ -684,6 +773,7 @@ mod tests {
             [(1, None), (2, None), (3, None), (4, Some("me@devbox"))]
                 .into_iter()
                 .map(|(id, remote): (u64, Option<&str>)| WorkspaceView {
+                    group: None,
                     id: WorkspaceId::new(id),
                     name: "app".into(),
                     cwd: "/srv/app".into(),

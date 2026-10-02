@@ -1,6 +1,6 @@
 use crate::{
     Axis, Edge, Error, Layout, Lifecycle, Model, Pane, PaneId, Remote, SplitId, Workspace,
-    WorkspaceId,
+    WorkspaceGroup, WorkspaceGroupId, WorkspaceId,
 };
 use std::path::PathBuf;
 
@@ -23,9 +23,27 @@ pub enum Command {
     AddWorkspace {
         cwd: PathBuf,
         name: String,
+        group: Option<WorkspaceGroupId>,
         /// An SSH destination: every terminal of the workspace opens there.
         remote: Option<String>,
     },
+    AddWorkspaceGroup {
+        name: String,
+    },
+    RenameWorkspaceGroup {
+        group: WorkspaceGroupId,
+        name: String,
+    },
+    SetWorkspaceGroupCollapsed {
+        group: WorkspaceGroupId,
+        collapsed: bool,
+    },
+    SetWorkspaceGroup {
+        workspace: WorkspaceId,
+        group: Option<WorkspaceGroupId>,
+    },
+    /// Removes the folder, retaining its workspaces and every running session.
+    RemoveWorkspaceGroup(WorkspaceGroupId),
     SelectWorkspace(WorkspaceId),
     SplitPane {
         workspace: WorkspaceId,
@@ -216,11 +234,21 @@ impl Controller {
         let mut effects = Vec::new();
         let mut dirty = false;
         match command {
-            Command::AddWorkspace { cwd, name, remote } => {
+            Command::AddWorkspace {
+                cwd,
+                name,
+                remote,
+                group,
+            } => {
                 if name.trim().is_empty() {
                     return Err(Error::InvalidName);
                 }
                 let remote = remote.as_deref().map(Remote::parse).transpose()?;
+                if let Some(group) = group
+                    && self.model.group(group).is_none()
+                {
+                    return Err(Error::UnknownWorkspaceGroup(group));
+                }
                 if self.model.workspaces.len() >= self.model.limits.workspaces {
                     return Err(Error::WorkspaceLimit);
                 }
@@ -241,6 +269,7 @@ impl Controller {
                 self.model.next_pane = next_pane;
                 self.model.workspaces.push(Workspace {
                     id,
+                    group,
                     name,
                     cwd: cwd.clone(),
                     remote: remote.clone(),
@@ -265,6 +294,75 @@ impl Controller {
                 });
                 dirty = true;
             }
+            Command::AddWorkspaceGroup { name } => {
+                if name.trim().is_empty() {
+                    return Err(Error::InvalidName);
+                }
+                if self.model.groups.len() >= self.model.limits.workspaces {
+                    return Err(Error::WorkspaceGroupLimit);
+                }
+                let id = WorkspaceGroupId::new(self.model.next_group);
+                self.model.next_group = self
+                    .model
+                    .next_group
+                    .checked_add(1)
+                    .ok_or(Error::IdentityExhausted)?;
+                self.model.groups.push(WorkspaceGroup {
+                    id,
+                    name,
+                    collapsed: false,
+                });
+                dirty = true;
+            }
+            Command::RenameWorkspaceGroup { group, name } => {
+                if name.trim().is_empty() {
+                    return Err(Error::InvalidName);
+                }
+                let folder = self.model.group_mut(group)?;
+                if folder.name != name {
+                    folder.name = name;
+                    dirty = true;
+                }
+            }
+            Command::SetWorkspaceGroupCollapsed { group, collapsed } => {
+                let folder = self.model.group_mut(group)?;
+                if folder.collapsed != collapsed {
+                    folder.collapsed = collapsed;
+                    dirty = true;
+                }
+            }
+            Command::SetWorkspaceGroup { workspace, group } => {
+                if let Some(group) = group
+                    && self.model.group(group).is_none()
+                {
+                    return Err(Error::UnknownWorkspaceGroup(group));
+                }
+                let ws = self.model.workspace_mut(workspace)?;
+                if ws.group != group {
+                    ws.group = group;
+                    dirty = true;
+                }
+                if let Some(group) = group {
+                    let folder = self.model.group_mut(group)?;
+                    dirty |= folder.collapsed;
+                    folder.collapsed = false;
+                }
+            }
+            Command::RemoveWorkspaceGroup(group) => {
+                let position = self
+                    .model
+                    .groups
+                    .iter()
+                    .position(|folder| folder.id == group)
+                    .ok_or(Error::UnknownWorkspaceGroup(group))?;
+                self.model.groups.remove(position);
+                for workspace in &mut self.model.workspaces {
+                    if workspace.group == Some(group) {
+                        workspace.group = None;
+                    }
+                }
+                dirty = true;
+            }
             Command::SelectWorkspace(id) => {
                 if self.model.workspace(id).is_none() {
                     return Err(Error::UnknownWorkspace(id));
@@ -272,6 +370,11 @@ impl Controller {
                 if self.model.active != Some(id) {
                     self.model.active = Some(id);
                     dirty = true;
+                }
+                if let Some(group) = self.model.workspace(id).and_then(Workspace::group) {
+                    let folder = self.model.group_mut(group)?;
+                    dirty |= folder.collapsed;
+                    folder.collapsed = false;
                 }
             }
             Command::SplitPane {
@@ -534,8 +637,21 @@ impl Controller {
                 }
             }
         }
+        if dirty {
+            self.model.order_workspaces();
+        }
         let new_focus = self.model.active_pane();
         if old_focus != new_focus {
+            if let Some(group) = self
+                .model
+                .active
+                .and_then(|id| self.model.workspace(id))
+                .and_then(Workspace::group)
+            {
+                let folder = self.model.group_mut(group)?;
+                dirty |= folder.collapsed;
+                folder.collapsed = false;
+            }
             effects.push(Effect::Focus {
                 old: old_focus,
                 new: new_focus,
@@ -743,6 +859,7 @@ mod tests {
     fn create(controller: &mut Controller, name: &str) -> WorkspaceId {
         controller
             .dispatch(Command::AddWorkspace {
+                group: None,
                 cwd: PathBuf::from("/fake"),
                 name: name.into(),
                 remote: None,
@@ -1344,6 +1461,7 @@ mod tests {
             .active();
             let command = match sequence % 12 {
                 0 => Command::AddWorkspace {
+                    group: None,
                     cwd: PathBuf::from("/fake"),
                     name: format!("workspace {step}"),
                     remote: (step % 3 == 0).then(|| "me@devbox".to_owned()),
@@ -1489,6 +1607,7 @@ mod tests {
         runtime.run(
             &mut controller,
             Command::AddWorkspace {
+                group: None,
                 cwd: PathBuf::from("/fake"),
                 name: "fixture".into(),
                 remote: None,
@@ -1659,6 +1778,7 @@ mod tests {
         let mut controller = Controller::new(Model::default());
         let created = controller
             .dispatch(Command::AddWorkspace {
+                group: None,
                 cwd: PathBuf::from("/fake"),
                 name: "devbox".into(),
                 remote: Some(" me@devbox ".into()),
@@ -1808,6 +1928,7 @@ mod tests {
         let add = |controller: &mut Controller, remote: Option<&str>| {
             controller
                 .dispatch(Command::AddWorkspace {
+                    group: None,
                     cwd: PathBuf::from("/fake"),
                     name: "workspace".into(),
                     remote: remote.map(str::to_owned),
@@ -1863,6 +1984,7 @@ mod tests {
         let generation = controller.generation();
         for command in [
             Command::AddWorkspace {
+                group: None,
                 cwd: PathBuf::from("/fake"),
                 name: "bad".into(),
                 remote: Some("-oProxyCommand=id".into()),
@@ -1895,6 +2017,7 @@ mod tests {
     #[test]
     fn restoration_rejects_duplicate_missing_leaves_and_invalid_ratios() {
         let mut spec = WorkspaceSpec {
+            group: None,
             id: WorkspaceId::new(1),
             name: "fixture".into(),
             cwd: PathBuf::new(),
@@ -1930,6 +2053,221 @@ mod tests {
         assert_eq!(
             Model::restore(vec![spec], None, true, Limits::default()),
             Err(Error::InvalidRatio)
+        );
+    }
+}
+
+#[cfg(test)]
+mod group_tests {
+    use super::*;
+
+    #[test]
+    fn folder_changes_preserve_terminal_identity_and_only_persist() {
+        let mut controller = Controller::new(Model::default());
+        controller
+            .dispatch(Command::AddWorkspaceGroup {
+                name: "Projects".into(),
+            })
+            .unwrap();
+        let group = controller.model().groups()[0].id();
+        controller
+            .dispatch(Command::AddWorkspace {
+                cwd: "/fake".into(),
+                name: "app".into(),
+                remote: None,
+                group: Some(group),
+            })
+            .unwrap();
+        let workspace = controller.model().active_workspace().unwrap();
+        let pane = controller.model().active_pane().unwrap();
+        let before = controller.model().pane(pane).unwrap().clone();
+        for command in [
+            Command::SetWorkspaceGroupCollapsed {
+                group,
+                collapsed: true,
+            },
+            Command::RenameWorkspaceGroup {
+                group,
+                name: "Work".into(),
+            },
+            Command::SetWorkspaceGroup {
+                workspace,
+                group: None,
+            },
+            Command::SetWorkspaceGroup {
+                workspace,
+                group: Some(group),
+            },
+            Command::RemoveWorkspaceGroup(group),
+        ] {
+            assert!(matches!(
+                controller.dispatch(command).unwrap().as_slice(),
+                [Effect::Persist { .. }]
+            ));
+            assert_eq!(controller.model().active_pane(), Some(pane));
+            assert_eq!(controller.model().pane(pane), Some(&before));
+        }
+        assert!(controller.model().groups().is_empty());
+        assert_eq!(
+            controller.model().workspace(workspace).unwrap().group(),
+            None
+        );
+    }
+
+    #[test]
+    fn selecting_or_creating_a_workspace_reveals_its_folder() {
+        let mut controller = Controller::new(Model::default());
+        controller
+            .dispatch(Command::AddWorkspaceGroup {
+                name: "Projects".into(),
+            })
+            .unwrap();
+        let group = controller.model().groups()[0].id();
+        controller
+            .dispatch(Command::AddWorkspace {
+                cwd: "/fake".into(),
+                name: "app".into(),
+                remote: None,
+                group: Some(group),
+            })
+            .unwrap();
+        let workspace = controller.model().active_workspace().unwrap();
+        controller
+            .dispatch(Command::SetWorkspaceGroupCollapsed {
+                group,
+                collapsed: true,
+            })
+            .unwrap();
+        controller
+            .dispatch(Command::SelectWorkspace(workspace))
+            .unwrap();
+        assert!(!controller.model().group(group).unwrap().collapsed());
+        controller
+            .dispatch(Command::SetWorkspaceGroupCollapsed {
+                group,
+                collapsed: true,
+            })
+            .unwrap();
+        controller
+            .dispatch(Command::AddWorkspace {
+                cwd: "/fake".into(),
+                name: "remote".into(),
+                remote: Some("me@host".into()),
+                group: Some(group),
+            })
+            .unwrap();
+        assert!(!controller.model().group(group).unwrap().collapsed());
+        assert_eq!(controller.model().workspaces()[1].group(), Some(group));
+        controller
+            .dispatch(Command::CloseWorkspace(workspace))
+            .unwrap();
+        let last = controller.model().active_workspace().unwrap();
+        controller.dispatch(Command::CloseWorkspace(last)).unwrap();
+        assert!(controller.model().workspaces().is_empty());
+        assert_eq!(
+            controller.model().groups().len(),
+            1,
+            "empty folders survive the last workspace closing"
+        );
+    }
+
+    #[test]
+    fn invalid_group_commands_are_atomic_and_empty_groups_are_bounded() {
+        let mut controller = Controller::new(Model::new(crate::Limits {
+            workspaces: 1,
+            ..Default::default()
+        }));
+        controller
+            .dispatch(Command::AddWorkspaceGroup {
+                name: "Projects".into(),
+            })
+            .unwrap();
+        let before = controller.model().clone();
+        let generation = controller.generation();
+        for command in [
+            Command::AddWorkspaceGroup {
+                name: "Second".into(),
+            },
+            Command::AddWorkspaceGroup { name: "  ".into() },
+            Command::AddWorkspace {
+                cwd: "/fake".into(),
+                name: "app".into(),
+                remote: None,
+                group: Some(WorkspaceGroupId::new(99)),
+            },
+            Command::RemoveWorkspaceGroup(WorkspaceGroupId::new(99)),
+        ] {
+            assert!(controller.dispatch(command).is_err());
+            assert_eq!(controller.model(), &before);
+            assert_eq!(controller.generation(), generation);
+        }
+        controller
+            .dispatch(Command::RemoveWorkspaceGroup(before.groups()[0].id()))
+            .unwrap();
+        controller
+            .dispatch(Command::AddWorkspaceGroup {
+                name: "Replacement".into(),
+            })
+            .unwrap();
+        assert_ne!(controller.model().groups()[0].id(), before.groups()[0].id());
+    }
+
+    #[test]
+    fn grouped_restore_validates_ids_membership_and_retains_collapsed_state() {
+        let mut controller = Controller::new(Model::default());
+        controller
+            .dispatch(Command::AddWorkspaceGroup {
+                name: "Projects".into(),
+            })
+            .unwrap();
+        let group = controller.model().groups()[0].id();
+        controller
+            .dispatch(Command::AddWorkspace {
+                cwd: "/fake".into(),
+                name: "app".into(),
+                remote: None,
+                group: Some(group),
+            })
+            .unwrap();
+        controller
+            .dispatch(Command::SetWorkspaceGroupCollapsed {
+                group,
+                collapsed: true,
+            })
+            .unwrap();
+        let specs = controller.model().specs();
+        let groups = controller.model().group_specs();
+        let restored = Model::restore_grouped(
+            specs.clone(),
+            groups.clone(),
+            controller.model().active_workspace(),
+            false,
+            crate::Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(restored.group_specs(), groups);
+        assert_eq!(restored.workspaces()[0].group(), Some(group));
+        assert_eq!(
+            Model::restore_grouped(
+                specs.clone(),
+                Vec::new(),
+                None,
+                true,
+                crate::Limits::default()
+            ),
+            Err(Error::UnknownWorkspaceGroup(group))
+        );
+        let mut invalid = groups.clone();
+        invalid.push(groups[0].clone());
+        assert_eq!(
+            Model::restore_grouped(specs.clone(), invalid, None, true, crate::Limits::default()),
+            Err(Error::InvalidIdentity)
+        );
+        let mut invalid = groups;
+        invalid[0].id = WorkspaceGroupId::new(0);
+        assert_eq!(
+            Model::restore_grouped(specs, invalid, None, true, crate::Limits::default()),
+            Err(Error::InvalidIdentity)
         );
     }
 }

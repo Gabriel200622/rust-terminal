@@ -698,6 +698,17 @@ pub fn menu_item(
     shortcut: &str,
     destructive: bool,
 ) -> bool {
+    menu_row(ui, p, icon, label, shortcut, destructive).clicked()
+}
+
+fn menu_row(
+    ui: &mut Ui,
+    p: Palette,
+    icon: Icon,
+    label: &str,
+    shortcut: &str,
+    destructive: bool,
+) -> Response {
     let (_, rect) = ui.allocate_space(vec2(ui.available_width(), 28.0));
     let response = ui.interact(rect, ui.id().with(("menu-item", label)), Sense::click());
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), label));
@@ -725,12 +736,26 @@ pub fn menu_item(
         icon,
         text,
     );
-    painter.text(
+    galley_at(
+        painter,
         Pos2::new(rect.left() + 32.0, rect.center().y),
-        Align2::LEFT_CENTER,
-        label,
-        theme::regular(13.0),
-        text,
+        elided(
+            painter,
+            label,
+            theme::regular(13.0),
+            text,
+            rect.width()
+                - 42.0
+                - if shortcut.is_empty() {
+                    0.0
+                } else {
+                    painter
+                        .layout_no_wrap(shortcut.into(), theme::regular(11.5), hint)
+                        .size()
+                        .x
+                        + 8.0
+                },
+        ),
     );
     if !shortcut.is_empty() {
         painter.text(
@@ -741,7 +766,32 @@ pub fn menu_item(
             hint,
         );
     }
-    response.clicked()
+    response
+}
+
+/// A submenu uses the same icon, text inset and hit area as other menu rows.
+pub fn menu_submenu(
+    ui: &mut Ui,
+    p: Palette,
+    icon: Icon,
+    label: &str,
+    content: impl FnOnce(&mut Ui),
+) {
+    let response = menu_row(ui, p, icon, label, "", false);
+    icons::paint(
+        ui.painter(),
+        Rect::from_center_size(
+            Pos2::new(response.rect.right() - 12.0, response.rect.center().y),
+            Vec2::splat(10.0),
+        ),
+        Icon::ChevronRight,
+        if response.hovered() || response.has_focus() {
+            p.on_accent
+        } else {
+            p.muted
+        },
+    );
+    egui::containers::menu::SubMenu::new().show(ui, &response, content);
 }
 
 pub fn menu_separator(ui: &mut Ui, p: Palette) {
