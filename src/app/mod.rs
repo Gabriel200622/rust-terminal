@@ -74,6 +74,8 @@ pub struct App {
     search_query: Option<(String, Arc<SearchQuery>)>,
     search_task: Option<ActiveSearch>,
     started: Instant,
+    /// When this frame's `logic` began, so diagnostics time the whole frame.
+    frame_started: Instant,
     command: Option<String>,
     command_target: Option<(PaneId, u64)>,
     screenshot: Option<PathBuf>,
@@ -181,6 +183,7 @@ impl App {
             search_query: None,
             search_task: None,
             started: Instant::now(),
+            frame_started: Instant::now(),
             command: launch.command,
             command_target: None,
             screenshot: launch.screenshot,
@@ -650,18 +653,33 @@ impl eframe::App for App {
     fn raw_input_hook(&mut self, _: &egui::Context, raw_input: &mut egui::RawInput) {
         crate::input::drop_redundant_preedits(&mut raw_input.events, &mut self.ime_composing);
     }
-    fn ui(&mut self, ui: &mut egui::Ui, _: &mut eframe::Frame) {
-        let tick = Instant::now();
-        let ctx = ui.ctx().clone();
-        self.poll(&ctx);
-        self.observe_window(&ctx, ui.max_rect().size());
+    /// Runs before every `ui`, and alone while the window is minimized or
+    /// covered: eframe shows no UI then, but terminals keep working.
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        use crate::platform::window::{self, WindowOperation};
+        self.frame_started = Instant::now();
+        window::sync_minimized(
+            ctx,
+            frame
+                .winit_window()
+                .and_then(|window| window.is_minimized()),
+        );
+        self.poll(ctx);
         if ctx.input(|i| i.viewport().close_requested()) && !self.exit_approved {
-            crate::platform::window::send(
-                &ctx,
-                crate::platform::window::WindowOperation::CancelClose,
-            );
-            self.request_close(&ctx, Close::App);
+            window::send(ctx, WindowOperation::CancelClose);
+            self.request_close(ctx, Close::App);
+            // A close from the taskbar can reach a hidden window. Show the
+            // confirmation rather than leave it unanswerable.
+            if self.ui.overlay == OverlayState::ConfirmClose(Close::App)
+                && !ctx.input(|i| i.focused)
+            {
+                window::send(ctx, WindowOperation::Show);
+            }
         }
+    }
+    fn ui(&mut self, ui: &mut egui::Ui, _: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        self.observe_window(&ctx, ui.max_rect().size());
         self.shortcuts(&ctx);
         self.release_closed_overlay_focus(&ctx);
         // Sampled before widgets run: a menu that closes on this frame's key
@@ -1000,18 +1018,19 @@ impl eframe::App for App {
                         Err(error) => eprintln!("Screenshot: {error:#}"),
                     };
                     self.exit_approved = true;
+                    crate::platform::window::send(
+                        &ctx,
+                        crate::platform::window::WindowOperation::Close,
+                    );
                 }
             }
         }
         self.diagnostics.frame(
-            tick.elapsed(),
+            self.frame_started.elapsed(),
             &self.sessions,
             &self.renders,
             self.controller.model(),
         );
-        if self.exit_approved {
-            crate::platform::window::send(&ctx, crate::platform::window::WindowOperation::Close);
-        }
         if radius > 0 {
             ui.painter().rect_stroke(
                 bounds,

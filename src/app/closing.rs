@@ -152,7 +152,10 @@ impl App {
         self.pending_close = None;
         self.ui.overlay = OverlayState::None;
         match target {
-            Close::App => self.exit_approved = true,
+            Close::App => {
+                self.exit_approved = true;
+                crate::platform::window::send(ctx, crate::platform::window::WindowOperation::Close);
+            }
             Close::Pane(pane) => self.dispatch(ctx, Command::ClosePane(pane)),
             Close::Workspace(workspace) => self.dispatch(ctx, Command::CloseWorkspace(workspace)),
             Close::Connection(workspace) => self.dispatch(
