@@ -2,10 +2,11 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub theme: Theme,
+    pub custom_themes: Vec<crate::terminal_theme::CustomTheme>,
     pub accent: Accent,
     /// Scale of terminal content and window chrome, independent of font size.
     pub window_zoom: f32,
@@ -20,13 +21,48 @@ pub struct Config {
     pub confirm_close: bool,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub enum Theme {
     #[default]
     Graphite,
     Dusk,
     Light,
+    /// A bundled or custom palette styles both the window and terminal.
+    Palette(String),
+}
+
+impl Theme {
+    pub const BUILTINS: [(Self, &'static str); 3] = [
+        (Self::Graphite, "Graphite"),
+        (Self::Dusk, "Dusk"),
+        (Self::Light, "Light"),
+    ];
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Graphite => "graphite",
+            Self::Dusk => "dusk",
+            Self::Light => "light",
+            Self::Palette(id) => id,
+        }
+    }
+}
+impl TryFrom<String> for Theme {
+    type Error = &'static str;
+    fn try_from(id: String) -> Result<Self, Self::Error> {
+        match id.as_str() {
+            "graphite" => Ok(Self::Graphite),
+            "dusk" => Ok(Self::Dusk),
+            "light" => Ok(Self::Light),
+            _ if id.starts_with("iterm:") || id.starts_with("custom:") => Ok(Self::Palette(id)),
+            _ => Err("Unknown theme; use graphite, dusk, light, iterm:<name> or custom:<id>"),
+        }
+    }
+}
+impl From<Theme> for String {
+    fn from(theme: Theme) -> Self {
+        theme.id().to_owned()
+    }
 }
 
 /// The highlight used for focus, selection and the terminal cursor.
@@ -72,6 +108,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             theme: Theme::Graphite,
+            custom_themes: Vec::new(),
             accent: Accent::Blue,
             window_zoom: 1.0,
             font_size: 14.0,
@@ -95,15 +132,45 @@ impl Config {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let mut config: Self = toml::from_str(
+        let mut value: toml::Table = toml::from_str(
             &std::fs::read_to_string(path)
                 .with_context(|| format!("Cannot read {}", path.display()))?,
         )
         .with_context(|| format!("Invalid configuration in {}", path.display()))?;
+        // Upgrade the short-lived split-theme format without discarding custom
+        // palettes. The next normal save writes only the unified theme choice.
+        if let Some(legacy) = value.remove("terminal_theme") {
+            value.insert("theme".into(), legacy);
+        }
+        let mut config: Self = value
+            .try_into()
+            .with_context(|| format!("Invalid configuration in {}", path.display()))?;
         config.validate()?;
         Ok(config)
     }
     pub fn validate(&mut self) -> Result<()> {
+        use crate::terminal_theme::{MAX_CUSTOM_THEMES, bundled};
+        anyhow::ensure!(
+            self.custom_themes.len() <= MAX_CUSTOM_THEMES,
+            "At most 128 custom themes are allowed"
+        );
+        let mut ids = std::collections::HashSet::new();
+        let mut names = std::collections::HashSet::new();
+        for theme in &self.custom_themes {
+            theme.validate()?;
+            anyhow::ensure!(ids.insert(&theme.id), "Duplicate custom theme ID");
+            anyhow::ensure!(
+                names.insert(theme.name.trim().to_lowercase()),
+                "Custom theme names must be unique"
+            );
+        }
+        if let Theme::Palette(id) = &self.theme {
+            anyhow::ensure!(
+                id.strip_prefix("iterm:").and_then(bundled).is_some()
+                    || self.custom_themes.iter().any(|theme| &theme.id == id),
+                "Unknown theme: {id}"
+            );
+        }
         anyhow::ensure!(
             self.window_zoom.is_finite() && Self::WINDOW_ZOOM_RANGE.contains(&self.window_zoom),
             "window_zoom must be between 0.2 and 5"
@@ -129,6 +196,34 @@ impl Config {
         }
         Ok(())
     }
+    pub fn theme_colors(&self) -> Option<crate::terminal_theme::ThemeColors> {
+        let Theme::Palette(id) = &self.theme else {
+            return None;
+        };
+        if let Some(name) = id.strip_prefix("iterm:") {
+            crate::terminal_theme::bundled(name).map(|theme| theme.colors)
+        } else {
+            self.custom_themes
+                .iter()
+                .find(|theme| &theme.id == id)
+                .map(|theme| theme.colors)
+        }
+    }
+
+    pub fn theme_name(&self) -> &str {
+        match &self.theme {
+            Theme::Graphite => "Graphite",
+            Theme::Dusk => "Dusk",
+            Theme::Light => "Light",
+            Theme::Palette(id) => id.strip_prefix("iterm:").unwrap_or_else(|| {
+                self.custom_themes
+                    .iter()
+                    .find(|theme| &theme.id == id)
+                    .map_or("Unknown theme", |theme| theme.name.as_str())
+            }),
+        }
+    }
+
     pub fn save(&self, path: &Path) -> Result<()> {
         atomic_write(path, toml::to_string_pretty(self)?.as_bytes())
     }
@@ -253,6 +348,70 @@ fn migrate_data_dir(legacy: &Path, destination: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_themes_round_trip_and_legacy_appearance_stays_compatible() {
+        let mut legacy: Config = toml::from_str("theme = \"dusk\"").unwrap();
+        legacy.validate().unwrap();
+        assert_eq!(legacy.theme, Theme::Dusk);
+        assert_eq!(legacy.theme_name(), "Dusk");
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("config.toml");
+        legacy
+            .custom_themes
+            .push(crate::terminal_theme::CustomTheme {
+                id: "custom:1".into(),
+                name: "My colors".into(),
+                colors: crate::terminal_theme::bundled("Dracula").unwrap().colors,
+            });
+        legacy.theme = Theme::Palette("custom:1".into());
+        legacy.save(&path).unwrap();
+        assert_eq!(Config::load(&path).unwrap(), legacy);
+    }
+
+    #[test]
+    fn split_theme_settings_migrate_to_one_theme_without_writing_on_load() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("config.toml");
+        let original = "theme = \"dusk\"\nterminal_theme = \"iterm:Dracula\"\n";
+        std::fs::write(&path, original).unwrap();
+        let config = Config::load(&path).unwrap();
+        assert_eq!(config.theme, Theme::Palette("iterm:Dracula".into()));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        config.save(&path).unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(!saved.contains("terminal_theme"));
+        assert_eq!(Config::load(&path).unwrap(), config);
+        let damaged = original.replace("Dracula", "missing");
+        std::fs::write(&path, &damaged).unwrap();
+        assert!(Config::load(&path).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), damaged);
+    }
+
+    #[test]
+    fn terminal_theme_validation_rejects_unknown_duplicate_and_oversized_data() {
+        let theme = crate::terminal_theme::CustomTheme {
+            id: "custom:1".into(),
+            name: "My colors".into(),
+            colors: crate::terminal_theme::bundled("Dracula").unwrap().colors,
+        };
+        let mut config = Config {
+            theme: Theme::Palette("iterm:missing".into()),
+            ..Config::default()
+        };
+        assert!(config.validate().is_err());
+        config.theme = Theme::Palette(theme.id.clone());
+        assert!(config.validate().is_err());
+        config.custom_themes.push(theme.clone());
+        assert!(config.validate().is_ok());
+        config.custom_themes.push(theme.clone());
+        assert!(config.validate().is_err());
+        config.custom_themes[1].id = "custom:2".into();
+        config.custom_themes[1].name = "MY COLORS".into();
+        assert!(config.validate().is_err());
+        config.custom_themes = vec![theme; 129];
+        assert!(config.validate().is_err());
+    }
 
     #[test]
     fn product_rename_preserves_all_saved_bytes_and_recovery_copies() {

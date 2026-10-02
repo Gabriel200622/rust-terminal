@@ -29,6 +29,13 @@ and modification notice. Apollo's skill adaptations retain their MIT notice.
 Copies of these skills or excerpts must retain the applicable license texts,
 copyright notices and attribution, including those for adapted material.
 
+## Bundled terminal themes
+
+The iTerm2-Color-Schemes collection supplies Neptune's offline terminal palettes.
+[Provenance and conversion notes](assets/themes/README.md), the upstream
+[MIT license](assets/themes/LICENSE), and complete [author credits](assets/themes/CREDITS.md)
+are retained in `assets/themes/` and copied into release archives.
+
 ## Bundled fonts and dependencies
 
 Geist and JetBrains Mono retain their SIL Open Font License 1.1 notices in

@@ -10,6 +10,7 @@ pub mod runtime;
 pub mod terminal;
 pub mod terminal_view;
 pub mod theme;
+pub mod terminal_theme;
 pub mod ui;
 
 use std::path::PathBuf;

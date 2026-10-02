@@ -1,169 +1,41 @@
 //! Preferences: grouped settings that apply as they change.
 use super::Action;
 use super::helpers::{
-    ButtonKind, SheetPlacement, button, caption, group, padded, place, section_label, segmented,
-    sheet, sheet_header, slider, stepper, text_field, toggle,
+    ButtonKind, SheetPlacement, animate, button, caption, group, padded, place, section_label,
+    segmented, sheet, sheet_footer, sheet_header, slider, stepper, text_field, toggle,
 };
+use super::theme_browser;
 use crate::{
-    config::{Accent, Config, Cursor, Theme},
+    config::{Config, Cursor},
     theme::{self, Palette},
 };
-use eframe::egui::{
-    self, Align, Align2, Color32, CursorIcon, Id, Layout, Pos2, Rect, Sense, Stroke, StrokeKind,
-    Ui, Vec2, WidgetInfo, WidgetType, vec2,
-};
+use eframe::egui::{self, Align, Align2, Id, Layout, WidgetInfo, WidgetType, vec2};
 
-/// A miniature of the window in a theme's own materials.
-fn theme_tile(
-    ui: &mut Ui,
-    p: Palette,
-    theme: Theme,
-    accent: Accent,
-    name: &str,
-    selected: bool,
-    width: f32,
-) -> bool {
-    let (_, rect) = ui.allocate_space(vec2(width, 100.0));
-    let response = ui.interact(rect, ui.id().with(("theme", name)), Sense::click());
-    response.widget_info(|| WidgetInfo::selected(WidgetType::RadioButton, true, selected, name));
-    let preview = Rect::from_min_size(rect.min + vec2(3.0, 3.0), vec2(width - 6.0, 70.0));
-    let look = Palette::with_accent(theme, accent);
-    let painter = ui.painter();
-    painter.rect_filled(preview, 8, look.chrome);
-    let side = preview.width() * 0.27;
-    for (index, light) in [0xff5f57, 0xfebc2e, 0x28c840].into_iter().enumerate() {
-        painter.circle_filled(
-            preview.min + vec2(8.0 + index as f32 * 6.0, 8.0),
-            2.0,
-            theme::color(light),
-        );
-    }
-    for (index, tone) in [look.pressed, look.hover, look.hover]
-        .into_iter()
-        .enumerate()
-    {
-        painter.rect_filled(
-            Rect::from_min_size(
-                preview.min + vec2(6.0, 20.0 + index as f32 * 11.0),
-                vec2(side - 10.0, 7.0),
-            ),
-            3,
-            tone,
-        );
-    }
-    let stage = Rect::from_min_max(preview.min + vec2(side, 6.0), preview.max - vec2(5.0, 5.0));
-    painter.rect_filled(stage, 5, look.bg);
-    for (index, (length, tone)) in [
-        (0.42, look.accent),
-        (0.74, look.fg),
-        (0.56, look.ansi[2]),
-        (0.66, look.secondary),
-        (0.3, look.ansi[5]),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        painter.rect_filled(
-            Rect::from_min_size(
-                stage.min + vec2(7.0, 8.0 + index as f32 * 9.0),
-                vec2((stage.width() - 14.0) * length, 3.5),
-            ),
-            2,
-            theme::tint(tone, 0.85),
-        );
-    }
-    if selected {
-        painter.rect_stroke(
-            preview.expand(3.0),
-            11,
-            Stroke::new(2.0, p.accent),
-            StrokeKind::Inside,
-        );
-    } else {
-        painter.rect_stroke(
-            preview,
-            8,
-            Stroke::new(
-                1.0,
-                if response.hovered() {
-                    p.muted
-                } else {
-                    p.border
-                },
-            ),
-            StrokeKind::Inside,
-        );
-    }
-    if response.has_focus() {
-        painter.rect_stroke(
-            preview.expand(5.0),
-            13,
-            Stroke::new(1.5, theme::tint(p.accent, 0.5)),
-            StrokeKind::Inside,
-        );
-    }
-    painter.text(
-        Pos2::new(rect.center().x, rect.bottom() - 11.0),
-        Align2::CENTER_CENTER,
-        name,
-        theme::medium(12.0),
-        if selected { p.fg } else { p.secondary },
-    );
-    response.on_hover_cursor(CursorIcon::PointingHand).clicked() && !selected
-}
-
-fn accent_dots(ui: &mut Ui, p: Palette, current: &mut Accent) {
-    ui.spacing_mut().item_spacing.x = 7.0;
-    // The row lays out from its trailing edge; reverse to read Blue first.
-    for (accent, name) in Accent::ALL.into_iter().rev() {
-        let (_, rect) = ui.allocate_space(Vec2::splat(20.0));
-        let label = format!("{name} accent");
-        let response = ui.interact(rect, ui.id().with(("accent", name)), Sense::click());
-        let selected = accent == *current;
-        response
-            .widget_info(|| WidgetInfo::selected(WidgetType::RadioButton, true, selected, &label));
-        let color = theme::accent_color(accent, p.dark);
-        let painter = ui.painter();
-        painter.circle_filled(
-            rect.center(),
-            if response.hovered() { 8.5 } else { 8.0 },
-            color,
-        );
-        painter.circle_stroke(
-            rect.center(),
-            8.0,
-            Stroke::new(0.5, Color32::from_black_alpha(40)),
-        );
-        if selected {
-            painter.circle_filled(rect.center(), 3.0, Color32::WHITE);
-        }
-        if response.has_focus() {
-            painter.circle_stroke(
-                rect.center(),
-                10.5,
-                Stroke::new(1.5, theme::tint(color, 0.7)),
-            );
-        }
-        if response
-            .on_hover_cursor(CursorIcon::PointingHand)
-            .on_hover_text(name)
-            .clicked()
-        {
-            *current = accent;
-        }
-    }
-}
-
-pub fn show(ctx: &egui::Context, current: &Config, actions: &mut Vec<Action>) {
+pub fn show(
+    ctx: &egui::Context,
+    current: &Config,
+    state: &mut theme_browser::State,
+    actions: &mut Vec<Action>,
+) {
     let mut config = current.clone();
     let p = Palette::for_config(&config);
-    let before = toml::to_string(&config).unwrap_or_default();
     let screen = ctx.content_rect();
     let mut close = false;
-    let output = sheet(ctx, p, "Preferences", 500.0, SheetPlacement::Center, |ui| {
+    // The catalog needs room for its grid: the sheet widens as it appears.
+    let themes = animate(ctx, Id::new("preferences-themes"), state.open, 0.16);
+    let width = egui::lerp(500.0..=theme_browser::WIDTH, themes);
+    let output = sheet(ctx, p, "Preferences", width, SheetPlacement::Center, |ui| {
+        // Leave the window visible around the sheet when there is room; a
+        // short window gives most of that margin back to the settings.
+        let chrome = 52.0 + 60.0;
+        let body_height = (screen.height() - chrome - 96.0)
+            .max((screen.height() - chrome - 24.0).min(260.0))
+            .clamp(120.0, 560.0);
+        if state.open {
+            close |= theme_browser::show(ui, p, &mut config, state, body_height);
+            return;
+        }
         close |= sheet_header(ui, p, "Preferences", Some("Close preferences"));
-        // Leave the window visible around the sheet when there is room.
-        let body_height = (screen.height() - 52.0 - 60.0 - 96.0).clamp(120.0, 560.0);
         egui::ScrollArea::vertical()
             .id_salt("preferences-body")
             .max_height(body_height)
@@ -171,32 +43,10 @@ pub fn show(ctx: &egui::Context, current: &Config, actions: &mut Vec<Action>) {
             .show(ui, |ui| {
                 padded(ui, 20.0, |ui| {
                     section_label(ui, p, "Appearance");
-                    ui.add_space(2.0);
-                    let gap = 10.0;
-                    let tile = ((ui.available_width() - gap * 2.0) / 3.0).floor();
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = gap;
-                        for (theme, name) in [
-                            (Theme::Graphite, "Graphite"),
-                            (Theme::Dusk, "Dusk"),
-                            (Theme::Light, "Light"),
-                        ] {
-                            if theme_tile(
-                                ui,
-                                p,
-                                theme,
-                                config.accent,
-                                name,
-                                config.theme == theme,
-                                tile,
-                            ) {
-                                config.theme = theme;
-                            }
-                        }
-                    });
-                    ui.add_space(8.0);
                     group(ui, p, |ui, rows| {
-                        rows.row(ui, "Accent", |ui| accent_dots(ui, p, &mut config.accent));
+                        if theme_browser::summary(ui, p, &config, rows) {
+                            state.browse();
+                        }
                         rows.row(ui, "Window zoom", |ui| {
                             let text = format!("{:.0}%", config.window_zoom * 100.0);
                             if stepper(
@@ -357,10 +207,7 @@ pub fn show(ctx: &egui::Context, current: &Config, actions: &mut Vec<Action>) {
                 });
             });
 
-        let (_, footer) = ui.allocate_space(vec2(ui.available_width(), 60.0));
-        ui.painter()
-            .line_segment([footer.left_top(), footer.right_top()], p.hairline());
-        let bar = footer.shrink2(vec2(16.0, 0.0));
+        let bar = sheet_footer(ui, p);
         place(
             ui,
             bar,
@@ -368,7 +215,10 @@ pub fn show(ctx: &egui::Context, current: &Config, actions: &mut Vec<Action>) {
             "preferences-reset",
             |ui| {
                 if button(ui, p, "Reset to defaults", ButtonKind::Quiet).clicked() {
-                    config = Config::default();
+                    config = Config {
+                        custom_themes: config.custom_themes.clone(),
+                        ..Config::default()
+                    };
                 }
             },
         );
@@ -382,10 +232,10 @@ pub fn show(ctx: &egui::Context, current: &Config, actions: &mut Vec<Action>) {
             },
         );
     });
-    if close || output.backdrop_clicked {
+    if (close || output.backdrop_clicked) && state.may_close() {
         actions.push(Action::CloseOverlay);
     }
-    if toml::to_string(&config).unwrap_or_default() != before {
+    if &config != current {
         actions.push(Action::Preferences(config));
     }
 }

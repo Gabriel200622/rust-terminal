@@ -55,13 +55,18 @@ literal colours.
 surfaces carry a soft shadow and a one-pixel `border`; regions that share a
 material are divided by a `separator` hairline or by space alone.
 
-The accent is the user's choice of nine system-style colours (blue by default)
-and resolves per theme. It marks the focused pane, selected rows, primary
-buttons, switches, focus rings, search matches and the terminal cursor. Text on
-the accent uses `on_accent`, which flips to dark ink for light accents. Terminal
-selection is an opaque mix of accent and surface, so selected cells keep an
-exact colour under any glyph. Red is reserved for destructive actions and
-stopped terminals.
+One theme determines the palette for the entire window and every terminal.
+Graphite, Dusk and Light retain their original materials. The 712 imported
+palettes and saved custom themes supply exact terminal colors; window materials
+are derived from their background, with interface text contrast of at least
+4.5:1 and focus accents of at least 3:1 against the main surfaces. The accent
+comes from ANSI blue and marks focused panes, selected rows, primary buttons,
+switches, focus rings and search matches. `on_accent` keeps button labels
+readable. The older `accent` config field remains compatible with the three
+original themes; there is no separate accent control in preferences. Cursor and
+selection colors come from the chosen palette. Red marks destructive actions
+and stopped terminals; a destructive control's label is white unless an
+imported red is too light to carry it.
 
 Workspace tiles take a stable identity colour from their workspace id: tinted
 when idle, solid when selected. The identity colour is decoration only; state is
@@ -167,12 +172,38 @@ icon buttons keep a 28-point target around a 16-point glyph.
   "Disconnect from SSH?", "Quit Neptune?"). The SSH sheet asks only for a host,
   states that connecting an existing workspace restarts its terminals, and
   names the problem in place of that note while the host is unusable.
-- **Preferences.** Grouped rows that apply immediately: theme previews drawn
-  from each theme's own palette, accent dots, a window zoom percentage stepper,
-  a font size stepper with its Ctrl+Shift+Plus/Minus and Ctrl+Shift+0 shortcuts
-  (Command+Shift on macOS), a
+- **Preferences.** General settings are grouped rows that apply immediately.
+  Appearance leads with the theme in use: a miniature drawn in its own colours,
+  its name and where it comes from. The whole row opens the theme catalog.
+  Below it are a window zoom percentage stepper, a font size stepper with its
+  Ctrl+Shift+Plus/Minus and Ctrl+Shift+0 shortcuts (Command+Shift on macOS), a
   slider for line spacing, a segmented cursor style, and switches for boolean
-  settings.
+  settings. Reset retains the custom themes.
+- **Themes.** The catalog and the editor are screens of the Preferences sheet.
+  A back control leads the title, and the sheet widens over 160 ms to make room
+  for the grid. The search field takes the keyboard and shares a line with the
+  All/Dark/Light/Custom filter. Cards are grouped as "Your themes", "Neptune"
+  and "iTerm2 collection"; each is a miniature of the window with sample text
+  in the theme's colours, never terminal contents. Only the rows in view are
+  laid out. The catalog opens at the theme in use, which carries the accent
+  ring and a check; choosing a card applies it to the window and every terminal
+  at once. On hover or focus a card shows a "more" control with the same menu
+  as a secondary click: "Use theme" and "Duplicate…", and for a custom theme
+  "Edit…" and "Delete…". Deleting asks in the action bar, in place of "New
+  theme" and "Done", so nothing reflows.
+  The editor keeps the name and a live preview beside the colours while there
+  is room and stacks them in a narrow window. Colours are grouped rows: text
+  and background, cursor and selection, and each ANSI colour beside its bright
+  variant. A colour well opens a picker (a saturation and brightness square
+  over a hue strip); its hex field accepts `#RRGGBB`, `RRGGBB` or `#RGB`. A
+  value that cannot be used is outlined in the problem colour and named in the
+  action bar, and "Save theme" waits for it. Nothing reaches the configuration
+  before Save. A changed draft is never dropped silently: Cancel, back, Escape,
+  the close control, the preferences shortcut and a click outside the sheet
+  ask in the action bar first, and Escape answers "Keep editing". A draft set
+  aside by another overlay is still there when Preferences reopens. Escape
+  leaves the innermost thing first: the picker or a question, then the editor,
+  the catalog and the sheet.
 - **Command palette.** Every action with its shortcut, grouped when browsing and
   flat when filtered. Arrow keys move the highlight, Enter runs, and the pointer
   only takes the highlight when it moves. Commands that need a terminal are
@@ -268,3 +299,33 @@ split and sidebar handles was not sensed.
 
 This record covers the recorded Linux states. Wayland input, macOS and Windows
 still require native design review, as do the window controls' platform fit.
+
+### Review record: 2026-10-02 theme catalog
+
+Reviewed on Linux (X11 through the inspection protocol, 1 px per logical point,
+debug build with the `inspection` feature) from fresh captures after the last
+build: preferences with a Neptune, an imported and a custom theme; the catalog
+at the top, opened at a theme deep in the list, searched, filtered, with no
+results and with no custom themes; a hovered card and its menu; the removal
+question; the editor for a new and a saved theme with a dark and a light
+palette, an unusable value, the picker and the discard question; and the same
+screens at 640×480 and at 150% window zoom in a 640×480 window.
+
+Corrections made during that review:
+
+- The catalog stacked a back button, search, filter, a create button and a
+  count above the grid, leaving one row of cards in a small window. Search and
+  filter now share a line and the actions moved to the action bar.
+- Editing or deleting a custom theme first required applying it. Every card
+  now has a menu.
+- The editor's Save and Cancel sat above the form and its colour rows did not
+  use the sheet's width; the preview scrolled away from the colours it showed.
+- Escape, the close control and a click outside the sheet discarded a draft
+  without asking.
+- Destructive buttons drew white labels on the light reds of imported
+  palettes; the label now follows the red's contrast.
+- The catalog opened at the top however far down the theme in use was.
+
+On native Wayland, preferences, the catalog, a search and the editor were
+captured once from the same build and matched. The remaining states there,
+macOS and Windows were not reviewed for these screens.

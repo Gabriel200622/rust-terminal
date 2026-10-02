@@ -15,6 +15,7 @@ pub struct Cache {
     pub(super) rows: Vec<CachedRow>,
     pub(super) sources: Vec<Arc<[terminal_core::Cell]>>,
     colors: Option<Colors>,
+    palette_colors: Option<[Color32; 19]>,
     revision: u64,
     key: Option<CacheKey>,
     pub columns: u16,
@@ -28,6 +29,7 @@ pub struct Cache {
     pub(super) selection: Option<terminal_core::SelectionRange>,
     pub resize_error: Option<String>,
     pub(super) background: Color32,
+    pub(super) cursor_color: Color32,
     pub(super) pressed_link: Option<super::links::Link>,
     /// The current primary gesture belongs to a link, including its release frame.
     pub link_pointer_owned: bool,
@@ -39,7 +41,6 @@ struct CacheKey {
     font_size: u32,
     line_height: u32,
     display_scale: u32,
-    theme: crate::config::Theme,
 }
 
 impl CacheKey {
@@ -49,7 +50,6 @@ impl CacheKey {
             && self.font_size == other.font_size
             && self.line_height == other.line_height
             && self.display_scale == other.display_scale
-            && self.theme == other.theme
     }
 }
 #[derive(Default)]
@@ -91,9 +91,17 @@ fn resolve(c: Color, p: Palette, bold: bool, colors: &Colors) -> Color32 {
     }
     match c {
         Color::Spec(rgb) => Color32::from_rgb(rgb.r, rgb.g, rgb.b),
-        Color::Named(NamedColor::Foreground) => p.fg,
+        Color::Named(NamedColor::Foreground) => {
+            if bold {
+                p.terminal_bold
+            } else {
+                p.terminal_fg
+            }
+        }
+        Color::Named(NamedColor::BrightForeground) => p.terminal_bold,
+        Color::Named(NamedColor::DimForeground) => p.terminal_fg.gamma_multiply(0.65),
         Color::Named(NamedColor::Background) => p.bg,
-        Color::Named(NamedColor::Cursor) => p.accent,
+        Color::Named(NamedColor::Cursor) => p.cursor,
         Color::Named(n) => {
             let n = n as usize;
             if n < 16 {
@@ -188,7 +196,6 @@ impl Cache {
             font_size: config.font_size.to_bits(),
             line_height: config.line_height.to_bits(),
             display_scale: ui.ctx().pixels_per_point().to_bits(),
-            theme: config.theme,
         };
         if self.key == Some(key) {
             return None;
@@ -222,6 +229,7 @@ impl Cache {
             false,
             &snapshot.colors,
         );
+        self.cursor_color = resolve(Color::Named(NamedColor::Cursor), p, false, &snapshot.colors);
         let point = snapshot.cursor.point;
         let cursor_row = point.line + snapshot.display_offset as i32;
         self.cursor = if snapshot.cursor.shape != CursorShape::Hidden
@@ -232,12 +240,22 @@ impl Cache {
         } else {
             None
         };
-        if snapshot.revision == self.revision && self.rows.len() == snapshot.screen_lines {
+        let mut palette_colors = [p.bg; 19];
+        palette_colors[..16].copy_from_slice(&p.ansi);
+        palette_colors[16] = p.bg;
+        palette_colors[17] = p.terminal_fg;
+        palette_colors[18] = p.terminal_bold;
+        let palette_changed = self.palette_colors != Some(palette_colors);
+        self.palette_colors = Some(palette_colors);
+        if !palette_changed
+            && snapshot.revision == self.revision
+            && self.rows.len() == snapshot.screen_lines
+        {
             return;
         }
         let lines = self.lines;
         let revision = snapshot.revision;
-        let colors_changed = self.colors.as_ref() != Some(&snapshot.colors);
+        let colors_changed = palette_changed || self.colors.as_ref() != Some(&snapshot.colors);
         self.rows.resize_with(lines as usize, CachedRow::default);
         for (idx, source) in snapshot.rows.iter().enumerate().take(lines as usize) {
             if !colors_changed
@@ -312,9 +330,17 @@ impl Cache {
                 {
                     continue;
                 }
-                let mut text = c.c.to_string();
-                for ch in c.extra {
-                    text.push(ch);
+                // Concealed glyphs must remain hidden when selection/cursor ink
+                // overrides a galley's color. Keep cell offsets, not secret glyphs.
+                let mut text = if c.flags.contains(Flags::HIDDEN) {
+                    " ".to_owned()
+                } else {
+                    c.c.to_string()
+                };
+                if !c.flags.contains(Flags::HIDDEN) {
+                    for ch in c.extra {
+                        text.push(ch);
+                    }
                 }
                 row.text_columns.push((row.text.len(), c.column));
                 row.text.push_str(&text);
@@ -453,13 +479,13 @@ mod synthetic_tests {
                         ui,
                         &self.snapshot,
                         &self.config,
-                        Palette::new(self.config.theme),
+                        Palette::for_config(&self.config),
                     );
                     self.cache.paint(
                         ui,
                         self.rect,
                         &self.config,
-                        Palette::new(self.config.theme),
+                        Palette::for_config(&self.config),
                         false,
                         search,
                         "",
@@ -469,6 +495,92 @@ mod synthetic_tests {
             output.textures_delta.clear();
             output.shapes
         }
+    }
+
+    #[test]
+    fn theme_changes_recolor_quiet_rows_and_preserve_explicit_terminal_colors() {
+        let mut fixture = Fixture::new();
+        let revision = fixture.snapshot.revision;
+        let original = fixture.cache.rows[0].runs[0].galley.clone();
+        fixture.config.theme = crate::config::Theme::Palette("iterm:Dracula".into());
+        fixture.frame("");
+        assert_eq!(fixture.snapshot.revision, revision);
+        assert!(!Arc::ptr_eq(
+            &original,
+            &fixture.cache.rows[0].runs[0].galley
+        ));
+        assert_eq!(fixture.cache.background(), crate::theme::color(0x282a36));
+        assert_eq!(
+            fixture.cache.rows[0].runs[0].galley.job.sections[0]
+                .format
+                .color,
+            crate::theme::color(0xf8f8f2)
+        );
+        fixture.snapshot.colors[NamedColor::Foreground as usize] =
+            Some(terminal_core::Rgb { r: 1, g: 2, b: 3 });
+        fixture.snapshot.revision += 1;
+        fixture.frame("");
+        fixture.config.theme = crate::config::Theme::Palette("iterm:3024 Day".into());
+        fixture.frame("");
+        assert_eq!(
+            fixture.cache.rows[0].runs[0].galley.job.sections[0]
+                .format
+                .color,
+            Color32::from_rgb(1, 2, 3)
+        );
+        fixture.snapshot.colors[NamedColor::Foreground as usize] = None;
+        fixture.snapshot.revision += 1;
+        fixture.frame("");
+        assert_eq!(
+            fixture.cache.rows[0].runs[0].galley.job.sections[0]
+                .format
+                .color,
+            Palette::for_config(&fixture.config).terminal_fg
+        );
+    }
+
+    #[test]
+    fn custom_edits_invalidate_same_theme_id_without_terminal_output() {
+        let mut fixture = Fixture::new();
+        fixture
+            .config
+            .custom_themes
+            .push(crate::terminal_theme::CustomTheme {
+                id: "custom:1".into(),
+                name: "Test".into(),
+                colors: crate::terminal_theme::bundled("Dracula").unwrap().colors,
+            });
+        fixture.config.theme = crate::config::Theme::Palette("custom:1".into());
+        fixture.frame("");
+        fixture.config.custom_themes[0].colors.foreground =
+            crate::terminal_theme::HexColor(0x123456);
+        fixture.frame("");
+        assert_eq!(
+            fixture.cache.rows[0].runs[0].galley.job.sections[0]
+                .format
+                .color,
+            crate::theme::color(0x123456)
+        );
+        let rebuilt = fixture.cache.render_rebuilds;
+        fixture.frame("");
+        assert_eq!(fixture.cache.render_rebuilds, rebuilt);
+    }
+
+    #[test]
+    fn selection_ink_never_reveals_concealed_glyphs() {
+        let mut fixture = Fixture::new();
+        let row = Arc::make_mut(&mut fixture.snapshot.rows[0]);
+        row[0].flags.insert(Flags::HIDDEN);
+        fixture.snapshot.revision += 1;
+        fixture.config.theme = crate::config::Theme::Palette("iterm:Dracula".into());
+        fixture.frame("");
+        assert!(fixture.cache.rows[0].text.starts_with(" lpha"));
+        assert!(
+            fixture.cache.rows[0]
+                .runs
+                .iter()
+                .all(|run| !run.galley.job.text.contains("alpha"))
+        );
     }
 
     #[test]
@@ -541,7 +653,7 @@ mod synthetic_tests {
         assert_eq!(fixture.cache.cells_prepared, prepared);
         assert_eq!(fixture.cache.render_rebuilds, rebuilds);
         assert_eq!(fixture.cache.cursor, Some((4, 1, CursorShape::Beam)));
-        let selection = Palette::new(fixture.config.theme).selection;
+        let selection = Palette::for_config(&fixture.config).selection;
         assert_eq!(shapes.iter().filter(|shape|matches!(&shape.shape,egui::epaint::Shape::Rect(rect) if rect.fill==selection)).count(),3);
     }
 
@@ -560,7 +672,7 @@ mod synthetic_tests {
         fixture.snapshot.rows[0] = row.into();
         fixture.snapshot.revision += 1;
         for (search, column, width) in [("界", 1.0, 2.0), ("e\u{301}", 3.0, 1.0)] {
-            let fill = Palette::new(fixture.config.theme)
+            let fill = Palette::for_config(&fixture.config)
                 .accent
                 .gamma_multiply(0.25);
             let shapes = fixture.frame(search);
@@ -749,12 +861,12 @@ mod tests {
                             .unwrap();
                     }
                     let snapshot = session.viewport();
-                    cache.prepare(ui, &snapshot, config, Palette::new(config.theme));
+                    cache.prepare(ui, &snapshot, config, Palette::for_config(config));
                     cache.paint(
                         ui,
                         *rect,
                         config,
-                        Palette::new(config.theme),
+                        Palette::for_config(config),
                         false,
                         search,
                         "",
@@ -889,7 +1001,7 @@ mod tests {
         let rebuilds = fixture.cache.render_rebuilds;
         for (search, column, width) in [("界", 1.0, 2.0), ("e\u{301}", 3.0, 1.0)] {
             let shapes = fixture.frame(search);
-            let fill = Palette::new(fixture.config.theme)
+            let fill = Palette::for_config(&fixture.config)
                 .accent
                 .gamma_multiply(0.25);
             let highlights: Vec<_> = shapes

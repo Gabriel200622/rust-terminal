@@ -80,7 +80,32 @@ neptune --no-restore
 neptune --help
 ```
 
-[config.example.toml](config.example.toml) documents the supported settings: three themes, nine accent colours, window zoom, font size and line height, scrollback limit, shell executable, cursor style/blink, sidebar width, workspace restoration, and close confirmation. Window zoom is available in Preferences under Appearance; changes there or through zoom shortcuts are saved and restored on the next launch, including with workspace restoration disabled. Settings are validated; unknown keys are rejected. Workspace restoration restores directories, split positions, and focused panes, and launches fresh shell processes; a remote workspace opens new SSH connections to its host. Commands and process memory are never serialized.
+[config.example.toml](config.example.toml) documents the supported settings: 715 themes shared by the window and terminal, custom themes, window zoom, font size and line height, scrollback limit, shell executable, cursor style/blink, sidebar width, workspace restoration, and close confirmation. Window zoom is available in Preferences under Appearance; changes there or through zoom shortcuts are saved and restored on the next launch, including with workspace restoration disabled. Settings are validated; unknown keys are rejected. Workspace restoration restores directories, split positions, and focused panes, and launches fresh shell processes; a remote workspace opens new SSH connections to its host. Commands and process memory are never serialized.
+
+Open **Preferences** and choose the theme row under Appearance (or **Browse
+themes** in the command palette) to pick one theme for the whole app. Neptune's
+Graphite, Dusk and Light themes sit alongside all 712 palettes from the
+[iTerm2 collection](https://iterm2colorschemes.com/). Search by name or filter
+Dark, Light and Custom; each card previews the window and terminal, and the
+catalog opens at the theme in use. Choosing a card updates existing and new
+terminals, the sidebar, toolbar and dialogs at once.
+The collection works offline; [its pinned source and author
+credits](assets/themes/README.md) ship with Neptune. Window surfaces and readable
+interface colors are derived from each imported palette.
+
+**New theme** copies the colors in use into an editor, and **Duplicate…** in a
+card's menu (the "more" button on a card, or a secondary click) starts from any
+other theme. Name it and use the color wells or hex fields for the background,
+text, bold text, cursor, selection and 16 ANSI colors; the preview updates as
+you edit. **Save theme** saves and applies it. Leaving the editor with unsaved
+changes asks before discarding them. A custom theme's menu also offers
+**Edit…** and **Delete…**; deletion asks for confirmation, and deleting the
+theme in use returns to Graphite. Up to 128 custom themes are saved in
+`config.toml`, with names up to 64 characters. Reset to defaults retains your
+saved custom themes.
+Terminal programs can still override terminal colors through escape sequences.
+Older settings with a separate `terminal_theme` migrate that selection to the
+single `theme` setting on load; the next settings save writes the unified format.
 
 Default storage is `~/.config/neptune` on Linux (or `$XDG_CONFIG_HOME/neptune`),
 `~/Library/Application Support/rs.Neptune.neptune` on macOS, and

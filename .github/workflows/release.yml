@@ -101,7 +101,11 @@ jobs:
           for filename in Path('assets/fonts').glob('*LICENSE*'):
               shutil.copy2(filename, font_notices / filename.name)
           metadata = json.loads(subprocess.check_output(['cargo', 'metadata', '--locked', '--format-version', '1'], text=True))
-          notices = []
+          theme_notices = stage / 'licenses' / 'themes'
+          theme_notices.mkdir(parents=True)
+          for filename in ('LICENSE', 'CREDITS.md', 'README.md', 'source.json'):
+              shutil.copy2(Path('assets/themes') / filename, theme_notices / filename)
+          notices = ['Bundled iTerm2-Color-Schemes: see licenses/themes for license, authors and provenance.\n']
           for package in sorted(metadata['packages'], key=lambda p: (p['name'], p['version'])):
               notices.append(f"{package['name']} {package['version']}\nLicense: {package.get('license') or 'see license file'}\n")
               root = Path(package['manifest_path']).parent

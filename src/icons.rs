@@ -10,6 +10,7 @@ pub enum Icon {
     Terminal,
     Plus,
     Close,
+    ChevronLeft,
     ChevronRight,
     ChevronDown,
     Settings,
@@ -89,6 +90,7 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             line(&[[6.0, 6.0], [18.0, 18.0]]);
             line(&[[18.0, 6.0], [6.0, 18.0]]);
         }
+        Icon::ChevronLeft => line(&[[15.0, 5.0], [8.0, 12.0], [15.0, 19.0]]),
         Icon::ChevronRight => line(&[[9.0, 5.0], [16.0, 12.0], [9.0, 19.0]]),
         Icon::ChevronDown => line(&[[5.0, 9.0], [12.0, 16.0], [19.0, 9.0]]),
         Icon::Settings => {

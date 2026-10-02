@@ -113,7 +113,8 @@ pub fn keycaps(painter: &Painter, right_center: Pos2, shortcut: &str, text: Colo
     right_center.x - right - 3.0
 }
 
-fn focus_ring(painter: &Painter, rect: Rect, radius: u8, p: Palette) {
+/// The accent outline of a control that holds keyboard focus.
+pub fn focus_ring(painter: &Painter, rect: Rect, radius: u8, p: Palette) {
     painter.rect_stroke(
         rect.expand(2.0),
         radius.saturating_add(2),
@@ -153,7 +154,7 @@ pub fn button(ui: &mut Ui, p: Palette, label: &str, kind: ButtonKind) -> Respons
         let down = response.is_pointer_button_down_on();
         let (fill, text) = match kind {
             ButtonKind::Primary => (p.accent, p.on_accent),
-            ButtonKind::Destructive => (p.red, Color32::WHITE),
+            ButtonKind::Destructive => (p.red, p.on_red()),
             ButtonKind::Secondary => (p.control, p.fg),
             ButtonKind::Quiet => (Color32::TRANSPARENT, p.secondary),
         };
@@ -429,6 +430,31 @@ pub fn stepper(
     changed
 }
 
+/// The surface of an editable field: filled, with an accent ring while the
+/// editor `id` holds the keyboard. A field whose text cannot be used is
+/// outlined in the problem colour instead.
+pub fn field_frame(ui: &Ui, p: Palette, rect: Rect, id: Id, valid: bool) {
+    let focused = ui.memory(|memory| memory.has_focus(id));
+    let radius = metrics::CONTROL_RADIUS;
+    let painter = ui.painter();
+    painter.rect_filled(rect, radius, p.control);
+    let ink = if valid { p.accent } else { p.red };
+    if focused {
+        painter.rect_stroke(
+            rect.expand(2.5),
+            radius.saturating_add(2),
+            Stroke::new(3.0, theme::tint(ink, 0.28)),
+            StrokeKind::Inside,
+        );
+    }
+    let outline = if focused || !valid {
+        Stroke::new(1.0, ink)
+    } else {
+        p.hairline()
+    };
+    painter.rect_stroke(rect, radius, outline, StrokeKind::Inside);
+}
+
 /// A filled single-line field with an accent focus ring. `label` is its
 /// accessible name; the caller owns `id` so focus can be requested by identity.
 pub fn text_field(
@@ -441,22 +467,7 @@ pub fn text_field(
     width: f32,
 ) -> Response {
     let (_, rect) = ui.allocate_space(vec2(width, metrics::CONTROL_HEIGHT));
-    let focused = ui.memory(|memory| memory.has_focus(id));
-    let radius = metrics::CONTROL_RADIUS;
-    ui.painter().rect_filled(rect, radius, p.control);
-    if focused {
-        ui.painter().rect_stroke(
-            rect.expand(2.5),
-            radius.saturating_add(2),
-            Stroke::new(3.0, theme::tint(p.accent, 0.28)),
-            StrokeKind::Inside,
-        );
-        ui.painter()
-            .rect_stroke(rect, radius, Stroke::new(1.0, p.accent), StrokeKind::Inside);
-    } else {
-        ui.painter()
-            .rect_stroke(rect, radius, p.hairline(), StrokeKind::Inside);
-    }
+    field_frame(ui, p, rect, id, true);
     let inner = rect.shrink2(vec2(10.0, 0.0));
     let response = place(
         ui,
@@ -557,27 +568,63 @@ pub fn sheet<R>(
 
 /// The title row of a sheet. Returns true when its close control is activated.
 pub fn sheet_header(ui: &mut Ui, p: Palette, title: &str, close_label: Option<&str>) -> bool {
+    header(ui, p, title, None, close_label).1
+}
+
+/// The title row of a screen reached from another inside the same sheet: a
+/// back control leads the title. Returns whether back and close were activated.
+pub fn sheet_back_header(
+    ui: &mut Ui,
+    p: Palette,
+    title: &str,
+    back_label: &str,
+    close_label: &str,
+) -> (bool, bool) {
+    header(ui, p, title, Some(back_label), Some(close_label))
+}
+
+fn header(
+    ui: &mut Ui,
+    p: Palette,
+    title: &str,
+    back_label: Option<&str>,
+    close_label: Option<&str>,
+) -> (bool, bool) {
     let (_, rect) = ui.allocate_space(vec2(ui.available_width(), 52.0));
+    let control = |ui: &mut Ui, x: f32, icon: Icon, label: &str| {
+        place(
+            ui,
+            Rect::from_center_size(Pos2::new(x, rect.center().y), Vec2::splat(28.0)),
+            Layout::left_to_right(Align::Center),
+            ("sheet-header", label),
+            |ui| icons::button(ui, icon, label).clicked(),
+        )
+    };
+    // Created before the close control, so Tab reaches it first.
+    let back =
+        back_label.is_some_and(|label| control(ui, rect.left() + 26.0, Icon::ChevronLeft, label));
     ui.painter().text(
-        Pos2::new(rect.left() + 20.0, rect.center().y),
+        Pos2::new(
+            rect.left() + if back_label.is_some() { 46.0 } else { 20.0 },
+            rect.center().y,
+        ),
         Align2::LEFT_CENTER,
         title,
         theme::semibold(15.0),
         p.fg,
     );
-    let Some(close_label) = close_label else {
-        return false;
-    };
-    place(
-        ui,
-        Rect::from_center_size(
-            Pos2::new(rect.right() - 26.0, rect.center().y),
-            Vec2::splat(28.0),
-        ),
-        Layout::left_to_right(Align::Center),
-        ("sheet-close", title),
-        |ui| icons::button(ui, Icon::Close, close_label).clicked(),
-    )
+    let close =
+        close_label.is_some_and(|label| control(ui, rect.right() - 26.0, Icon::Close, label));
+    (back, close)
+}
+
+/// The action bar that closes a sheet, set off by a hairline. Returns the area
+/// for its controls: tertiary actions lead, the confirming action trails.
+pub fn sheet_footer(ui: &mut Ui, p: Palette) -> Rect {
+    let (_, footer) = ui.allocate_space(vec2(ui.available_width(), 60.0));
+    ui.painter()
+        .line_segment([footer.left_top(), footer.right_top()], p.hairline());
+    footer.shrink2(vec2(16.0, 0.0))
 }
 
 /// Left padding, content, right padding: the standard sheet gutter.
@@ -716,11 +763,7 @@ fn menu_row(
     let painter = ui.painter();
     let (text, hint) = if highlighted {
         painter.rect_filled(rect, 6, if destructive { p.red } else { p.accent });
-        let ink = if destructive {
-            Color32::WHITE
-        } else {
-            p.on_accent
-        };
+        let ink = if destructive { p.on_red() } else { p.on_accent };
         (ink, ink)
     } else if destructive {
         (p.red, p.muted)

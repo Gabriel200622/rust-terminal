@@ -109,8 +109,43 @@ impl Cache {
                         top + (self.cell.y - run.galley.size().y) * 0.5,
                     ),
                     run.galley.clone(),
-                    p.fg,
+                    p.terminal_fg,
                 );
+            }
+        }
+        // Repaint selected glyphs through a cell-aligned clip, preserving cached
+        // shaping when selection changes (including wide and combining glyphs).
+        if let (Some(range), Some(ink)) = (selection, p.selection_text) {
+            for (y, row) in self.rows.iter().enumerate() {
+                let line = y as i32 - self.display_offset as i32;
+                let selected =
+                    (0..usize::from(self.columns)).filter(|&x| range.contains(Point::new(line, x)));
+                let mut spans = selected.peekable();
+                while let Some(start) = spans.next() {
+                    let mut end = start + 1;
+                    while spans.peek() == Some(&end) {
+                        spans.next();
+                        end += 1;
+                    }
+                    let top = rect.top() + y as f32 * self.cell.y;
+                    let clip = Rect::from_min_size(
+                        Pos2::new(rect.left() + start as f32 * self.cell.x, top),
+                        Vec2::new((end - start) as f32 * self.cell.x, self.cell.y),
+                    )
+                    .intersect(rect);
+                    for run in &row.runs {
+                        painter
+                            .with_clip_rect(clip)
+                            .galley_with_override_text_color(
+                                Pos2::new(
+                                    rect.left() + run.column as f32 * self.cell.x,
+                                    top + (self.cell.y - run.galley.size().y) * 0.5,
+                                ),
+                                run.galley.clone(),
+                                ink,
+                            );
+                    }
+                }
             }
         }
         if let Some(link) = hovered_link {
@@ -132,7 +167,7 @@ impl Cache {
                         Pos2::new(rect.left() + start as f32 * self.cell.x, y),
                         Pos2::new(rect.left() + end as f32 * self.cell.x, y),
                     ],
-                    Stroke::new(1.0, p.fg),
+                    Stroke::new(1.0, p.terminal_fg),
                 );
             }
         }
@@ -153,17 +188,35 @@ impl Cache {
                         painter.rect_filled(
                             Rect::from_min_size(pos, Vec2::new(1.5, self.cell.y)),
                             0,
-                            p.accent,
+                            self.cursor_color,
                         );
                     }
                     CursorShape::Underline => {
                         painter.line_segment(
                             [cursor.left_bottom(), cursor.right_bottom()],
-                            Stroke::new(2.0, p.accent),
+                            Stroke::new(2.0, self.cursor_color),
                         );
                     }
                     _ => {
-                        painter.rect_filled(cursor, 1, p.accent.gamma_multiply(0.42));
+                        if let Some(ink) = p.cursor_text {
+                            painter.rect_filled(cursor, 1, self.cursor_color);
+                            if let Some(row) = self.rows.get(y) {
+                                for run in &row.runs {
+                                    painter
+                                        .with_clip_rect(cursor.intersect(rect))
+                                        .galley_with_override_text_color(
+                                            Pos2::new(
+                                                rect.left() + run.column as f32 * self.cell.x,
+                                                pos.y + (self.cell.y - run.galley.size().y) * 0.5,
+                                            ),
+                                            run.galley.clone(),
+                                            ink,
+                                        );
+                                }
+                            }
+                        } else {
+                            painter.rect_filled(cursor, 1, self.cursor_color.gamma_multiply(0.42));
+                        }
                     }
                 }
             } else if !focused {

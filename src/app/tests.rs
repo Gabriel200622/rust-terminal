@@ -2136,3 +2136,133 @@ fn group_creation_waits_for_restoration_instead_of_being_replaced() {
     assert_eq!(app.controller.model().groups()[0].name(), "Queued");
     assert!(app.deferred_actions.is_empty());
 }
+
+#[test]
+fn custom_theme_preferences_survive_writer_shutdown_and_reopen() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    app.ephemeral = false;
+    let ctx = egui::Context::default();
+    app.complete_startup(&ctx, loaded(app.config.clone(), Model::default()));
+    let mut configured = app.config.clone();
+    configured
+        .custom_themes
+        .push(crate::terminal_theme::CustomTheme {
+            id: "custom:1".into(),
+            name: "Saved theme".into(),
+            colors: crate::terminal_theme::bundled("Dracula").unwrap().colors,
+        });
+    configured.theme = config::Theme::Palette("custom:1".into());
+    app.action(&ctx, Action::Preferences(configured.clone()));
+    eframe::App::on_exit(&mut app);
+    let saved = Config::load(&app.config_path).unwrap();
+    assert_eq!(saved, configured);
+    let (mut reopened, _sender) = fixture(root.path());
+    reopened.ephemeral = false;
+    reopened.complete_startup(&ctx, loaded(saved, Model::default()));
+    assert_eq!(
+        Palette::for_config(&reopened.config).bg,
+        crate::theme::color(0x282a36)
+    );
+    let mut removed = reopened.config.clone();
+    removed.custom_themes.clear();
+    removed.theme = config::Theme::Graphite;
+    reopened.action(&ctx, Action::Preferences(removed));
+    eframe::App::on_exit(&mut reopened);
+    let saved = Config::load(&reopened.config_path).unwrap();
+    assert!(saved.custom_themes.is_empty());
+    assert_eq!(saved.theme, config::Theme::Graphite);
+}
+
+#[test]
+fn theme_browser_escape_returns_to_preferences_before_closing_overlay() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    app.startup = None;
+    app.ui.overlay = OverlayState::Settings;
+    app.ui.preferences.open = true;
+    let ctx = egui::Context::default();
+    assert!(press(
+        &mut app,
+        &ctx,
+        key(egui::Key::Escape, None, egui::Modifiers::NONE)
+    ));
+    assert_eq!(app.ui.overlay, OverlayState::Settings);
+    assert!(!app.ui.preferences.open);
+    press(
+        &mut app,
+        &ctx,
+        key(egui::Key::Escape, None, egui::Modifiers::NONE),
+    );
+    assert_eq!(app.ui.overlay, OverlayState::None);
+}
+
+#[test]
+fn theme_color_popup_escape_keeps_preferences_open() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    app.startup = None;
+    app.ui.overlay = OverlayState::Settings;
+    app.ui.preferences.open = true;
+    let ctx = egui::Context::default();
+    egui::Popup::open_id(&ctx, egui::Id::new("test-color-picker"));
+    assert!(press(
+        &mut app,
+        &ctx,
+        key(egui::Key::Escape, None, egui::Modifiers::NONE)
+    ));
+    assert!(!egui::Popup::is_any_open(&ctx));
+    assert_eq!(app.ui.overlay, OverlayState::Settings);
+    assert!(app.ui.preferences.open);
+}
+
+#[test]
+fn a_changed_theme_draft_survives_closing_and_other_overlays() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    app.startup = None;
+    let ctx = egui::Context::default();
+    app.ui.overlay = OverlayState::Settings;
+    app.ui.preferences = ui::theme_browser::State::with_changed_draft(&app.config);
+    // The preferences shortcut asks about the draft instead of closing.
+    app.action(&ctx, Action::Settings);
+    assert_eq!(app.ui.overlay, OverlayState::Settings);
+    assert!(app.ui.preferences.editing());
+    // Escape answers with "keep editing"; it never discards by itself.
+    for _ in 0..3 {
+        press(
+            &mut app,
+            &ctx,
+            key(egui::Key::Escape, None, egui::Modifiers::NONE),
+        );
+        assert_eq!(app.ui.overlay, OverlayState::Settings);
+        assert!(app.ui.preferences.editing());
+    }
+    // Another overlay sets the draft aside; both ways back return to it.
+    app.action(&ctx, Action::Palette);
+    assert_eq!(app.ui.overlay, OverlayState::Palette);
+    app.action(&ctx, Action::Settings);
+    assert_eq!(app.ui.overlay, OverlayState::Settings);
+    assert!(app.ui.preferences.editing());
+    app.action(&ctx, Action::Palette);
+    app.action(&ctx, Action::Themes);
+    assert_eq!(app.ui.overlay, OverlayState::Settings);
+    assert!(app.ui.preferences.editing());
+}
+
+#[test]
+fn preferences_reopen_on_the_general_settings_and_themes_on_the_catalog() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    app.startup = None;
+    let ctx = egui::Context::default();
+    app.action(&ctx, Action::Themes);
+    assert_eq!(app.ui.overlay, OverlayState::Settings);
+    assert!(app.ui.preferences.open);
+    // Without a draft the shortcut closes, and the next opening starts over.
+    app.action(&ctx, Action::Settings);
+    assert_eq!(app.ui.overlay, OverlayState::None);
+    app.action(&ctx, Action::Settings);
+    assert_eq!(app.ui.overlay, OverlayState::Settings);
+    assert!(!app.ui.preferences.open);
+}

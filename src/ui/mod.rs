@@ -7,6 +7,8 @@ pub mod helpers;
 pub mod palette;
 pub mod preferences;
 pub mod search;
+pub mod theme_browser;
+mod theme_editor;
 pub mod workspace;
 use crate::{config::Config, terminal::Cache};
 use neptune_model::{
@@ -39,6 +41,7 @@ pub enum OverlayState {
 #[derive(Default)]
 pub struct UiState {
     pub overlay: OverlayState,
+    pub preferences: theme_browser::State,
     pub palette_query: String,
     /// Highlighted command; reset whenever the query changes.
     pub palette_selected: usize,
@@ -95,6 +98,7 @@ pub enum Action {
     },
     Disconnect(WorkspaceId),
     Settings,
+    Themes,
     Palette,
     ToggleSidebar,
     SidebarWidth(f32),
