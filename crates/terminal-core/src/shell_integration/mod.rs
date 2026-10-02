@@ -1,15 +1,51 @@
-//! Portable OSC 7 cwd and OSC 133 prompt tracking, independent of /proc polling.
+//! Portable OSC 7 / OSC 9;9 cwd and OSC 133 prompt tracking, independent of
+//! /proc polling, plus the prompt hooks that make Windows shells report.
 use super::*;
 
-/// A bounded OSC 7 observer. Ordinary printable runs are skipped using memchr;
-/// only a matching sequence allocates. VT parsing still belongs to Alacritty.
+/// PowerShell's location is not its process directory, so only the shell can
+/// report it. Wrap whichever prompt the user's profile defined; the report is
+/// written beside the prompt string so PSReadLine's prompt width is unchanged.
+#[cfg(windows)]
+const POWERSHELL_REPORT: &str = "$global:__neptune_prompt = $function:prompt; \
+function global:prompt { \
+$l = $executionContext.SessionState.Path.CurrentLocation; \
+if ($l.Provider.Name -eq 'FileSystem') { \
+[Console]::Write([string][char]27 + ']9;9;' + $l.ProviderPath + [string][char]27 + '\\') }; \
+& $global:__neptune_prompt }";
+
+/// Windows shells report no directory by default. Add an OSC 9;9 report to
+/// each prompt of a plain local cmd or PowerShell without editing user files.
+#[cfg(windows)]
+pub(super) fn report_cwd(command: &mut CommandBuilder, shell: &str) {
+    let name = std::path::Path::new(shell)
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().to_ascii_lowercase());
+    match name.as_deref() {
+        // A default-program builder cannot take arguments; it is ComSpec.
+        Some("pwsh" | "powershell") if !command.is_default_prog() => {
+            command.args(["-NoExit", "-Command", POWERSHELL_REPORT]);
+        }
+        Some("cmd") => {
+            let prompt = command
+                .get_env("PROMPT")
+                .map(|prompt| prompt.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "$P$G".into());
+            command.env("PROMPT", format!("$E]9;9;$P$E\\{prompt}"));
+        }
+        _ => {}
+    }
+}
+
+/// A bounded observer of OSC 7 and ConEmu/Windows Terminal OSC 9;9 directory
+/// reports. Ordinary printable runs are skipped using memchr; only a matching
+/// sequence allocates. VT parsing still belongs to Alacritty.
 #[derive(Default)]
-pub(super) struct Osc7Tracker {
+pub(super) struct CwdTracker {
     state: u8,
     pub(super) bytes: Vec<u8>,
 }
 
-impl Osc7Tracker {
+impl CwdTracker {
     pub(super) fn advance(&mut self, mut bytes: &[u8]) -> Option<PathBuf> {
         let mut path = None;
         while !bytes.is_empty() {
@@ -26,6 +62,7 @@ impl Osc7Tracker {
             match self.state {
                 1 => {
                     self.state = if byte == b']' {
+                        self.bytes.clear();
                         2
                     } else if byte == 0x1b {
                         1
@@ -33,57 +70,80 @@ impl Osc7Tracker {
                         0
                     }
                 }
+                2 if byte == 7 => {
+                    path = decode_report(&self.bytes).or(path);
+                    self.state = 0;
+                }
+                2 if byte == 0x1b => self.state = 3,
                 2 => {
-                    self.state = if byte == b'7' {
-                        3
-                    } else if byte == 7 {
-                        0
-                    } else {
-                        6
+                    if self.bytes.len() < MAX_OSC {
+                        self.bytes.push(byte);
+                    }
+                    if self.bytes.len() == MAX_OSC || !is_report_prefix(&self.bytes) {
+                        self.bytes.clear();
+                        self.state = 4;
                     }
                 }
                 3 => {
-                    self.state = if byte == b';' {
-                        self.bytes.clear();
-                        4
-                    } else {
-                        6
-                    };
-                }
-                4 if byte == 7 => {
-                    path = decode_cwd(&self.bytes).or(path);
-                    self.state = 0;
-                }
-                4 if byte == 0x1b => self.state = 5,
-                4 => {
-                    if self.bytes.len() < MAX_OSC {
-                        self.bytes.push(byte);
-                    } else {
-                        self.bytes.clear();
-                        self.state = 6;
-                    }
-                }
-                5 => {
                     if byte == b'\\' {
-                        path = decode_cwd(&self.bytes).or(path);
+                        path = decode_report(&self.bytes).or(path);
                     }
                     self.state = 0;
                 }
-                6 => {
+                4 => {
                     self.state = if byte == 7 {
                         0
                     } else if byte == 0x1b {
-                        7
+                        5
                     } else {
-                        6
+                        4
                     }
                 }
-                7 => self.state = if byte == b'\\' { 0 } else { 6 },
+                5 => self.state = if byte == b'\\' { 0 } else { 4 },
                 _ => self.state = 0,
             }
         }
         path
     }
+}
+
+const REPORTS: [&[u8]; 2] = [b"7;", b"9;9;"];
+
+fn is_report_prefix(bytes: &[u8]) -> bool {
+    REPORTS
+        .iter()
+        .any(|prefix| bytes.iter().zip(*prefix).all(|(a, b)| a == b))
+}
+
+fn decode_report(bytes: &[u8]) -> Option<PathBuf> {
+    match bytes.strip_prefix(REPORTS[0]) {
+        Some(uri) => decode_cwd(uri),
+        None => decode_path(bytes.strip_prefix(REPORTS[1])?),
+    }
+    .filter(|path| is_local_report(path))
+}
+
+/// Any program's output can claim a directory, and splits/restoration later
+/// probe it and start shells there. Refuse Windows UNC and device paths so
+/// terminal output cannot make Neptune connect to a network share. Drive paths
+/// and rooted paths (including remote hosts' Unix paths) remain valid.
+fn is_local_report(path: &std::path::Path) -> bool {
+    use std::path::{Component, Prefix};
+    match path.components().next() {
+        Some(Component::Prefix(prefix)) => matches!(prefix.kind(), Prefix::Disk(_)),
+        _ => true,
+    }
+}
+
+/// OSC 9;9 carries a native path, optionally quoted, rather than a URI.
+pub(super) fn decode_path(bytes: &[u8]) -> Option<PathBuf> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    let text = text
+        .strip_prefix('"')
+        .and_then(|text| text.strip_suffix('"'))
+        .unwrap_or(text);
+    let path = PathBuf::from(text);
+    (!text.contains('\0') && path.is_absolute()).then_some(path)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

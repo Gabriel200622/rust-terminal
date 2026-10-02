@@ -22,10 +22,16 @@ hidden sessions. Acknowledge hidden
 sessions when they become visible. Acknowledging after a snapshot can lose a
 change that arrived between that snapshot and acknowledgement.
 
-`SessionMetadata::reported_cwd` retains the last valid OSC 7 directory separately
-from `cwd`, which can also come from local process polling. Remote clients use
-the explicit report because their local process directory does not identify the
-remote shell's directory. Each fresh session starts with no report.
+`SessionMetadata::reported_cwd` retains the last valid OSC 7 or OSC 9;9
+directory separately from `cwd`, which can also come from local process polling
+(Linux only). Remote clients use the explicit report because their local process
+directory does not identify the remote shell's directory. Each fresh session
+starts with no report. On Windows, a local `cmd` or PowerShell started without
+explicit arguments reports OSC 9;9 from each prompt: cmd through a prefixed
+`PROMPT`, PowerShell through `-NoExit -Command` wrapping the profile's prompt.
+PowerShell's location is not its process directory, so polling cannot replace it.
+Because any program's output can claim a directory, Windows UNC and device paths
+are refused so a report cannot make later splits or restores reach a network share.
 
 Each session has a reader, writer, and parser/process worker. The reader uses
 pooled 64 KiB buffers and an eight-message output channel. Parsing releases the

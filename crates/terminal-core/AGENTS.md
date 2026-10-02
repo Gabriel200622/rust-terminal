@@ -8,7 +8,8 @@ remain private to `session`, `engine`, `runtime`, and `shell_integration`.
   backpressure and events; `runtime/mod.rs`: reader/writer/parser workers.
 - `engine.rs`: backend mapping and damage-aware snapshot extraction.
 - `platform/mod.rs`: interruptible Unix I/O, Linux cwd polling, ConPTY teardown.
-- `shell_integration/mod.rs`: portable OSC 7 and OSC 133 tracking.
+- `shell_integration/mod.rs`: portable OSC 7/9;9 and OSC 133 tracking, Windows
+  shell prompt reporting.
 - `tests.rs`: headless parser/API contracts; `tests/session.rs` and
   `tests/windows_conpty.rs`: actual transport/process contracts.
 

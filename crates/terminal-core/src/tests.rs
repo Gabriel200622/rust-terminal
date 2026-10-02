@@ -349,7 +349,7 @@ fn kitty_keyboard_modes_activate_and_the_stack_restores_previous_flags() {
 
 #[test]
 fn osc7_survives_fragmentation_and_rejects_invalid_uris() {
-    let mut tracker = Osc7Tracker::default();
+    let mut tracker = CwdTracker::default();
     assert!(
         tracker
             .advance(b"normal text\x1b]0;title\x07\x1b]7;file://local")
@@ -367,12 +367,51 @@ fn osc7_survives_fragmentation_and_rejects_invalid_uris() {
 
 #[test]
 fn oversized_osc7_has_bounded_storage_and_recovers() {
-    let mut tracker = Osc7Tracker::default();
+    let mut tracker = CwdTracker::default();
     let mut input = b"\x1b]7;file://host/".to_vec();
     input.extend(vec![b'x'; MAX_OSC * 2]);
     input.extend_from_slice(b"\x07\x1b]7;file://host/tmp\x07");
     assert_eq!(tracker.advance(&input), Some(PathBuf::from("/tmp")));
     assert!(tracker.bytes.capacity() <= MAX_OSC);
+}
+
+#[test]
+fn osc9_9_reports_native_paths_and_ignores_other_osc9() {
+    let dir = if cfg!(windows) {
+        r"C:\Work dir"
+    } else {
+        "/work dir"
+    };
+    let mut tracker = CwdTracker::default();
+    assert!(
+        tracker
+            .advance(b"\x1b]9;4;1;50\x07\x1b]9;Done\x07\x1b]9;9")
+            .is_none()
+    );
+    assert_eq!(
+        tracker.advance(format!(";\"{dir}\"\x1b\\").as_bytes()),
+        Some(PathBuf::from(dir))
+    );
+    assert_eq!(
+        tracker.advance(format!("\x1b]9;9;{dir}\x07").as_bytes()),
+        Some(PathBuf::from(dir))
+    );
+    assert!(decode_path(b"relative").is_none());
+    assert!(decode_path(b"/tmp\0").is_none());
+    if cfg!(windows) {
+        // Output must not steer later splits/restores onto a network share.
+        for report in [
+            &b"\x1b]9;9;\\\\evil\\share\x07"[..],
+            b"\x1b]9;9;\\\\?\\UNC\\evil\\share\x07",
+            b"\x1b]7;file://x//evil/share\x07",
+        ] {
+            assert!(tracker.advance(report).is_none());
+        }
+        assert_eq!(
+            tracker.advance(b"\x1b]7;file://neptune/home/dev\x07"),
+            Some(PathBuf::from("/home/dev"))
+        );
+    }
 }
 
 /// A parser-backed fixture exercises the public contract without PTYs,
