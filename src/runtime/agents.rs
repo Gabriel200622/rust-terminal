@@ -801,6 +801,9 @@ mod tests {
                 continue;
             }
             let root = tempfile::tempdir().unwrap();
+            // Exercise the fixture's user config without host-wide interactive
+            // setup (CI's compinit can prompt before the test command is read).
+            std::fs::write(root.path().join(".zshenv"), "unsetopt GLOBAL_RCS\n").unwrap();
             std::fs::write(
                 root.path().join(".bashrc"),
                 "export PATH=/usr/bin:/bin\nexport NEPTUNE_USER_CONFIG=loaded\n",
