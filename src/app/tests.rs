@@ -62,6 +62,58 @@ fn loaded(config: Config, model: Model) -> Startup {
 }
 
 #[test]
+fn window_corners_follow_native_window_state() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    ctx.set_fonts(crate::platform::fonts::bundled_definitions());
+    let mut frame = eframe::Frame::_new_kittest();
+    let maximized_radius = if cfg!(target_os = "macos") {
+        metrics::WINDOW_RADIUS
+    } else {
+        0
+    };
+    for size in [egui::vec2(900.0, 640.0), egui::vec2(640.0, 480.0)] {
+        for (maximized, fullscreen, radius) in [
+            (false, false, metrics::WINDOW_RADIUS),
+            (true, false, maximized_radius),
+            (false, true, 0),
+            (true, true, 0),
+            (false, false, metrics::WINDOW_RADIUS),
+        ] {
+            let bounds = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+            let mut input = egui::RawInput {
+                screen_rect: Some(bounds),
+                ..Default::default()
+            };
+            let viewport = input.viewports.get_mut(&egui::ViewportId::ROOT).unwrap();
+            viewport.maximized = Some(maximized);
+            viewport.fullscreen = Some(fullscreen);
+            let mut output = ctx.run_ui(input, |ui| {
+                eframe::App::ui(&mut app, ui, &mut frame);
+            });
+            output.textures_delta.clear();
+            let chrome = Palette::for_config(&app.config).chrome;
+            let background = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Rect(rect) if rect.rect == bounds && rect.fill == chrome => {
+                        Some(rect)
+                    }
+                    _ => None,
+                })
+                .expect("the application paints its window background");
+            assert_eq!(background.corner_radius, egui::CornerRadius::same(radius));
+        }
+    }
+    assert_eq!(
+        eframe::App::clear_color(&app, &egui::Visuals::default()),
+        egui::Rgba::TRANSPARENT.to_array()
+    );
+}
+
+#[test]
 fn window_zoom_preserves_native_window_dimensions() {
     let root = tempfile::tempdir().unwrap();
     let (mut app, _sender) = fixture(root.path());
@@ -1747,7 +1799,12 @@ fn a_remote_split_inherits_the_reported_host_directory_and_keeps_its_local_direc
     let second = app.controller.model().active_pane().unwrap();
     assert_ne!(second, pane);
     assert_eq!(app.controller.model().pane(second).unwrap().cwd(), cwd);
-    while app.sessions.usage().running != 2 || lines("args").lines().count() != 2 {
+    // The argument header is written first. Wait for both complete bootstrap
+    // records before checking the split's remote directory.
+    while app.sessions.usage().running != 2
+        || lines("args").lines().count() != 2
+        || lines("commands").matches('\0').count() != 2
+    {
         app.poll(&ctx);
         assert!(
             Instant::now() < deadline,

@@ -119,25 +119,47 @@ fn main() -> anyhow::Result<()> {
         window.state.inner_size = size;
         window.state.maximized = false;
     }
-    let options = eframe::NativeOptions {
+    eframe::run_native(
+        "Pace",
+        native_options(&window.state),
+        Box::new(move |cc| Ok(Box::new(app::App::new(cc, launch, window)))),
+    )
+    .map_err(|e| anyhow::anyhow!("Cannot start native renderer: {e}"))
+}
+
+fn native_options(window: &window_state::WindowState) -> eframe::NativeOptions {
+    let mut options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("Pace")
             .with_app_id("dev.pace.terminal")
             .with_icon(native_icon())
-            .with_inner_size(window.state.inner_size)
-            .with_maximized(window.state.maximized)
+            .with_inner_size(window.inner_size)
+            .with_maximized(window.maximized)
             .with_min_inner_size([640.0, 400.0])
-            .with_transparent(cfg!(target_os = "linux"))
+            .with_transparent(true)
             .with_decorations(false),
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };
-    eframe::run_native(
-        "Pace",
-        options,
-        Box::new(move |cc| Ok(Box::new(app::App::new(cc, launch, window)))),
-    )
-    .map_err(|e| anyhow::anyhow!("Cannot start native renderer: {e}"))
+    if cfg!(target_os = "windows") {
+        options.wgpu_options.wgpu_setup = windows_gpu_setup();
+    }
+    options
+}
+
+fn windows_gpu_setup() -> eframe::egui_wgpu::WgpuSetup {
+    use eframe::{egui_wgpu::WgpuSetupCreateNew, wgpu};
+
+    let mut setup = WgpuSetupCreateNew::without_display_handle();
+    // HWND swapchains are opaque. DirectComposition preserves the alpha in
+    // our painted corners; use DX12 so an opaque Vulkan surface cannot win.
+    setup.instance_descriptor.backends = wgpu::Backends::DX12;
+    setup
+        .instance_descriptor
+        .backend_options
+        .dx12
+        .presentation_system = wgpu::Dx12SwapchainKind::DxgiFromVisual;
+    setup.into()
 }
 
 fn native_icon() -> eframe::egui::IconData {
@@ -175,5 +197,35 @@ fn native_icon() -> eframe::egui::IconData {
         rgba,
         width: 128,
         height: 128,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_window_supports_transparent_corners() {
+        let options = native_options(&window_state::WindowState::default());
+        assert_eq!(options.viewport.transparent, Some(true));
+        assert_eq!(options.viewport.decorations, Some(false));
+    }
+
+    #[test]
+    fn windows_surface_supports_alpha_composition() {
+        use eframe::wgpu::{Backends, Dx12SwapchainKind};
+
+        let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = windows_gpu_setup() else {
+            panic!("the desktop creates its GPU setup");
+        };
+        assert_eq!(setup.instance_descriptor.backends, Backends::DX12);
+        assert_eq!(
+            setup
+                .instance_descriptor
+                .backend_options
+                .dx12
+                .presentation_system,
+            Dx12SwapchainKind::DxgiFromVisual
+        );
     }
 }

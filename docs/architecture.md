@@ -41,6 +41,12 @@ See [the development contract](../AGENTS.md), [desktop ownership](../src/AGENTS.
 
 `eframe` supports native Linux, macOS, and Windows applications and a `wgpu` renderer; see [the framework documentation](https://github.com/emilk/egui/blob/master/crates/eframe/README.md). `wgpu` selects a backend available on the host, normally Vulkan on Linux, Direct3D 12 on Windows, or Metal on macOS; see [its supported-platform matrix](https://github.com/gfx-rs/wgpu/blob/trunk/README.md#supported-platforms). A GPU-backed framework alone does not guarantee low latency or high throughput: the terminal paint path must also be measured.
 
+Pace selects Direct3D 12 with a DirectComposition visual on Windows so the GPU
+surface can preserve alpha at the rounded window corners. The default HWND
+swapchain is opaque; see [wgpu's presentation options](https://docs.rs/wgpu/30.0.1/wgpu/enum.Dx12SwapchainKind.html).
+Linux and macOS retain the framework's default backend selection. This
+configuration needs native Windows visual verification as well as compilation.
+
 ## Performance strategy
 
 - Keep terminal I/O independent of rendering. Parse buffered PTY reads and coalesce repaint notifications rather than posting an event for every byte.
