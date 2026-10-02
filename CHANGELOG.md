@@ -9,10 +9,35 @@ the signed desktop update manifest; do not maintain a second release-notes file.
 
 ### What's New
 
+## [0.1.2] - 2026-10-02
+
+### What's New
+
 - See which terminal needs you. Programs that send OSC 9, 99 or 777 alerts ring
   their pane, show the latest alert and an unread count on their workspace, and
   collect in a notification popover that opens the right terminal. Desktop
   banners are optional.
+
+- Download native installers for macOS Apple Silicon and Intel, Windows x64,
+  and Linux x64 from neptune.rs, with checksums and build provenance.
+- Choose Stable or Beta updates in Preferences. Neptune checks in the background
+  and offers verified downloads without interrupting your running shells.
+- Organize independent terminals into workspaces and groups, restore directories
+  and layouts with fresh shells, and connect remote workspaces using OpenSSH.
+- Resume supported coding-agent sessions when reopening a workspace.
+- Include bundled library license notices in Linux portable packages when Ubuntu
+  exposes system libraries through `/lib` aliases.
+
+- Verify complete private release drafts without requiring publication.
+
+### Known limitations
+
+- The Windows installer is unsigned while SignPath OSS setup is pending; Windows
+  may show an unverified-publisher or SmartScreen warning.
+- Workspace restoration starts fresh shells and SSH connections. Running commands
+  and process memory are not restored.
+- Kitty graphics and comprehensive complex-script shaping are not supported.
+  Keypad identity and some keyboard-layout information depend on the window backend.
 
 ## [0.1.1] - 2026-10-02
 
