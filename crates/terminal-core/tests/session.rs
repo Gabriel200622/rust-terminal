@@ -479,10 +479,25 @@ fn activity(session: &TerminalSession) -> terminal_core::ProcessActivity {
 #[test]
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn process_activity_distinguishes_idle_foreground_background_and_stopped_jobs() {
+    process_activity_tracks_interactive_jobs("/bin/sh", Vec::new());
+}
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn process_activity_tracks_interactive_bash_jobs() {
+    process_activity_tracks_interactive_jobs(
+        "/bin/bash",
+        vec!["--noprofile".into(), "--norc".into()],
+    );
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn process_activity_tracks_interactive_jobs(shell_path: &str, args: Vec<String>) {
     use terminal_core::ProcessActivity::{Idle, Running};
     let session = TerminalSession::spawn(
         SessionOptions {
-            shell: Some("/bin/sh".into()),
+            shell: Some(shell_path.into()),
+            args,
             env: vec![("PS1".into(), "ACTIVITY_READY> ".into())],
             ..SessionOptions::default()
         },
@@ -491,23 +506,38 @@ fn process_activity_distinguishes_idle_foreground_background_and_stopped_jobs() 
     .unwrap();
     wait_for(|| screen(&session).contains("ACTIVITY_READY>"));
     assert_eq!(activity(&session), Idle);
-    session.write(b"sleep 30\r").unwrap();
-    wait_for(|| activity(&session) == Running);
+    // A child can be detected between fork and foreground/interrupt setup.
+    // Its output proves the job has actually started before we send Ctrl+C.
+    session
+        .write(b"sh -c 'printf \"FOREGROUND_%s\\n\" ready; exec sleep 30'\r")
+        .unwrap();
+    wait_for(|| screen(&session).contains("FOREGROUND_ready"));
+    assert_eq!(activity(&session), Running);
+    let prompts = session.history_text().matches("ACTIVITY_READY>").count();
     session.write(b"\x03").unwrap();
+    // No child processes does not mean the shell has finished recovering from
+    // SIGINT. Wait for its next prompt before writing another command.
+    wait_for(|| session.history_text().matches("ACTIVITY_READY>").count() > prompts);
     wait_for(|| activity(&session) == Idle);
     // Wait for the marker rather than echoed input; the child is in place.
+    let prompts = session.history_text().matches("ACTIVITY_READY>").count();
     session
         .write(b"sleep 30 & job=$!; printf 'BACKGROUND_%s\\n' ready\r")
         .unwrap();
     wait_for(|| screen(&session).contains("BACKGROUND_ready"));
+    wait_for(|| session.history_text().matches("ACTIVITY_READY>").count() > prompts);
     assert_eq!(activity(&session), Running);
+    let prompts = session.history_text().matches("ACTIVITY_READY>").count();
     session
         .write(b"kill -STOP $job; printf 'STOPPED_%s\\n' ready\r")
         .unwrap();
     wait_for(|| screen(&session).contains("STOPPED_ready"));
+    wait_for(|| session.history_text().matches("ACTIVITY_READY>").count() > prompts);
     assert_eq!(activity(&session), Running);
+    // Interactive shells can return a pending stopped status from wait before
+    // reaping the killed child. Consume statuses until that PID is gone.
     session
-        .write(b"kill -KILL $job; wait $job; printf 'FINISHED_%s\\n' ready\r")
+        .write(b"kill -KILL $job; while kill -0 $job 2>/dev/null; do wait $job; done; printf 'FINISHED_%s\\n' ready\r")
         .unwrap();
     wait_for(|| screen(&session).contains("FINISHED_ready"));
     wait_for(|| activity(&session) == Idle);
