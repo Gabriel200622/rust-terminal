@@ -10,23 +10,69 @@ const COMMANDS = [
   "cargo run --release --locked --bin neptune",
 ];
 
-const PLATFORMS = [
+export const PLATFORMS = [
   ["Linux", "Developed and verified here", "var(--green)"],
   ["macOS", "Builds and tests in CI. Native verification pending", "var(--yellow)"],
   ["Windows", "Builds and tests in CI. Native verification pending", "var(--yellow)"],
 ] as const;
 
-export function Install() {
+/** A terminal pane of commands to copy, as the window draws a quiet shell. */
+export function CommandPane({
+  commands,
+  shell = "zsh",
+  cwd = "~",
+  note,
+}: {
+  commands: readonly string[];
+  shell?: string;
+  cwd?: string;
+  /** A comment shown under the commands, never copied with them. */
+  note?: React.ReactNode;
+}) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(COMMANDS.join("\n"));
+      await navigator.clipboard.writeText(commands.join("\n"));
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1600);
     } catch {
       // Without clipboard access the commands stay selectable.
     }
   };
+  return (
+    <div className="rounded-window bg-chrome p-1.5 shadow-window">
+      <div className="relative rounded-pane bg-bg shadow-[inset_0_0_0_1px_var(--separator)]">
+        <div className="flex h-[30px] items-center justify-between pr-1 pl-3.5">
+          <span className="pt-0.5 text-[12px] font-medium text-fg">
+            {shell} <span className="ml-1.5 text-[11.5px] font-normal text-muted">{cwd}</span>
+          </span>
+          <button
+            type="button"
+            onClick={copy}
+            aria-label="Copy the commands"
+            className="group/copy flex h-7 cursor-pointer items-center gap-1.5 rounded-[7px] px-2 text-[11.5px] font-medium text-secondary hover:bg-hover hover:text-fg active:bg-pressed"
+          >
+            <Icon name={copied ? "check" : "copy"} size={13} className={copied ? "text-ok" : ""} />
+            <span aria-live="polite">{copied ? "Copied" : "Copy"}</span>
+          </button>
+        </div>
+        <pre className="term overflow-x-auto px-3 pb-3 text-fg [--term-leading:1.7] [--term-size:13.5px] select-text">
+          {commands.map((command) => (
+            <div key={command} className="whitespace-pre">
+              <span className="mr-[1ch] select-none" style={{ color: "var(--ansi-2)" }}>
+                $
+              </span>
+              {command}
+            </div>
+          ))}
+          {note && <div className="mt-[0.5lh] whitespace-pre text-muted">{note}</div>}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+export function Install({ intro }: { intro?: React.ReactNode }) {
   return (
     <section
       id="install"
@@ -37,10 +83,14 @@ export function Install() {
           Build it.
         </h2>
         <p className="mt-4 max-w-[26rem] text-[16px] text-secondary">
-          Prefer building from source? With Rust installed, it is three commands.
-          Native installers are available on the{" "}
-          <a href="/download" className="underline underline-offset-4">download page</a>
-          {" "}when a release is published.
+          {intro ?? (
+            <>
+              Prefer building from source? With Rust installed, it is three commands.
+              Native installers are available on the{" "}
+              <a href="/download" className="underline underline-offset-4">download page</a>
+              {" "}when a release is published.
+            </>
+          )}
         </p>
         <ul className="mt-8 space-y-3">
           {PLATFORMS.map(([name, status, color]) => (
@@ -57,34 +107,7 @@ export function Install() {
       </div>
 
       <div className="min-w-0">
-        <div className="rounded-window bg-chrome p-1.5 shadow-window">
-          <div className="relative rounded-pane bg-bg shadow-[inset_0_0_0_1px_var(--separator)]">
-            <div className="flex h-[30px] items-center justify-between pr-1 pl-3.5">
-              <span className="pt-0.5 text-[12px] font-medium text-fg">
-                zsh <span className="ml-1.5 text-[11.5px] font-normal text-muted">~</span>
-              </span>
-              <button
-                type="button"
-                onClick={copy}
-                aria-label="Copy the commands"
-                className="group/copy flex h-7 cursor-pointer items-center gap-1.5 rounded-[7px] px-2 text-[11.5px] font-medium text-secondary hover:bg-hover hover:text-fg active:bg-pressed"
-              >
-                <Icon name={copied ? "check" : "copy"} size={13} className={copied ? "text-ok" : ""} />
-                <span aria-live="polite">{copied ? "Copied" : "Copy"}</span>
-              </button>
-            </div>
-            <pre className="term overflow-x-auto px-3 pb-3 text-fg [--term-leading:1.7] [--term-size:13.5px] select-text">
-              {COMMANDS.map((command) => (
-                <div key={command} className="whitespace-pre">
-                  <span className="mr-[1ch] select-none" style={{ color: "var(--ansi-2)" }}>
-                    $
-                  </span>
-                  {command}
-                </div>
-              ))}
-            </pre>
-          </div>
-        </div>
+        <CommandPane commands={COMMANDS} />
         <p className="mt-4 text-[12.5px] leading-[1.5] text-muted">
           Needs a graphical desktop and a working graphics driver.{" "}
           <a
