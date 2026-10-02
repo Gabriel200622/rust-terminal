@@ -575,7 +575,6 @@ impl App {
     }
 }
 impl eframe::App for App {
-    #[cfg(target_os = "linux")]
     fn clear_color(&self, _: &egui::Visuals) -> [f32; 4] {
         egui::Rgba::TRANSPARENT.to_array()
     }
@@ -615,11 +614,9 @@ impl eframe::App for App {
         }
         let p = Palette::for_config(&self.config);
         let bounds = ui.max_rect();
-        let radius = if cfg!(target_os = "linux")
-            && ctx.input(|i| {
-                !i.viewport().maximized.unwrap_or(false)
-                    && !i.viewport().fullscreen.unwrap_or(false)
-            }) {
+        let radius = if ctx.input(|i| {
+            !i.viewport().maximized.unwrap_or(false) && !i.viewport().fullscreen.unwrap_or(false)
+        }) {
             metrics::WINDOW_RADIUS
         } else {
             0
