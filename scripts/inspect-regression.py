@@ -305,6 +305,9 @@ try:
     shot('13-scrollback-search')
     key('Escape')
     key(app_modifier + '+w')
+    # Close-time process checks finish asynchronously. Wait for the actual
+    # confirmation, not a fixed number of frames or the hidden checking phase.
+    widget('Close terminal?', 'window')
     nodes = tree('14-close-tree')
     check('close confirmation shown', any((n['role'] == 'window' and n['properties'].get('label') == 'Close terminal?' for n in nodes)), 'real native confirmation dialog appears')
     shot('14-close-confirmation')
@@ -314,6 +317,7 @@ try:
     shot('15-close-cancelled')
     if args.restore:
         click(find(nodes, 'Close window', 'button'))
+        widget('Quit Neptune?', 'window')
         close_nodes = tree('16-app-close-tree')
         shot('16-app-close-confirmation')
         try:

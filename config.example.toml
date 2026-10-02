@@ -46,7 +46,10 @@ sidebar_width = 216.0
 
 # Restore workspace organization; every terminal starts a new process.
 restore_workspaces = true
+# Always confirm terminal, workspace, SSH disconnect and app closing.
 confirm_close = true
+# Independently warn when processes are running (or cannot be checked).
+warn_running_processes = true
 # Public release checks run on a worker after startup and every 24 hours.
 # Beta includes prereleases and stable releases; neither channel downgrades.
 check_updates = true
