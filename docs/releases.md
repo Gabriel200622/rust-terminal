@@ -43,11 +43,13 @@ The owner reported that the private **0.1.2** draft failed acceptance:
 
 - macOS Apple Silicon: the Dock icon becomes visibly larger while Neptune runs;
   it has the expected size after the app closes.
-- Linux: the downloaded AppImage could not be opened directly or with Gear Lever.
-  The distribution/version and exact error still need to be recorded.
+- Linux (Ubuntu 26.04.1 x64): the downloaded AppImage lacked execute permission.
+  Enabling owner execution allowed a native launch, and the owner confirmed that
+  double-click now works. The DEB worked in owner testing. Gear Lever integration
+  has not been independently accepted.
 
-It must remain unpublished; its `v0.1.2` tag is preserved. Record reproduction,
-fixes and retest results before claiming acceptance.
+It must remain unpublished; its `v0.1.2` tag is preserved. The macOS icon still
+requires a fixed build and native retest; other platform acceptance remains open.
 Because the stable tag is already occupied, the next intended stable version is
 **0.1.3**: prepare **0.1.3-rc.1** after the fixes, then increment only the RC
 number until acceptance passes. This is the transition from the earlier workflow,
