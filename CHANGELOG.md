@@ -13,6 +13,8 @@ the signed desktop update manifest; do not maintain a second release-notes file.
   button no longer comes back from the Dock frozen.
 - Receive terminal alerts while Neptune is minimized or covered, and confirm
   before a hidden window closes running terminals.
+- See clean window corners on Windows 11. The window follows the system's own
+  rounded corners and border instead of leaving gaps inside them.
 
 ## [0.1.3-rc.1] - 2026-10-02
 
