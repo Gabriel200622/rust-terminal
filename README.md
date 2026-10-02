@@ -52,6 +52,10 @@ Workspace navigation, independent shell panes, split layouts, scrollback, termin
 
 Hold Command on macOS or Ctrl on Linux/Windows to reveal small shortcut hints in the top-right of the first nine workspace rows. The hints follow the workspace order and disappear when you release the modifier; `⇧` means Shift. Selecting a workspace with its shortcut or the palette opens its group if it is collapsed.
 
+### Notifications
+
+Processes can request attention through OSC 9, OSC 99 and OSC 777. Pane rings, sidebar unread badges and the toolbar notification popover keep track of alerts, with optional native desktop banners. See [notifications and agent setup](docs/notifications.md) for Claude Code, Codex, OpenCode, pi and shell examples.
+
 ### Workspace groups
 
 Secondary-click the **Workspaces** heading or empty sidebar space for **New workspace**, **New SSH workspace**, and **New workspace group**. A group is a folder containing local or SSH workspaces. Click its name to expand or collapse it; hover the row and click **+** to open a new shell inside it. Secondary-click the folder to create an SSH workspace, rename it, or remove the group. Double-click also renames.

@@ -4,6 +4,7 @@ pub mod chrome;
 pub mod controls;
 pub mod dialogs;
 pub mod helpers;
+pub mod notifications;
 pub mod palette;
 pub mod preferences;
 pub mod search;
@@ -28,6 +29,7 @@ pub enum OverlayState {
     #[default]
     None,
     Settings,
+    Notifications,
     Update,
     Palette,
     Rename(WorkspaceId),
@@ -97,6 +99,7 @@ pub enum Action {
     },
     Disconnect(WorkspaceId),
     Settings,
+    Notifications,
     Palette,
     ToggleSidebar,
     SidebarWidth(f32),
@@ -132,6 +135,10 @@ pub enum Action {
     Selection(PaneId, crate::terminal_view::SelectionInteraction),
     OpenLink(crate::platform::links::WebLink),
     ScrollBottom(PaneId),
+    OpenNotification(PaneId, u64),
+    DismissNotification(u64),
+    ReadNotifications,
+    ClearNotifications,
 }
 #[derive(Clone)]
 pub struct WorkspaceView {
@@ -142,6 +149,9 @@ pub struct WorkspaceView {
     /// SSH destination of a remote workspace.
     pub remote: Option<String>,
     pub panes: usize,
+    pub unread: usize,
+    /// The newest unread alert, shown in place of the path.
+    pub alert: Option<String>,
     pub running: bool,
 }
 pub struct PaneRender {

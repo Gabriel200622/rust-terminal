@@ -9,6 +9,11 @@ the signed desktop update manifest; do not maintain a second release-notes file.
 
 ### What's New
 
+- See which terminal needs you. Programs that send OSC 9, 99 or 777 alerts ring
+  their pane, show the latest alert and an unread count on their workspace, and
+  collect in a notification popover that opens the right terminal. Desktop
+  banners are optional.
+
 ## [0.1.1] - 2026-10-02
 
 ### What's New

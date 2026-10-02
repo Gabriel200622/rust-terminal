@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 use terminal_core::{Mode as TermMode, SessionMetadata, SessionStatus, ViewportSnapshot};
 
 pub struct PanePresentation {
+    pub unread: usize,
     pub metadata: SessionMetadata,
     pub snapshot: ViewportSnapshot,
     /// The shell has been requested but has not started yet.
@@ -570,13 +571,38 @@ fn draw_pane(
         Stroke::new(1.0, p.separator),
         StrokeKind::Inside,
     );
+    // An unread alert rings the pane in the attention colour. It takes the
+    // focus ring's place rather than doubling it; a single pane shows it too.
+    let attention = animate(
+        ui.ctx(),
+        ui.id().with(("pane-attention", id)),
+        presentation.unread > 0,
+        0.16,
+    );
     if stage.multiple && focus > 0.0 {
         painter.rect_stroke(
             card,
             metrics::PANE_RADIUS,
-            Stroke::new(1.5, theme::tint(p.accent, 0.85 * focus)),
+            Stroke::new(1.5, theme::tint(p.accent, 0.85 * focus * (1.0 - attention))),
             StrokeKind::Inside,
         );
+    }
+    if attention > 0.0 {
+        // A crisp edge over a glow that fades into the terminal's margin.
+        for (inset, width, alpha) in [
+            (4.5, 1.0, 0.06),
+            (3.5, 1.0, 0.11),
+            (2.5, 1.0, 0.18),
+            (1.5, 1.0, 0.28),
+            (0.0, 1.5, 0.95),
+        ] {
+            painter.rect_stroke(
+                card.shrink(inset),
+                metrics::PANE_RADIUS.saturating_sub(inset as u8),
+                Stroke::new(width, theme::tint(p.attention, alpha * attention)),
+                StrokeKind::Inside,
+            );
+        }
     }
     // A carried terminal recedes where it was; any other pane can receive it.
     let lifted = animate(
@@ -1042,6 +1068,7 @@ mod tests {
                         (
                             id,
                             PanePresentation {
+                                unread: 0,
                                 metadata: metadata(""),
                                 snapshot: ViewportSnapshot::blank(80, 24),
                                 starting: false,
@@ -1241,6 +1268,7 @@ mod tests {
         let presentations: BTreeMap<_, _> = [left, right]
             .map(|id| {
                 let presentation = PanePresentation {
+                    unread: 0,
                     metadata: metadata("zsh"),
                     snapshot: ViewportSnapshot::blank(80, 24),
                     starting: false,

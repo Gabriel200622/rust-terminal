@@ -6,3 +6,5 @@ pub(crate) mod keyboard;
 pub mod links;
 pub mod updates;
 pub mod window;
+
+pub mod notifications;

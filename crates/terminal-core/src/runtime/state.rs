@@ -57,7 +57,7 @@ pub(super) enum Output {
 pub(super) struct Shared {
     pub(super) metadata: Mutex<SessionMetadata>,
     pub(super) size: Mutex<Size>,
-    pub(super) events: Mutex<VecDeque<Event>>,
+    pub(super) events: Mutex<VecDeque<crate::TerminalEvent>>,
     pub(super) palette: Mutex<[Rgb; 269]>,
     pub(super) config: Mutex<Config>,
     pub(super) stopped: AtomicBool,
@@ -185,6 +185,26 @@ impl Shared {
         self.force_repaint();
     }
 
+    pub(super) fn push_event(&self, event: crate::TerminalEvent) {
+        let mut events = self.events.lock();
+        let wake = events.is_empty();
+        let mut bytes = self.queued_event_bytes.load(Ordering::Relaxed);
+        let size = event.payload_len();
+        while events.len() >= EVENT_QUEUE || bytes + size > EVENT_BYTE_QUEUE {
+            if let Some(old) = events.pop_front() {
+                bytes -= old.payload_len();
+            }
+            self.dropped_events.fetch_add(1, Ordering::Relaxed);
+        }
+        events.push_back(event);
+        self.queued_event_bytes
+            .store(bytes + size, Ordering::Relaxed);
+        drop(events);
+        if wake {
+            self.force_repaint();
+        }
+    }
+
     pub(super) fn error(&self, error: impl std::fmt::Display) {
         if self.stopped.load(Ordering::Acquire) {
             return;
@@ -250,21 +270,14 @@ impl EventListener for EventProxy {
                     self.shared.dropped_events.fetch_add(1, Ordering::Relaxed);
                     return;
                 }
-                let mut events = self.shared.events.lock();
-                let mut bytes = self.shared.queued_event_bytes.load(Ordering::Relaxed);
-                while events.len() >= EVENT_QUEUE || bytes + text.len() > EVENT_BYTE_QUEUE {
-                    if let Some(Event::ClipboardStore(_, old)) = events.pop_front() {
-                        bytes -= old.len();
-                    }
-                    self.shared.dropped_events.fetch_add(1, Ordering::Relaxed);
-                }
-                bytes += text.len();
-                events.push_back(Event::ClipboardStore(kind, text));
                 self.shared
-                    .queued_event_bytes
-                    .store(bytes, Ordering::Relaxed);
-                drop(events);
-                self.shared.force_repaint();
+                    .push_event(crate::TerminalEvent::ClipboardStore {
+                        selection: matches!(
+                            kind,
+                            alacritty_terminal::term::ClipboardType::Selection
+                        ),
+                        text,
+                    });
             }
             // OSC 52 reads are disabled by parser policy and never reach the desktop.
             Event::ClipboardLoad(_, _) => {}
