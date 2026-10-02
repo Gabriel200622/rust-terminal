@@ -352,7 +352,9 @@ impl App {
                 match key {
                     egui::Key::T | egui::Key::N => Some(Action::New),
                     egui::Key::D => pane.map(|id| Action::Split(id, neptune_model::Axis::Vertical)),
-                    egui::Key::E => pane.map(|id| Action::Split(id, neptune_model::Axis::Horizontal)),
+                    egui::Key::E => {
+                        pane.map(|id| Action::Split(id, neptune_model::Axis::Horizontal))
+                    }
                     egui::Key::W => pane.map(Action::ClosePane),
                     egui::Key::F => Some(Action::Find),
                     egui::Key::P => Some(Action::Palette),
