@@ -87,8 +87,13 @@ jobs:
           shutil.copy2(Path('target') / target / 'release' / executable, stage / executable)
           for filename in ('LICENSE', 'README.md', 'config.example.toml'):
               shutil.copy2(filename, stage / filename)
-          (stage / 'assets').mkdir()
-          shutil.copy2('assets/neptune.svg', stage / 'assets' / 'neptune.svg')
+          shutil.copytree('assets/icons', stage / 'assets' / 'icons')
+          if 'apple-darwin' in target:
+              subprocess.run([
+                  'python3', 'scripts/package-macos.py',
+                  '--binary', str(stage / executable),
+                  '--output', str(stage / 'Neptune.app'),
+              ], check=True)
           if 'linux' in target:
               shutil.copy2('packaging/neptune.desktop', stage / 'neptune.desktop')
           font_notices = stage / 'licenses' / 'fonts'

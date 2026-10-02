@@ -1,5 +1,7 @@
 # Neptune
 
+<img src="assets/icons/neptune-256.png" alt="Neptune logo" width="96" height="96">
+
 [neptune.rs](https://neptune.rs) · [GitHub](https://github.com/zevem/neptune)
 
 A native Rust terminal for focused work. GPU rendering, real shell sessions, and a quiet workspace interface inspired by cmux and Ghostty. The interface follows a native, Apple-style visual language: a full-height sidebar, a unified toolbar, terminals as rounded content surfaces, and one accent colour for focus. See [the interface direction](docs/design.md).
@@ -92,14 +94,27 @@ Ctrl-click a web link in a terminal to open it in your default browser; on macOS
 
 Use Ctrl+Shift on Linux/Windows and Command on macOS: T opens a workspace, D splits right, E splits below, W closes the focused pane, F searches, P opens commands, B toggles the sidebar, Enter zooms the focused pane to full size and back, and 1–9 select a workspace by its sidebar position. Ctrl+Tab switches workspaces. Ctrl+Shift+Left/Right/Up/Down focuses the adjacent pane on every platform, including while zoomed; at an outer edge, focus stays put. These moves are also available in the command palette. Escape cancels a terminal drag, or leaves a sheet or a focused search field; otherwise it goes to the shell, as do Tab and unmodified arrow keys. Ctrl+comma opens preferences. Ctrl+plus/minus (Command on macOS) zooms the whole app; Ctrl+equals also zooms in, and Ctrl+0 resets app zoom (Command on macOS). On keyboards where Plus requires Shift, use Ctrl+equals (Command on macOS) for app zoom. Change terminal font size in Preferences or with Ctrl+Shift+plus/minus on Linux/Windows and Command+Shift+plus/minus on macOS; Ctrl+Shift+0 (Command+Shift+0 on macOS) resets it to the default (14 pt). On macOS these font shortcuts follow the active keyboard layout's labeled +, -, and 0 keys, even when Shift produces *, _, or =, as on Latin American keyboards. Use Ctrl+Shift+C/V to copy/paste on Linux/Windows, Command+C/V on macOS. Plain Ctrl+C interrupts the shell; Shift+PageUp/PageDown scrolls history. Hold Shift to select text when a TUI owns the mouse.
 
-The native [desktop icon](assets/neptune.svg) and [Linux desktop entry](packaging/neptune.desktop) are provided. Install the binary on your PATH and these files in your desktop environment's standard application/icon locations.
+The [Neptune logo and icon exports](assets/README.md) live in `assets/`. Windows
+builds embed the multi-size icon in `neptune.exe`. On macOS, wrap the built
+executable in an app bundle to use the icon in Finder and the Dock:
+
+```sh
+python3 scripts/package-macos.py
+open target/release/Neptune.app
+```
+
+The bundle is unsigned; macOS signing and notarization remain release work.
+On Linux, install the [desktop entry](packaging/neptune.desktop) and PNG icons
+in the standard application/icon locations.
 
 For a per-user Linux install (ensure `~/.local/bin` is on your PATH):
 
 ```sh
 install -Dm755 target/release/neptune ~/.local/bin/neptune
 install -Dm644 packaging/neptune.desktop ~/.local/share/applications/rs.neptune.terminal.desktop
-install -Dm644 assets/neptune.svg ~/.local/share/icons/hicolor/scalable/apps/neptune.svg
+for size in 16 24 32 48 64 128 256 512 1024; do
+  install -Dm644 "assets/icons/neptune-${size}.png" "$HOME/.local/share/icons/hicolor/${size}x${size}/apps/neptune.png"
+done
 ```
 
 ## Website
@@ -128,7 +143,7 @@ Changes to `main` require a pull request with passing required checks, then entr
 
 CI and release workflows use the standard GitHub-hosted `ubuntu-latest`, `macos-latest` (Apple Silicon), and `windows-latest` runners. Apple Silicon (`aarch64-apple-darwin`) is the primary macOS target for pull-request CI and release downloads. An additional Intel compatibility archive (`x86_64-apple-darwin`) is built and tested natively on `macos-15-intel` when release tags are pushed, using the same packaging steps.
 
-Pushing a tag matching the package version, such as `v0.1.0`, runs release checks and packages Linux x64, macOS arm64/Intel, and Windows x64 binaries. The archives include configuration, licenses, dependency notices, and SHA-256 checksums, and are staged in a draft GitHub release for review.
+Pushing a tag matching the package version, such as `v0.1.0`, runs release checks and packages Linux x64, macOS arm64/Intel, and Windows x64 binaries. The archives include configuration, licenses, dependency notices, icon exports, and SHA-256 checksums, and are staged in a draft GitHub release for review. macOS archives include an unsigned `Neptune.app` bundle; Windows executables carry the embedded icon.
 
 These are binary archives, not installers. macOS signing/notarization, Windows signing, an update mechanism, and distribution-specific integration remain release work. Kitty graphics, full font fallback/shaping, keypad identification and some advanced keyboard modes, and platform accessibility need dedicated coverage before they are advertised. Running a GUI and reviewing screenshots on each OS remains necessary even after CI passes.
 

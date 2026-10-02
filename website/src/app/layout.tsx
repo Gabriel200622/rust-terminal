@@ -27,6 +27,13 @@ export const metadata: Metadata = {
     url: SITE_URL,
     siteName: "Neptune",
     type: "website",
+    images: [{ url: "/neptune-logo.png", width: 256, height: 256, alt: "Neptune logo" }],
+  },
+  twitter: {
+    card: "summary",
+    title: "Neptune — a native terminal for focused work",
+    description,
+    images: [{ url: "/neptune-logo.png", alt: "Neptune logo" }],
   },
 };
 

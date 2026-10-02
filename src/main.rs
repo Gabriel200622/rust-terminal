@@ -117,18 +117,21 @@ fn main() -> anyhow::Result<()> {
     }
     eframe::run_native(
         "Neptune",
-        native_options(&window.state),
+        native_options(&window.state, native_icon()?),
         Box::new(move |cc| Ok(Box::new(app::App::new(cc, launch, window)))),
     )
     .map_err(|e| anyhow::anyhow!("Cannot start native renderer: {e}"))
 }
 
-fn native_options(window: &window_state::WindowState) -> eframe::NativeOptions {
+fn native_options(
+    window: &window_state::WindowState,
+    icon: eframe::egui::IconData,
+) -> eframe::NativeOptions {
     let mut options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("Neptune")
             .with_app_id("rs.neptune.terminal")
-            .with_icon(native_icon())
+            .with_icon(icon)
             .with_inner_size(window.inner_size)
             .with_maximized(window.maximized)
             .with_min_inner_size([640.0, 400.0])
@@ -158,42 +161,9 @@ fn windows_gpu_setup() -> eframe::egui_wgpu::WgpuSetup {
     setup.into()
 }
 
-fn native_icon() -> eframe::egui::IconData {
-    let mut rgba = vec![0; 128 * 128 * 4];
-    let distance = |x: f32, y: f32, a: [f32; 2], b: [f32; 2]| {
-        let dx = b[0] - a[0];
-        let dy = b[1] - a[1];
-        let t = (((x - a[0]) * dx + (y - a[1]) * dy) / (dx * dx + dy * dy)).clamp(0.0, 1.0);
-        ((x - a[0] - t * dx).powi(2) + (y - a[1] - t * dy).powi(2)).sqrt()
-    };
-    for y in 0..128 {
-        for x in 0..128 {
-            let px = x as f32 + 0.5;
-            let py = y as f32 + 0.5;
-            let qx = (px - 64.0).abs() - 34.0;
-            let qy = (py - 64.0).abs() - 34.0;
-            let corner =
-                (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - 30.0;
-            let alpha = (0.5 - corner).clamp(0.0, 1.0);
-            let line = distance(px, py, [35.0, 37.0], [60.0, 64.0])
-                .min(distance(px, py, [60.0, 64.0], [35.0, 91.0]))
-                .min(distance(px, py, [73.0, 91.0], [95.0, 91.0]));
-            let blend = (5.0 - line).clamp(0.0, 1.0);
-            let offset = (y * 128 + x) * 4;
-            for (channel, (base, ink)) in [(23.0, 185.0), (23.0, 172.0), (25.0, 242.0)]
-                .into_iter()
-                .enumerate()
-            {
-                rgba[offset + channel] = (base + (ink - base) * blend) as u8;
-            }
-            rgba[offset + 3] = (alpha * 255.0) as u8;
-        }
-    }
-    eframe::egui::IconData {
-        rgba,
-        width: 128,
-        height: 128,
-    }
+fn native_icon() -> anyhow::Result<eframe::egui::IconData> {
+    eframe::icon_data::from_png_bytes(include_bytes!("../assets/icons/neptune-256.png"))
+        .map_err(|error| anyhow::anyhow!("Cannot load bundled Neptune icon: {error}"))
 }
 
 #[cfg(test)]
@@ -202,9 +172,21 @@ mod tests {
 
     #[test]
     fn native_window_supports_transparent_corners() {
-        let options = native_options(&window_state::WindowState::default());
+        let options = native_options(
+            &window_state::WindowState::default(),
+            native_icon().expect("bundled icon decodes"),
+        );
         assert_eq!(options.viewport.transparent, Some(true));
         assert_eq!(options.viewport.decorations, Some(false));
+    }
+
+    #[test]
+    fn bundled_logo_has_transparent_padding_and_opaque_artwork() {
+        let icon = native_icon().expect("bundled icon decodes");
+        assert_eq!((icon.width, icon.height), (256, 256));
+        assert_eq!(icon.rgba.len(), 256 * 256 * 4);
+        assert_eq!(icon.rgba[3], 0);
+        assert_eq!(icon.rgba[(128 * 256 + 128) * 4 + 3], 255);
     }
 
     #[test]
