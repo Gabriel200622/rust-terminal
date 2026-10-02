@@ -180,7 +180,7 @@ pub(super) fn engine_loop(
     master: Master,
 ) {
     let mut processor: Processor = Processor::new();
-    let mut cwd_tracker = Osc7Tracker::default();
+    let mut cwd_tracker = CwdTracker::default();
     let mut prompt_scanner = PromptScanner::default();
     let mut notifications = notifications::Scanner::default();
     let mut eof = false;

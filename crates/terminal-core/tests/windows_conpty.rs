@@ -321,3 +321,30 @@ fn process_activity_marks_direct_programs_running_and_exited_sessions_idle() {
     );
     wait_for(&session, || session.metrics().active_workers == 0);
 }
+
+#[test]
+fn cmd_and_powershell_report_directory_changes() {
+    let target = std::env::var("ProgramFiles").unwrap();
+    for (shell, cd) in [
+        ("cmd.exe", format!("cd /d \"{target}\"\r")),
+        ("powershell.exe", format!("Set-Location '{target}'\r")),
+    ] {
+        let session = TerminalSession::spawn(
+            SessionOptions {
+                shell: Some(shell.into()),
+                cwd: std::env::temp_dir(),
+                ..SessionOptions::default()
+            },
+            Arc::new(|| {}),
+        )
+        .unwrap();
+        session.write(cd.as_bytes()).unwrap();
+        wait_for(&session, || {
+            let metadata = session.metadata();
+            metadata.reported_cwd == Some(metadata.cwd.clone())
+                && metadata.cwd.to_string_lossy().eq_ignore_ascii_case(&target)
+        });
+        session.shutdown();
+        wait_for(&session, || session.metrics().active_workers == 0);
+    }
+}

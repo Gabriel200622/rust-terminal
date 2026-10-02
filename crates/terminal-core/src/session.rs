@@ -31,9 +31,9 @@ pub use limits::MAX_GRID_CELLS;
 use limits::check_grid_budget;
 #[path = "shell_integration/mod.rs"]
 mod shell_integration;
-use shell_integration::{Osc7Tracker, PromptScanner, PromptState};
+use shell_integration::{CwdTracker, PromptScanner, PromptState};
 #[cfg(test)]
-use shell_integration::{PromptMark, decode_cwd, row_identity};
+use shell_integration::{PromptMark, decode_cwd, decode_path, row_identity};
 #[path = "engine.rs"]
 mod engine;
 #[path = "notifications.rs"]
@@ -235,6 +235,11 @@ impl TerminalSession {
             command.env(key, value);
         }
         let shell = options.shell.clone().unwrap_or_else(|| command.get_shell());
+        // Explicit arguments mean a caller-chosen program, such as SSH.
+        #[cfg(windows)]
+        if options.args.is_empty() {
+            shell_integration::report_cwd(&mut command, &shell);
+        }
         let mut child_guard = ChildGuard(Some(
             pair.slave.spawn_command(command).context("Start shell")?,
         ));
