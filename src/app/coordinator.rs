@@ -46,28 +46,46 @@ fn remote_label(destination: &str) -> String {
 
 impl App {
     pub(super) fn dispatch(&mut self, ctx: &egui::Context, command: Command) {
-        self.dispatch_in_remote_dir(ctx, command, None);
-    }
-    fn dispatch_in_remote_dir(
-        &mut self,
-        ctx: &egui::Context,
-        command: Command,
-        remote_cwd: Option<&std::path::Path>,
-    ) {
         match self.controller.dispatch(command) {
-            Ok(effects) => self.execute_in_remote_dir(ctx, effects, remote_cwd),
+            Ok(effects) => self.execute(ctx, effects),
             Err(error) => self.ui.error = Some(error.to_string()),
         }
     }
-    pub(super) fn execute(&mut self, ctx: &egui::Context, effects: Vec<Effect>) {
-        self.execute_in_remote_dir(ctx, effects, None);
-    }
-    fn execute_in_remote_dir(
+    pub(super) fn sync_directory(
         &mut self,
         ctx: &egui::Context,
-        effects: Vec<Effect>,
-        remote_cwd: Option<&std::path::Path>,
+        pane: PaneId,
+        metadata: &SessionMetadata,
     ) {
+        let Some(item) = self.controller.model().pane(pane) else {
+            return;
+        };
+        let generation = item.generation();
+        if self.sessions.generation(pane) != Some(generation) {
+            return;
+        }
+        let command = if self.remote_of(pane).is_some() {
+            metadata
+                .reported_cwd
+                .as_ref()
+                .filter(|cwd| item.remote_cwd() != Some(cwd.as_path()))
+                .map(|cwd| Command::PaneRemoteCwdChanged {
+                    pane,
+                    generation,
+                    cwd: cwd.clone(),
+                })
+        } else {
+            (metadata.cwd != item.cwd()).then(|| Command::PaneCwdChanged {
+                pane,
+                generation,
+                cwd: metadata.cwd.clone(),
+            })
+        };
+        if let Some(command) = command {
+            self.dispatch(ctx, command);
+        }
+    }
+    pub(super) fn execute(&mut self, ctx: &egui::Context, effects: Vec<Effect>) {
         let replacements: std::collections::HashSet<_> = effects
             .iter()
             .filter_map(|effect| match effect {
@@ -86,6 +104,7 @@ impl App {
                     generation,
                     cwd,
                     remote,
+                    remote_cwd,
                     replacement,
                 } => {
                     self.renders.insert(pane, PaneRender::new(pane));
@@ -95,7 +114,7 @@ impl App {
                         &self.ssh_client,
                         cwd,
                         remote.as_ref(),
-                        remote_cwd,
+                        remote_cwd.as_deref(),
                     );
                     if let Err(error) = self.sessions.start(
                         pane,
@@ -391,11 +410,9 @@ impl App {
                 if let Some(workspace) = self.controller.model().workspace_for_pane(pane) {
                     let local = self.remote_of(pane).is_none();
                     let metadata = self.sessions.get(pane).map(|session| session.metadata());
-                    let remote_cwd = (!local)
-                        .then(|| metadata.as_ref().and_then(|m| m.reported_cwd.as_deref()))
-                        .flatten();
-                    // The local client directory remains durable; the remote
-                    // path belongs only to this generation's startup request.
+                    if let Some(metadata) = &metadata {
+                        self.sync_directory(ctx, pane, metadata);
+                    }
                     let cwd = self
                         .controller
                         .model()
@@ -407,7 +424,7 @@ impl App {
                         .map(|metadata| metadata.cwd.clone())
                         .or(cwd)
                         .unwrap_or_default();
-                    self.dispatch_in_remote_dir(
+                    self.dispatch(
                         ctx,
                         Command::SplitPane {
                             workspace,
@@ -415,7 +432,6 @@ impl App {
                             axis,
                             cwd,
                         },
-                        remote_cwd,
                     );
                 }
             }
@@ -541,7 +557,12 @@ impl App {
                     }
                 }
             }
-            Action::Restart(pane) => self.dispatch(ctx, Command::RestartPane(pane)),
+            Action::Restart(pane) => {
+                if let Some(metadata) = self.sessions.get(pane).map(|session| session.metadata()) {
+                    self.sync_directory(ctx, pane, &metadata);
+                }
+                self.dispatch(ctx, Command::RestartPane(pane));
+            }
             Action::Copy(pane) => {
                 if let Some(text) = self
                     .sessions

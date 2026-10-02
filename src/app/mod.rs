@@ -263,27 +263,14 @@ impl App {
                     (
                         id,
                         pane.generation(),
-                        pane.cwd().to_path_buf(),
                         pane.lifecycle().clone(),
-                        self.remote_of(id).is_some(),
                         session.metadata(),
                     )
                 })
             })
             .collect();
-        for (pane, generation, cwd, lifecycle, remote, metadata) in metadata {
-            // A remote session reports a directory on its host, or the SSH
-            // client's own. Neither is where this pane's local shell belongs.
-            if !remote && metadata.cwd != cwd {
-                self.dispatch(
-                    ctx,
-                    Command::PaneCwdChanged {
-                        pane,
-                        generation,
-                        cwd: metadata.cwd,
-                    },
-                );
-            }
+        for (pane, generation, lifecycle, metadata) in metadata {
+            self.sync_directory(ctx, pane, &metadata);
             if !matches!(metadata.status, SessionStatus::Running) && lifecycle == Lifecycle::Running
             {
                 self.dispatch(ctx, Command::SessionExited { pane, generation });
@@ -895,6 +882,16 @@ impl eframe::App for App {
         self.release_closed_overlay_focus(&ctx);
     }
     fn on_exit(&mut self) {
+        // Capture reports received since the final frame before flushing state.
+        let ctx = egui::Context::default();
+        let metadata: Vec<_> = self
+            .sessions
+            .iter()
+            .map(|(pane, session)| (pane, session.metadata()))
+            .collect();
+        for (pane, metadata) in metadata {
+            self.sync_directory(&ctx, pane, &metadata);
+        }
         self.save_state();
         self.save_window();
         if let Some(writer) = &self.writer

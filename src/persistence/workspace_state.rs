@@ -9,9 +9,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Version 3 adds workspace folders and membership. Versions 1 and 2 remain
-/// readable; older builds refuse to replace a file with the new organization.
-pub const SCHEMA_VERSION: u32 = 3;
+/// Version 4 adds workspace folders and membership. Version 3 introduced each
+/// pane's remote directory; versions 1–3 remain readable. Older builds refuse
+/// to replace version 4 state with the new organization.
+pub const SCHEMA_VERSION: u32 = 4;
 const MAX_STATE_BYTES: u64 = 8 * 1024 * 1024;
 
 /// This DTO is the disk contract. Runtime layout serialization cannot change it.
@@ -64,6 +65,8 @@ pub struct SavedWorkspace {
 pub struct SavedPane {
     pub id: PaneId,
     pub cwd: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_cwd: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,6 +112,7 @@ impl StateSnapshot {
                         .map(|pane| SavedPane {
                             id: pane.id(),
                             cwd: pane.cwd().into(),
+                            remote_cwd: pane.remote_cwd().map(Path::to_path_buf),
                         })
                         .collect(),
                     layout: SavedLayout::from_layout(workspace.layout()),
@@ -162,6 +166,7 @@ impl SavedWorkspace {
                 .map(|pane| PaneSpec {
                     id: pane.id,
                     cwd: pane.cwd,
+                    remote_cwd: pane.remote_cwd,
                 })
                 .collect(),
             layout: self.layout.into_layout(),
@@ -500,7 +505,11 @@ fn restore_legacy(legacy: LegacyState, limits: Limits, report: &mut LoadReport) 
                 ));
                 workspace.cwd.clone()
             };
-            panes.push(PaneSpec { id: pane_id, cwd });
+            panes.push(PaneSpec {
+                id: pane_id,
+                cwd,
+                remote_cwd: None,
+            });
         }
         if panes.is_empty() {
             if limits.panes_per_workspace == 0 {
@@ -513,6 +522,7 @@ fn restore_legacy(legacy: LegacyState, limits: Limits, report: &mut LoadReport) 
             panes.push(PaneSpec {
                 id: PaneId::new(next_pane),
                 cwd: workspace.cwd.clone(),
+                remote_cwd: None,
             });
             next_pane += 1;
         }
@@ -699,7 +709,7 @@ mod tests {
     }
 
     #[test]
-    fn a_remote_workspace_round_trips_its_destination_and_local_ones_stay_unchanged() {
+    fn a_grouped_remote_workspace_round_trips_its_directory_and_destination() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("workspaces.json");
         let mut controller = Controller::new(
@@ -708,22 +718,62 @@ mod tests {
                 .unwrap(),
         );
         controller
+            .dispatch(Command::AddWorkspaceGroup {
+                name: "Servers".into(),
+            })
+            .unwrap();
+        let group = controller.model().groups()[0].id();
+        controller
             .dispatch(Command::AddWorkspace {
-                group: None,
+                group: Some(group),
                 cwd: directory.path().into(),
                 name: "devbox".into(),
                 remote: Some("me@devbox".into()),
+            })
+            .unwrap();
+        let pane = controller.model().active_pane().unwrap();
+        let remote_cwd = PathBuf::from("/neptune-test-remote-only/project ' % λ");
+        assert!(!remote_cwd.exists());
+        controller
+            .dispatch(Command::PaneRemoteCwdChanged {
+                pane,
+                generation: 1,
+                cwd: remote_cwd.clone(),
+            })
+            .unwrap();
+        controller
+            .dispatch(Command::SetWorkspaceGroupCollapsed {
+                group,
+                collapsed: true,
             })
             .unwrap();
         let saved = serde_json::to_value(StateSnapshot::from_model(controller.model())).unwrap();
         assert_eq!(saved["version"], SCHEMA_VERSION);
         assert!(saved["workspaces"][0].get("ssh").is_none());
         assert_eq!(saved["workspaces"][1]["ssh"], "me@devbox");
+        assert_eq!(
+            saved["workspaces"][1]["panes"][0]["remote_cwd"],
+            remote_cwd.to_str().unwrap()
+        );
+        assert!(
+            saved["workspaces"][0]["panes"][0]
+                .get("remote_cwd")
+                .is_none()
+        );
         std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
         let report = load_state(&path, Limits::default());
         assert!(report.can_write && !report.migrated);
         assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
         let model = report.model.unwrap();
+        assert_eq!(model.groups()[0].id(), group);
+        assert_eq!(model.groups()[0].name(), "Servers");
+        assert!(model.groups()[0].collapsed());
+        assert_eq!(model.workspaces()[0].group(), None);
+        assert_eq!(model.workspaces()[1].group(), Some(group));
+        assert_eq!(
+            model.pane(pane).unwrap().remote_cwd(),
+            Some(remote_cwd.as_path())
+        );
         assert_eq!(model.workspaces()[0].remote(), None);
         assert_eq!(
             model.workspaces()[1]
@@ -734,21 +784,32 @@ mod tests {
     }
 
     #[test]
-    fn version_one_state_is_read_without_loss_and_saved_as_the_current_version() {
+    fn earlier_schema_versions_are_read_without_loss_and_saved_as_the_current_version() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("workspaces.json");
-        let mut saved = serde_json::to_value(sample(directory.path())).unwrap();
-        saved["version"] = 1.into();
-        std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
-        let report = load_state(&path, Limits::default());
-        assert!(report.can_write && report.migrated);
-        assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
-        // No recovery copy: nothing was repaired or dropped.
-        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
-        let resaved =
-            serde_json::to_value(StateSnapshot::from_model(&report.model.unwrap())).unwrap();
-        saved["version"] = SCHEMA_VERSION.into();
-        assert_eq!(resaved, saved);
+        for version in [1, 2, 3] {
+            let mut saved = serde_json::to_value(sample(directory.path())).unwrap();
+            saved["version"] = version.into();
+            saved.as_object_mut().unwrap().remove("groups");
+            if version >= 2 {
+                saved["workspaces"][0]["ssh"] = "devbox".into();
+            }
+            if version == 3 {
+                saved["workspaces"][0]["panes"][0]["remote_cwd"] =
+                    "/neptune-test-remote-only/project".into();
+            }
+            std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+            let report = load_state(&path, Limits::default());
+            assert!(report.can_write && report.migrated);
+            assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+            // No recovery copy: nothing was repaired or dropped.
+            assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+            let resaved =
+                serde_json::to_value(StateSnapshot::from_model(&report.model.unwrap())).unwrap();
+            saved["version"] = SCHEMA_VERSION.into();
+            saved["groups"] = serde_json::json!([]);
+            assert_eq!(resaved, saved);
+        }
     }
 
     #[test]
@@ -879,6 +940,7 @@ mod tests {
         second.panes = vec![SavedPane {
             id: PaneId::new(3),
             cwd: directory.path().into(),
+            remote_cwd: None,
         }];
         second.layout = SavedLayout::Pane {
             pane: PaneId::new(3),
@@ -1045,7 +1107,7 @@ mod group_tests {
     }
 
     #[test]
-    fn versions_one_and_two_without_folder_fields_restore_ungrouped() {
+    fn earlier_versions_without_folder_fields_restore_ungrouped() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("workspaces.json");
         let mut controller = Controller::new(Model::default());
@@ -1060,7 +1122,7 @@ mod group_tests {
         let mut saved =
             serde_json::to_value(StateSnapshot::from_model(controller.model())).unwrap();
         saved.as_object_mut().unwrap().remove("groups");
-        for version in [1, 2] {
+        for version in [1, 2, 3] {
             saved["version"] = version.into();
             std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
             let report = load_state(&path, Limits::default());

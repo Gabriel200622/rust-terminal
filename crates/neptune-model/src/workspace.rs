@@ -81,6 +81,7 @@ pub enum Lifecycle {
 pub struct Pane {
     pub(crate) id: PaneId,
     pub(crate) cwd: PathBuf,
+    pub(crate) remote_cwd: Option<PathBuf>,
     pub(crate) generation: u64,
     pub(crate) lifecycle: Lifecycle,
 }
@@ -90,6 +91,10 @@ impl Pane {
     }
     pub fn cwd(&self) -> &Path {
         &self.cwd
+    }
+    /// Last reported directory on the SSH host, independent of the local cwd.
+    pub fn remote_cwd(&self) -> Option<&Path> {
+        self.remote_cwd.as_deref()
     }
     pub fn generation(&self) -> u64 {
         self.generation
@@ -104,6 +109,7 @@ impl Pane {
 pub struct PaneSpec {
     pub id: PaneId,
     pub cwd: PathBuf,
+    pub remote_cwd: Option<PathBuf>,
 }
 #[derive(Debug, Clone)]
 pub struct WorkspaceSpec {
@@ -140,7 +146,7 @@ impl Workspace {
         &self.name
     }
     /// The local directory its terminals start in. A remote workspace runs
-    /// its SSH client there; the directory on the remote host is not tracked.
+    /// its SSH client there; each pane tracks its remote directory separately.
     pub fn cwd(&self) -> &Path {
         &self.cwd
     }
@@ -335,6 +341,9 @@ impl Model {
             }
             let mut members = HashSet::new();
             for pane in &spec.panes {
+                if remote.is_none() && pane.remote_cwd.is_some() {
+                    return Err(Error::InvalidLayout("local pane has a remote directory"));
+                }
                 if pane.id.get() == 0 || !pane_ids.insert(pane.id) {
                     return Err(Error::InvalidIdentity);
                 }
@@ -374,6 +383,7 @@ impl Model {
                     .map(|pane| Pane {
                         id: pane.id,
                         cwd: pane.cwd,
+                        remote_cwd: pane.remote_cwd,
                         generation: 1,
                         lifecycle: Lifecycle::Starting,
                     })
@@ -414,6 +424,7 @@ impl Model {
                     .map(|pane| PaneSpec {
                         id: pane.id,
                         cwd: pane.cwd.clone(),
+                        remote_cwd: pane.remote_cwd.clone(),
                     })
                     .collect(),
                 layout: workspace.layout.clone(),

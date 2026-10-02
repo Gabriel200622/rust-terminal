@@ -1772,7 +1772,7 @@ fn a_remote_split_inherits_the_reported_host_directory_and_keeps_its_local_direc
     let deadline = Instant::now() + Duration::from_secs(10);
     let reported = std::path::Path::new("/srv/on-the-host");
     let mut seen = false;
-    // The host's directory reaches the session; the model must not adopt it.
+    // The host's directory must stay separate from the local client directory.
     while !seen {
         app.poll(&ctx);
         seen = app
@@ -1795,15 +1795,19 @@ fn a_remote_split_inherits_the_reported_host_directory_and_keeps_its_local_direc
         cwd.canonicalize().unwrap()
     );
     assert_eq!(app.controller.model().pane(pane).unwrap().cwd(), cwd);
+    assert!(app.controller.generation() > generation);
     assert_eq!(
-        app.controller.generation(),
-        generation,
-        "a remote directory was saved as a local one"
+        app.controller.model().pane(pane).unwrap().remote_cwd(),
+        Some(reported)
     );
 
     // The SSH client's local process polling must not become the remote path.
     std::thread::sleep(Duration::from_millis(1200));
     app.poll(&ctx);
+    assert_eq!(
+        app.controller.model().pane(pane).unwrap().remote_cwd(),
+        Some(reported)
+    );
     // A split opens another connection from the same local directory while
     // passing the host's reported path in the remote bootstrap.
     app.action(&ctx, Action::Split(pane, neptune_model::Axis::Vertical));
@@ -1829,6 +1833,100 @@ fn a_remote_split_inherits_the_reported_host_directory_and_keeps_its_local_direc
         "the split starts in the host's home directory instead of /srv/on-the-host: {:?}",
         lines("commands")
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn remote_directories_survive_shutdown_and_restoration_per_terminal() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let local = root.path().join("local");
+    let home = root.path().join("fake-ssh.home");
+    let project = home.join("Documents/Projects/neptune ' % λ");
+    for directory in [&local, &project] {
+        std::fs::create_dir_all(directory).unwrap();
+    }
+    std::fs::write(home.join(".zshenv"), "unsetopt GLOBAL_RCS\n").unwrap();
+    std::fs::write(home.join(".zshrc"), "PROMPT='NEPTUNE> '\n").unwrap();
+    // Keep the real remote bootstrap and PTY, with a test-owned SSH stand-in.
+    let client = root.path().join("fake-ssh");
+    std::fs::write(&client, "#!/bin/sh\nexport HOME=\"$0.home\" SHELL=zsh ZDOTDIR=\"$0.home\" TMPDIR=\"$0.home\"\ncd \"$HOME\"\nexec /bin/sh -c \"$4\"\n").unwrap();
+    std::fs::set_permissions(&client, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let ctx = egui::Context::default();
+    let wait_for_directory = |app: &mut App, pane, directory: &std::path::Path| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            app.poll(&ctx);
+            if app.sessions.get(pane).is_some_and(|session| {
+                session.metadata().reported_cwd.as_deref() == Some(directory)
+            }) {
+                // Adopt metadata that might have arrived after this poll.
+                app.poll(&ctx);
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "terminal did not restore directory {directory:?}: {:?}",
+                app.ui.error
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    let (mut app, _sender) = fixture(root.path());
+    app.ephemeral = false;
+    app.command = None;
+    app.ssh_client = client.to_str().unwrap().into();
+    app.initial_cwd = Some(local.clone());
+    app.initial_remote = Some("devbox".into());
+    app.complete_startup(&ctx, loaded(app.config.clone(), Model::default()));
+    let first = app.controller.model().active_pane().unwrap();
+    wait_for_directory(&mut app, first, &home);
+    app.action(&ctx, Action::Split(first, neptune_model::Axis::Vertical));
+    let second = app.controller.model().active_pane().unwrap();
+    wait_for_directory(&mut app, second, &home);
+    app.sessions
+        .get(first)
+        .unwrap()
+        .write(b"cd Documents/Projects/neptune*\r")
+        .unwrap();
+    // The report arrives after the final frame. Shutdown still must save it.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while app
+        .sessions
+        .get(first)
+        .unwrap()
+        .metadata()
+        .reported_cwd
+        .as_deref()
+        != Some(project.as_path())
+    {
+        assert!(
+            Instant::now() < deadline,
+            "the remote shell did not change directory"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    eframe::App::on_exit(&mut app);
+
+    let report = load_state(&app.state_path, Limits::default());
+    assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+    let (mut reopened, _sender) = fixture(root.path());
+    reopened.command = None;
+    reopened.ssh_client = client.to_str().unwrap().into();
+    reopened.complete_startup(
+        &ctx,
+        Startup {
+            config: app.config.clone(),
+            report,
+            error: None,
+        },
+    );
+    wait_for_directory(&mut reopened, first, &project);
+    wait_for_directory(&mut reopened, second, &home);
+    for pane in [first, second] {
+        assert_eq!(reopened.controller.model().pane(pane).unwrap().cwd(), local);
+    }
+    eframe::App::on_exit(&mut reopened);
 }
 
 #[cfg(unix)]
