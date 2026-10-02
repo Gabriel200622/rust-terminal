@@ -2,13 +2,14 @@ name: CI
 
 on:
   pull_request:
-  merge_group:
+  push:
+    branches: [main]
 
 permissions:
   contents: read
 
 concurrency:
-  # New commits replace only runs for the same PR; other events stay independent.
+  # New commits replace only runs for the same PR; main pushes stay independent.
   group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
@@ -25,25 +26,30 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          # Normal PRs compare against the merge commit's first parent.
+          # Default checkout tests the PR merge commit or the pushed main commit.
+          # PRs compare against the merge commit's first parent.
           fetch-depth: 2
       - name: Classify changes
         id: changes
         shell: python
         env:
-          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
         run: |
           import os
           from pathlib import Path
           import subprocess
 
           base = 'HEAD^1'
-          if os.environ['GITHUB_EVENT_NAME'] == 'merge_group':
-              # Include every queued PR, not just the last merge's first-parent diff.
-              base = os.environ['MERGE_GROUP_BASE_SHA']
-              subprocess.run(['git', 'fetch', '--no-tags', '--depth=1', 'origin', base], check=True)
-          paths = subprocess.check_output(['git', 'diff', '--name-only', '-z', base, 'HEAD']).decode('utf-8').split('\0')
-          code = any(path and not (path.endswith('.md') or path.startswith('artifacts/')) for path in paths)
+          if os.environ['GITHUB_EVENT_NAME'] == 'push':
+              # Include the whole push, including every commit in a rebase merge.
+              base = os.environ['PUSH_BEFORE_SHA']
+              if base != '0' * 40:
+                  subprocess.run(['git', 'fetch', '--no-tags', '--depth=1', 'origin', base], check=True)
+          # A newly created main branch has no previous tree: run all checks.
+          code = True
+          if base != '0' * 40:
+              paths = subprocess.check_output(['git', 'diff', '--name-only', '-z', base, 'HEAD']).decode('utf-8').split('\0')
+              code = any(path and not (path.endswith('.md') or path.startswith('artifacts/')) for path in paths)
           with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:
               output.write(f'code={str(code).lower()}\n')
           print('Source/configuration changes: run native matrix' if code else 'Documentation/evidence only: skip compilation')
@@ -78,7 +84,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Preserve status names required by the main ruleset as runners change.
+        # Keep per-platform status names stable as runners change.
         include:
           - os: ubuntu-latest
             check-name: ubuntu-24.04
@@ -173,9 +179,8 @@ jobs:
         if: needs.preflight.outputs.code == 'true'
         run: cargo +stable check --profile ci --workspace --all-targets --all-features --locked
 
-  # Keep the required status name while avoiding a separate cold GUI build.
-  # Include fast validation so the existing ruleset still enforces it until
-  # required statuses are replaced by Check.
+  # Keep the native inspection status while avoiding a separate cold GUI build.
+  # Include fast validation in this combined native inspection status.
   native-linux:
     name: Isolated native inspection (Linux X11)
     needs: [preflight, validate, native]
