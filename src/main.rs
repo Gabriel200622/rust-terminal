@@ -167,7 +167,14 @@ fn windows_gpu_setup() -> eframe::egui_wgpu::WgpuSetup {
 }
 
 fn native_icon() -> anyhow::Result<eframe::egui::IconData> {
-    eframe::icon_data::from_png_bytes(include_bytes!("../assets/icons/neptune-256.png"))
+    // eframe replaces the macOS Dock icon at launch. Use the same padded artwork
+    // as the app bundle so the icon keeps its Finder/closed-app size.
+    let png: &[u8] = if cfg!(target_os = "macos") {
+        include_bytes!("../assets/branding/neptune-macos-logo.png")
+    } else {
+        include_bytes!("../assets/icons/neptune-256.png")
+    };
+    eframe::icon_data::from_png_bytes(png)
         .map_err(|error| anyhow::anyhow!("Cannot load bundled Neptune icon: {error}"))
 }
 
@@ -188,10 +195,30 @@ mod tests {
     #[test]
     fn bundled_logo_has_transparent_padding_and_opaque_artwork() {
         let icon = native_icon().expect("bundled icon decodes");
-        assert_eq!((icon.width, icon.height), (256, 256));
-        assert_eq!(icon.rgba.len(), 256 * 256 * 4);
+        let size = if cfg!(target_os = "macos") { 1024 } else { 256 };
+        assert_eq!((icon.width, icon.height), (size, size));
+        assert_eq!(icon.rgba.len(), (size * size * 4) as usize);
         assert_eq!(icon.rgba[3], 0);
-        assert_eq!(icon.rgba[(128 * 256 + 128) * 4 + 3], 255);
+        let center = (size / 2 * size + size / 2) as usize;
+        assert_eq!(icon.rgba[center * 4 + 3], 255);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn runtime_dock_icon_preserves_macos_bundle_padding() {
+        let icon = native_icon().expect("bundled icon decodes");
+        let mut bounds = [icon.width, icon.height, 0, 0];
+        for (index, pixel) in icon.rgba.chunks_exact(4).enumerate() {
+            if pixel[3] > 0 {
+                let x = index as u32 % icon.width;
+                let y = index as u32 / icon.width;
+                bounds[0] = bounds[0].min(x);
+                bounds[1] = bounds[1].min(y);
+                bounds[2] = bounds[2].max(x + 1);
+                bounds[3] = bounds[3].max(y + 1);
+            }
+        }
+        assert_eq!(bounds, [100, 100, 924, 924]);
     }
 
     #[test]

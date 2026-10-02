@@ -23,8 +23,10 @@ python3 -m pip install Pillow
 python3 scripts/export-logo.py
 ```
 
-The native window loads `icons/neptune-256.png`; Windows builds embed
-`icons/neptune.ico` in the executable. The macOS bundle uses `icons/neptune.icns`;
+Linux/Windows native windows load `icons/neptune-256.png`; Windows builds embed
+`icons/neptune.ico` in the executable. The running macOS Dock icon loads
+`branding/neptune-macos-logo.png`, preserving the same artwork and padding as
+the bundle's `icons/neptune.icns`, so opening the app does not enlarge the icon;
 see [`package-macos.py`](../scripts/package-macos.py). Linux installs the PNGs in
 the `hicolor` icon theme under the name `neptune`.
 
