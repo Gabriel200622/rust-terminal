@@ -400,6 +400,13 @@ fn commands(view: &PaletteView) -> Vec<Command> {
             [action],
         ));
     }
+    list.push(command(
+        "Appearance",
+        Icon::Settings,
+        "Browse themes",
+        "",
+        [Action::Themes],
+    ));
     for (theme, name, icon) in [
         (Theme::Graphite, "Graphite", Icon::Moon),
         (Theme::Dusk, "Dusk", Icon::Moon),
@@ -891,10 +898,9 @@ mod tests {
         assert_eq!(titles("right split"), ["Split right"]);
         assert_eq!(titles("zoom reset"), ["Reset app zoom"]);
         assert!(titles("font").is_empty());
-        assert!(
-            titles("appearance")
-                .iter()
-                .all(|title| title.ends_with("theme"))
+        assert_eq!(
+            titles("appearance"),
+            ["Browse themes", "Use Dusk theme", "Use Light theme"]
         );
         assert!(titles("zzz").is_empty());
         // The active theme is not offered again.

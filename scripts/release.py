@@ -135,12 +135,32 @@ def manifest(version, directory, commit):
     (directory / "SHA256SUMS").write_text("".join(f"{sha256(p)}  {p.name}\n" for p in files))
 
 
+def release_for_tag(tag):
+    """Find drafts as well as published releases; the by-tag API excludes drafts."""
+    page = 1
+    found = None
+    while True:
+        result = subprocess.run(["gh", "api", f"repos/{REPO}/releases?per_page=100&page={page}"], capture_output=True, text=True)
+        if result.returncode:
+            raise ValueError("Cannot safely determine existing release state")
+        releases = json.loads(result.stdout)
+        if not isinstance(releases, list):
+            raise ValueError("Invalid release listing")
+        for release in releases:
+            if release["tag_name"] == tag:
+                if found is not None:
+                    raise ValueError("Ambiguous releases for the same tag")
+                found = release
+        if len(releases) < 100:
+            return found
+        page += 1
+
+
 def stage(tag, directory):
     """Never mutate a published release, including on workflow reruns."""
     validation = validate(tag)
-    existing = subprocess.run(["gh", "api", f"repos/{REPO}/releases/tags/{tag}"], capture_output=True, text=True)
-    if existing.returncode == 0:
-        release = json.loads(existing.stdout)
+    release = release_for_tag(tag)
+    if release is not None:
         if not release["draft"]:
             raise ValueError("Refuse to change an already published release")
         subprocess.run(["gh", "release", "edit", tag, "--repo", REPO, "--draft", "--prerelease=" + validation["prerelease"], "--title", f"INCOMPLETE Neptune {validation['version']}", "--notes", "Incomplete draft. Wait for the Desktop release workflow to succeed before review/publication."], check=True)
@@ -148,12 +168,10 @@ def stage(tag, directory):
         for asset in release["assets"]:
             subprocess.run(["gh", "api", "--method", "DELETE", f"repos/{REPO}/releases/assets/{asset['id']}"], check=True)
     else:
-        if "HTTP 404" not in existing.stderr:
-            raise ValueError("Cannot safely determine existing release state")
         subprocess.run(["gh", "release", "create", tag, "--repo", REPO, "--verify-tag", "--draft", "--prerelease=" + validation["prerelease"], "--title", f"INCOMPLETE Neptune {validation['version']}", "--notes", "Incomplete draft. Wait for the Desktop release workflow to succeed before review/publication."], check=True)
     subprocess.run(["gh", "release", "upload", tag, "--repo", REPO, *[str(p) for p in sorted(directory.iterdir())]], check=True)
-    release = json.loads(subprocess.check_output(["gh", "api", f"repos/{REPO}/releases/tags/{tag}"]))
-    if not release["draft"] or {a["name"] for a in release["assets"]} != {p.name for p in directory.iterdir()}:
+    release = release_for_tag(tag)
+    if release is None or not release["draft"] or {a["name"] for a in release["assets"]} != {p.name for p in directory.iterdir()}:
         raise ValueError("Draft upload verification failed; do not publish")
     subprocess.run(["gh", "release", "edit", tag, "--repo", REPO, "--draft", "--prerelease=" + validation["prerelease"], "--title", f"Neptune {validation['version']}", "--notes-file", str(directory.parent / "release-notes.md")], check=True)
     print("Complete draft uploaded. Review artifacts, provenance and native acceptance before publishing.")

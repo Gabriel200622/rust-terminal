@@ -570,11 +570,25 @@ impl App {
             Action::ReadNotifications => self.notifications.acknowledge(None),
             Action::ClearNotifications => self.notifications.clear(),
             Action::Settings => {
-                self.ui.overlay = if self.ui.overlay == OverlayState::Settings {
-                    OverlayState::None
+                if self.ui.overlay == OverlayState::Settings {
+                    // A changed theme draft asks before the sheet closes.
+                    if self.ui.preferences.may_close() {
+                        self.ui.overlay = OverlayState::None;
+                    }
                 } else {
-                    OverlayState::Settings
-                };
+                    // A draft set aside by another overlay is still there.
+                    if !self.ui.preferences.editing() {
+                        self.ui.preferences = Default::default();
+                    }
+                    self.ui.overlay = OverlayState::Settings;
+                }
+            }
+            Action::Themes => {
+                if !self.ui.preferences.editing() {
+                    self.ui.preferences = Default::default();
+                    self.ui.preferences.browse();
+                }
+                self.ui.overlay = OverlayState::Settings;
             }
             Action::Palette => {
                 self.ui.palette_query.clear();

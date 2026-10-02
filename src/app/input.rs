@@ -328,10 +328,14 @@ impl App {
                     && ctx.memory(|memory| {
                         memory.has_focus(search) || memory.had_focus_last_frame(search)
                     });
-                if self.ui.pane_drag.is_some() {
+                if self.ui.overlay == OverlayState::Settings && egui::Popup::is_any_open(ctx) {
+                    egui::Popup::close_all(ctx);
+                } else if self.ui.pane_drag.is_some() {
                     self.cancel_pane_drag(ctx);
                 } else if self.ui.overlay != OverlayState::None {
-                    self.action(ctx, Action::CloseOverlay);
+                    if self.ui.overlay != OverlayState::Settings || !self.ui.preferences.back() {
+                        self.action(ctx, Action::CloseOverlay);
+                    }
                 } else if searching {
                     self.ui.search_open = false;
                     self.search_task = None;
