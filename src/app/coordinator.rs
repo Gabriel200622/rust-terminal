@@ -325,6 +325,34 @@ impl App {
             return;
         }
         match action {
+            Action::CheckUpdates => self.updates.check(ctx),
+            Action::ReviewUpdate => {
+                if self.updates.release.is_some() {
+                    self.ui.overlay = OverlayState::Update;
+                }
+            }
+            Action::DownloadUpdate(version) => {
+                if self
+                    .updates
+                    .release
+                    .as_ref()
+                    .is_some_and(|release| release.version == version)
+                {
+                    self.updates.download(ctx);
+                }
+            }
+            Action::OpenUpdate(version) => {
+                if self
+                    .updates
+                    .release
+                    .as_ref()
+                    .is_some_and(|release| release.version == version)
+                {
+                    self.updates.open(ctx);
+                }
+            }
+            Action::CancelUpdate => self.updates.cancel(),
+            Action::DismissUpdate => self.updates.dismiss(),
             Action::Create(cwd, name) => self.create_workspace(ctx, cwd, name, None, None),
             Action::CreateInGroup(cwd, group) => {
                 self.create_workspace(ctx, cwd, None, None, Some(group))
@@ -549,7 +577,12 @@ impl App {
                 self.ui.search_open = false;
                 self.search_task = None;
             }
-            Action::CloseOverlay => self.ui.overlay = OverlayState::None,
+            Action::CloseOverlay => {
+                if self.ui.overlay == OverlayState::Update {
+                    self.updates.dismiss();
+                }
+                self.ui.overlay = OverlayState::None;
+            }
             Action::DismissError => self.ui.error = None,
             Action::Clear(pane) => {
                 if let Some(session) = self.sessions.get(pane) {
@@ -591,6 +624,7 @@ impl App {
                     return;
                 }
                 self.config = config;
+                self.updates.configure(self.config.release_channel);
                 ctx.set_zoom_factor(self.config.window_zoom);
                 theme::apply(ctx, &self.config);
                 for (_, session) in self.sessions.iter() {

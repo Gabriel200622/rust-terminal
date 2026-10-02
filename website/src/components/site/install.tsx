@@ -37,8 +37,10 @@ export function Install() {
           Build it.
         </h2>
         <p className="mt-4 max-w-[26rem] text-[16px] text-secondary">
-          Neptune is early and has no packaged release yet. With Rust installed, it is
-          three commands.
+          Prefer building from source? With Rust installed, it is three commands.
+          Native installers are available on the{" "}
+          <a href="/download" className="underline underline-offset-4">download page</a>
+          {" "}when a release is published.
         </p>
         <ul className="mt-8 space-y-3">
           {PLATFORMS.map(([name, status, color]) => (

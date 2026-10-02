@@ -89,6 +89,7 @@ pub struct App {
     _font_shortcut_monitor: crate::platform::keyboard::FontShortcutMonitor,
     diagnostics: diagnostics::Diagnostics,
     link_opener: crate::platform::links::LinkOpener,
+    updates: crate::runtime::updates::Updates,
 }
 impl App {
     pub fn new(
@@ -188,9 +189,18 @@ impl App {
             overlay_was_open: false,
             diagnostics: diagnostics::Diagnostics::new(launch.diagnostics),
             link_opener: Default::default(),
+            updates: Default::default(),
         }
     }
     fn poll(&mut self, ctx: &egui::Context) {
+        self.updates.configure(self.config.release_channel);
+        self.updates.poll(
+            ctx,
+            self.startup.is_none()
+                && !self.ephemeral
+                && self.config.check_updates
+                && self.ui.overlay != OverlayState::Update,
+        );
         if let Some(Err(error)) = self.link_opener.poll() {
             self.ui.error = Some(error.into());
         }
@@ -810,7 +820,10 @@ impl eframe::App for App {
         let zoomed = self.ui.zoomed;
         let message = self.ui.error.is_some();
         match self.ui.overlay {
-            OverlayState::Settings => ui::preferences::show(&ctx, &self.config, &mut actions),
+            OverlayState::Settings => {
+                ui::preferences::show(&ctx, &self.config, &self.updates, &mut actions)
+            }
+            OverlayState::Update => ui::updates::show(&ctx, p, &self.updates, &mut actions),
             OverlayState::Palette => ui::palette::show(
                 &ctx,
                 p,
@@ -835,6 +848,9 @@ impl eframe::App for App {
             _ => {}
         }
         ui::dialogs::show(&ctx, p, &mut self.ui, &mut actions);
+        if self.ui.overlay == OverlayState::None && self.ui.error.is_none() {
+            ui::updates::notification(&ctx, p, &self.updates, &mut actions);
+        }
         for action in actions {
             self.action(&ctx, action);
         }
