@@ -48,6 +48,14 @@ comparison with other terminals. Keep new copy to the same standard.
 ## Hosting
 
 The canonical domain is `https://neptune.rs`; metadata and sharing links use it.
+Configure Vercel with `website/` as the project root and `main` as the production
+branch.
+[`vercel.json`](vercel.json) enables automatic deployments only for pushes to
+`main`, including merged pull requests. Other branches do not create preview
+deployments. The `**` rule covers branch names containing `/`.
+Existing branches need to merge or rebase onto `main` after this configuration
+lands so their commits include it.
+
 The export assumes it is served from the root of a domain. To host it under a
 subpath, such as a GitHub Pages project site, set `basePath` in
 `next.config.ts`.
