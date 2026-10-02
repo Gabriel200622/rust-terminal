@@ -476,6 +476,23 @@ fn activity(session: &TerminalSession) -> terminal_core::ProcessActivity {
         .unwrap()
 }
 
+#[track_caller]
+fn wait_for_activity_output(session: &TerminalSession, marker: &str) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let output = session.history_text();
+        if output.contains(marker) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "Missing fixture output {marker:?}; status {:?}; fixture transcript:\n{output}",
+            session.metadata().status
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 #[test]
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn process_activity_distinguishes_idle_foreground_background_and_stopped_jobs() {
@@ -511,7 +528,7 @@ fn process_activity_tracks_interactive_jobs(shell_path: &str, args: Vec<String>)
     session
         .write(b"sh -c 'printf \"FOREGROUND_%s\\n\" ready; exec sleep 30'\r")
         .unwrap();
-    wait_for(|| screen(&session).contains("FOREGROUND_ready"));
+    wait_for_activity_output(&session, "FOREGROUND_ready");
     assert_eq!(activity(&session), Running);
     let prompts = session.history_text().matches("ACTIVITY_READY>").count();
     session.write(b"\x03").unwrap();
@@ -524,14 +541,14 @@ fn process_activity_tracks_interactive_jobs(shell_path: &str, args: Vec<String>)
     session
         .write(b"sleep 30 & job=$!; printf 'BACKGROUND_%s\\n' ready\r")
         .unwrap();
-    wait_for(|| screen(&session).contains("BACKGROUND_ready"));
+    wait_for_activity_output(&session, "BACKGROUND_ready");
     wait_for(|| session.history_text().matches("ACTIVITY_READY>").count() > prompts);
     assert_eq!(activity(&session), Running);
     let prompts = session.history_text().matches("ACTIVITY_READY>").count();
     session
         .write(b"kill -STOP $job; printf 'STOPPED_%s\\n' ready\r")
         .unwrap();
-    wait_for(|| screen(&session).contains("STOPPED_ready"));
+    wait_for_activity_output(&session, "STOPPED_ready");
     wait_for(|| session.history_text().matches("ACTIVITY_READY>").count() > prompts);
     assert_eq!(activity(&session), Running);
     // Interactive shells can return a pending stopped status from wait before
@@ -539,7 +556,7 @@ fn process_activity_tracks_interactive_jobs(shell_path: &str, args: Vec<String>)
     session
         .write(b"kill -KILL $job; while kill -0 $job 2>/dev/null; do wait $job; done; printf 'FINISHED_%s\\n' ready\r")
         .unwrap();
-    wait_for(|| screen(&session).contains("FINISHED_ready"));
+    wait_for_activity_output(&session, "FINISHED_ready");
     wait_for(|| activity(&session) == Idle);
     session.write(b"exit\r").unwrap();
     wait_for(|| matches!(session.metadata().status, SessionStatus::Exited { .. }));
