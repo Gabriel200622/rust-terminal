@@ -3,6 +3,7 @@ import { Geist, JetBrains_Mono } from "next/font/google";
 import { PrefsProvider } from "@/components/prefs";
 import { SITE_URL } from "@/lib/site";
 import { Analytics } from "@vercel/analytics/next";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import "./globals.css";
 
 // The same faces the app bundles: Geist for the interface, JetBrains Mono for
@@ -56,6 +57,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-dvh">
         <PrefsProvider>{children}</PrefsProvider>
         <Analytics />
+        <SpeedInsights />
       </body>
     </html>
   );
