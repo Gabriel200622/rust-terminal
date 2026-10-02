@@ -615,7 +615,8 @@ impl eframe::App for App {
         let p = Palette::for_config(&self.config);
         let bounds = ui.max_rect();
         let radius = if ctx.input(|i| {
-            !i.viewport().maximized.unwrap_or(false) && !i.viewport().fullscreen.unwrap_or(false)
+            !i.viewport().fullscreen.unwrap_or(false)
+                && (cfg!(target_os = "macos") || !i.viewport().maximized.unwrap_or(false))
         }) {
             metrics::WINDOW_RADIUS
         } else {

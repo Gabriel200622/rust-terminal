@@ -72,8 +72,9 @@ always also carried by text, a badge or position.
 Radii are concentric: the window corner (16) equals the pane corner (10) plus
 the gutter between them (6). Sheets use 14, controls and rows 8, menus 10.
 Restored windows use the same transparent outer corners and hairline on Linux,
-macOS and Windows. Maximized and fullscreen windows fill the screen with square
-corners; restoring the window brings the rounded corners back.
+macOS and Windows. Maximized windows keep rounded corners on macOS and use
+square corners on Linux and Windows. Fullscreen windows use square corners on
+every platform; restoring the window brings the rounded corners back.
 The toolbar is 44 points tall and pane headers 30. Controls are 30 points high;
 icon buttons keep a 28-point target around a 16-point glyph.
 

@@ -68,11 +68,17 @@ fn window_corners_follow_native_window_state() {
     let ctx = egui::Context::default();
     ctx.set_fonts(crate::platform::fonts::bundled_definitions());
     let mut frame = eframe::Frame::_new_kittest();
+    let maximized_radius = if cfg!(target_os = "macos") {
+        metrics::WINDOW_RADIUS
+    } else {
+        0
+    };
     for size in [egui::vec2(900.0, 640.0), egui::vec2(640.0, 480.0)] {
         for (maximized, fullscreen, radius) in [
             (false, false, metrics::WINDOW_RADIUS),
-            (true, false, 0),
+            (true, false, maximized_radius),
             (false, true, 0),
+            (true, true, 0),
             (false, false, metrics::WINDOW_RADIUS),
         ] {
             let bounds = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
