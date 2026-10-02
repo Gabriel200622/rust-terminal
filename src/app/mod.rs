@@ -349,7 +349,7 @@ impl App {
         if self.controller.model().workspaces().is_empty() {
             let cwd = self.initial_cwd.take().unwrap_or_else(default_cwd);
             let remote = self.initial_remote.take();
-            self.create_workspace(ctx, cwd, None, remote);
+            self.create_workspace(ctx, cwd, None, remote, None);
         }
         // Bind the CLI command before queued user actions can change focus.
         self.command_target = self.controller.model().active_pane().and_then(|id| {
@@ -378,6 +378,7 @@ impl App {
             .iter()
             .map(|w| WorkspaceView {
                 id: w.id(),
+                group: w.group(),
                 name: w.name().into(),
                 cwd: w.cwd().into(),
                 remote: w.remote().map(|remote| remote.destination().to_owned()),
@@ -671,6 +672,7 @@ impl eframe::App for App {
         let reveal = sliding.unwrap_or(if sidebar_open { 1.0 } else { 0.0 });
         let chrome = ui::chrome::ChromeView {
             workspaces: &views,
+            groups: self.controller.model().groups(),
             active,
             pane: active_pane,
             subtitle: &subtitle,
@@ -834,6 +836,7 @@ impl eframe::App for App {
                         .and_then(|id| self.controller.model().workspace(id))
                         .map(|workspace| workspace.layout()),
                     workspaces: &views,
+                    groups: self.controller.model().groups(),
                     active: self.controller.model().active_workspace(),
                     config: &self.config,
                     zoomed,

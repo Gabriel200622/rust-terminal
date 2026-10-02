@@ -1,7 +1,7 @@
 //! Window chrome: the full-height sidebar, the toolbar and window controls.
 use super::helpers::{
     self, animate, edit_shortcut, elided, galley_at, keycaps, menu_item, menu_layout,
-    menu_separator, shortcut,
+    menu_separator, menu_submenu, shortcut,
 };
 use super::{Action, UiState, WorkspaceView};
 use crate::{
@@ -14,11 +14,12 @@ use eframe::egui::{
     Sense, Shadow, Stroke, StrokeKind, Ui, UiBuilder, Vec2, WidgetInfo, WidgetType,
     emath::GuiRounding as _, style::ScrollAnimation, vec2,
 };
-use neptune_model::{Destination, PaneId, WorkspaceId};
+use neptune_model::{Destination, PaneId, WorkspaceGroup, WorkspaceGroupId, WorkspaceId};
 
 /// What the chrome needs to know about the frame it surrounds.
 pub struct ChromeView<'a> {
     pub workspaces: &'a [WorkspaceView],
+    pub groups: &'a [WorkspaceGroup],
     pub active: Option<WorkspaceId>,
     pub pane: Option<PaneId>,
     /// The focused terminal's label and directory.
@@ -479,21 +480,51 @@ fn workspace_menu(
     ui: &mut Ui,
     p: Palette,
     workspace: &WorkspaceView,
-    (index, count): (usize, usize),
+    view: &ChromeView,
     actions: &mut Vec<Action>,
 ) {
     menu_layout(ui, 210.0);
+    let siblings: Vec<usize> = view
+        .workspaces
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| row.group == workspace.group)
+        .map(|(index, _)| index)
+        .collect();
+    let position = siblings
+        .iter()
+        .position(|index| view.workspaces[*index].id == workspace.id)
+        .unwrap_or(0);
     if menu_item(ui, p, Icon::Pencil, "Rename…", "", false) {
         actions.push(Action::Rename(workspace.id));
         ui.close();
     }
-    if index > 0 && menu_item(ui, p, Icon::ArrowUp, "Move up", "", false) {
-        actions.push(Action::MoveWorkspace(workspace.id, index - 1));
+    if position > 0 && menu_item(ui, p, Icon::ArrowUp, "Move up", "", false) {
+        actions.push(Action::MoveWorkspace(workspace.id, siblings[position - 1]));
         ui.close();
     }
-    if index + 1 < count && menu_item(ui, p, Icon::ArrowDown, "Move down", "", false) {
-        actions.push(Action::MoveWorkspace(workspace.id, index + 1));
+    if position + 1 < siblings.len() && menu_item(ui, p, Icon::ArrowDown, "Move down", "", false) {
+        actions.push(Action::MoveWorkspace(workspace.id, siblings[position + 1]));
         ui.close();
+    }
+    if !view.groups.is_empty() {
+        menu_submenu(ui, p, Icon::Folder, "Move to group", |ui| {
+            menu_layout(ui, 210.0);
+            if workspace.group.is_some() && menu_item(ui, p, Icon::Grid, "Ungrouped", "", false) {
+                actions.push(Action::MoveToGroup(workspace.id, None));
+                ui.close();
+            }
+            for group in view.groups {
+                if Some(group.id()) != workspace.group {
+                    ui.push_id(group.id(), |ui| {
+                        if menu_item(ui, p, Icon::Folder, group.name(), "", false) {
+                            actions.push(Action::MoveToGroup(workspace.id, Some(group.id())));
+                            ui.close();
+                        }
+                    });
+                }
+            }
+        });
     }
     if workspace.remote.is_some() {
         if menu_item(ui, p, Icon::Globe, "Disconnect from SSH", "", false) {
@@ -538,6 +569,7 @@ fn workspace_row(
     ui: &mut Ui,
     p: Palette,
     workspace: &WorkspaceView,
+    view: &ChromeView,
     state: RowState,
     actions: &mut Vec<Action>,
 ) -> egui::Response {
@@ -745,7 +777,7 @@ fn workspace_row(
     if response.double_clicked() {
         actions.push(Action::Rename(workspace.id));
     }
-    response.context_menu(|ui| workspace_menu(ui, p, workspace, position, actions));
+    response.context_menu(|ui| workspace_menu(ui, p, workspace, view, actions));
 
     let more = Rect::from_center_size(
         Pos2::new(
@@ -790,22 +822,22 @@ fn workspace_row(
             p.muted,
         );
     }
-    egui::Popup::menu(&more_response)
-        .show(|ui| workspace_menu(ui, p, workspace, position, actions));
+    egui::Popup::menu(&more_response).show(|ui| workspace_menu(ui, p, workspace, view, actions));
     response
 }
 
 /// The workspace rows. Dragging one lifts it out of the list: it follows the
 /// pointer while its neighbours ease aside, and takes the gap on release.
-fn workspace_list(
+fn workspace_rows(
     ui: &mut Ui,
     p: Palette,
     view: &ChromeView,
+    rows: &[&WorkspaceView],
     viewport: Rect,
     drag: &mut WorkspaceDrag,
     actions: &mut Vec<Action>,
 ) {
-    let count = view.workspaces.len();
+    let count = rows.len();
     let (list, _) = ui.allocate_exact_size(
         vec2(
             ui.available_width(),
@@ -815,7 +847,7 @@ fn workspace_list(
     );
     let lifted = drag
         .lifted
-        .and_then(|id| view.workspaces.iter().position(|w| w.id == id));
+        .and_then(|id| rows.iter().position(|w| w.id == id));
     if lifted.is_none() {
         // Nothing is lifted, or its workspace has closed.
         *drag = WorkspaceDrag::default();
@@ -839,7 +871,7 @@ fn workspace_list(
             .max(low);
         let top = pointer
             .map(|pointer| pointer.y - grip - list.top())
-            .or_else(|| shown(view.workspaces[origin].id, &drag.tops))
+            .or_else(|| shown(rows[origin].id, &drag.tops))
             .unwrap_or(origin as f32 * ROW_STEP)
             .clamp(low, high);
         if let Some(pointer) = pointer {
@@ -879,7 +911,12 @@ fn workspace_list(
         .filter(|index| Some(*index) != lifted)
         .chain(lifted)
     {
-        let workspace = &view.workspaces[index];
+        let workspace = rows[index];
+        let global_index = view
+            .workspaces
+            .iter()
+            .position(|w| w.id == workspace.id)
+            .unwrap_or(index);
         let top = match held {
             Some((origin, top)) if origin == index => top,
             _ => {
@@ -904,6 +941,7 @@ fn workspace_list(
             ui,
             p,
             workspace,
+            view,
             RowState {
                 rect: Rect::from_min_size(
                     Pos2::new(
@@ -918,7 +956,7 @@ fn workspace_list(
                     ),
                     vec2(list.width(), ROW_HEIGHT),
                 ),
-                position: (index, count),
+                position: (global_index, view.workspaces.len()),
                 selected: Some(workspace.id) == view.active,
                 lift: animate(
                     ui.ctx(),
@@ -935,7 +973,12 @@ fn workspace_list(
         if let Some((origin, target)) = target.filter(|(origin, _)| *origin == index) {
             if response.drag_stopped() {
                 if origin != target {
-                    actions.push(Action::MoveWorkspace(workspace.id, target));
+                    let global_target = view
+                        .workspaces
+                        .iter()
+                        .position(|w| w.id == rows[target].id)
+                        .unwrap_or(target);
+                    actions.push(Action::MoveWorkspace(workspace.id, global_target));
                 }
                 drag.grip = None;
                 ui.ctx().request_repaint();
@@ -962,6 +1005,284 @@ fn workspace_list(
         *drag = WorkspaceDrag::default();
     } else {
         drag.tops = tops;
+    }
+}
+
+fn creation_menu(
+    ui: &mut Ui,
+    p: Palette,
+    group: Option<WorkspaceGroupId>,
+    actions: &mut Vec<Action>,
+) {
+    menu_layout(ui, 230.0);
+    if menu_item(ui, p, Icon::Plus, "New workspace", "", false) {
+        actions.push(group.map_or(Action::New, Action::NewInGroup));
+        ui.close();
+    }
+    if menu_item(ui, p, Icon::Globe, "New SSH workspace", "", false) {
+        actions.push(group.map_or(Action::Ssh(None), Action::SshInGroup));
+        ui.close();
+    }
+    if group.is_none() && menu_item(ui, p, Icon::Folder, "New workspace group", "", false) {
+        actions.push(Action::NewGroup);
+        ui.close();
+    }
+}
+
+fn group_row(
+    ui: &mut Ui,
+    p: Palette,
+    view: &ChromeView,
+    group: &WorkspaceGroup,
+    openness: f32,
+    actions: &mut Vec<Action>,
+) {
+    let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
+    let plus = Rect::from_center_size(
+        Pos2::new(row.right() - 17.0, row.center().y),
+        Vec2::splat(28.0),
+    );
+    let response = ui.interact(
+        row,
+        ui.id().with(("workspace-group", group.id())),
+        Sense::click(),
+    );
+    let create = ui.interact(
+        plus,
+        ui.id().with(("group-create", group.id())),
+        Sense::click(),
+    );
+    let hovered = ui.rect_contains_pointer(row) || response.context_menu_opened();
+    let selected = view
+        .workspaces
+        .iter()
+        .any(|w| w.group == Some(group.id()) && Some(w.id) == view.active);
+    let painter = ui.painter();
+    if hovered {
+        painter.rect_filled(row, metrics::ROW_RADIUS, p.hover);
+    }
+    if response.has_focus() {
+        painter.rect_stroke(
+            response.rect,
+            metrics::ROW_RADIUS,
+            Stroke::new(1.5, p.accent),
+            StrokeKind::Inside,
+        );
+    }
+    let center = Pos2::new(row.left() + 12.0, row.center().y);
+    let rotation = egui::emath::Rot2::from_angle(openness * std::f32::consts::FRAC_PI_2);
+    painter.add(egui::Shape::line(
+        vec![
+            center + rotation * vec2(-2.0, -4.0),
+            center + rotation * vec2(2.0, 0.0),
+            center + rotation * vec2(-2.0, 4.0),
+        ],
+        Stroke::new(1.5, p.muted),
+    ));
+    icons::paint(
+        painter,
+        Rect::from_center_size(
+            Pos2::new(row.left() + 31.0, row.center().y),
+            Vec2::splat(17.0),
+        ),
+        Icon::Folder,
+        if selected { p.accent } else { p.secondary },
+    );
+    galley_at(
+        painter,
+        Pos2::new(row.left() + 46.0, row.center().y),
+        elided(
+            painter,
+            group.name(),
+            theme::medium(13.0),
+            if selected || hovered {
+                p.fg
+            } else {
+                p.secondary
+            },
+            plus.left() - row.left() - 50.0,
+        ),
+    );
+    let reveal = animate(
+        ui.ctx(),
+        create.id.with("reveal"),
+        hovered || create.has_focus(),
+        0.12,
+    );
+    if reveal > 0.0 {
+        if create.hovered() || create.is_pointer_button_down_on() {
+            painter.rect_filled(plus, 6, p.pressed);
+        }
+        if create.has_focus() {
+            painter.rect_stroke(plus, 6, Stroke::new(1.5, p.accent), StrokeKind::Inside);
+        }
+        icons::paint(
+            painter,
+            Rect::from_center_size(
+                plus.center(),
+                Vec2::splat(
+                    16.0 * (0.25 + 0.75 * reveal)
+                        * if create.is_pointer_button_down_on() {
+                            0.96
+                        } else {
+                            1.0
+                        },
+                ),
+            ),
+            Icon::Plus,
+            theme::tint(if create.hovered() { p.fg } else { p.secondary }, reveal),
+        );
+    } else {
+        let count = view
+            .workspaces
+            .iter()
+            .filter(|w| w.group == Some(group.id()))
+            .count();
+        if count > 0 {
+            painter.text(
+                plus.center(),
+                Align2::CENTER_CENTER,
+                count.to_string(),
+                theme::medium(11.0),
+                p.muted,
+            );
+        }
+    }
+    response.widget_info(|| {
+        WidgetInfo::selected(
+            WidgetType::CollapsingHeader,
+            true,
+            !group.collapsed(),
+            group.name(),
+        )
+    });
+    create.widget_info(|| {
+        WidgetInfo::labeled(
+            WidgetType::Button,
+            true,
+            format!("New workspace in {}", group.name()),
+        )
+    });
+    if response.double_clicked() {
+        actions.push(Action::RenameGroup(group.id()));
+    } else if response.clicked() {
+        actions.push(Action::SetGroupCollapsed(group.id(), !group.collapsed()));
+    }
+    if create
+        .on_hover_text(format!("New workspace in {}", group.name()))
+        .clicked()
+    {
+        actions.push(Action::NewInGroup(group.id()));
+    }
+    response
+        .on_hover_cursor(CursorIcon::PointingHand)
+        .context_menu(|ui| {
+            creation_menu(ui, p, Some(group.id()), actions);
+            menu_separator(ui, p);
+            if menu_item(ui, p, Icon::Pencil, "Rename group…", "", false) {
+                actions.push(Action::RenameGroup(group.id()));
+                ui.close();
+            }
+            if menu_item(ui, p, Icon::Close, "Remove group", "", false) {
+                actions.push(Action::RemoveGroup(group.id()));
+                ui.close();
+            }
+        });
+}
+
+fn workspace_list(
+    ui: &mut Ui,
+    p: Palette,
+    view: &ChromeView,
+    viewport: Rect,
+    drag: &mut WorkspaceDrag,
+    actions: &mut Vec<Action>,
+) {
+    let root: Vec<_> = view
+        .workspaces
+        .iter()
+        .filter(|w| w.group.is_none())
+        .collect();
+    let mut idle = WorkspaceDrag::default();
+    let root_drag = if drag.lifted.is_none_or(|id| root.iter().any(|w| w.id == id)) {
+        &mut *drag
+    } else {
+        &mut idle
+    };
+    workspace_rows(ui, p, view, &root, viewport, root_drag, actions);
+    for group in view.groups {
+        ui.push_id(("group", group.id()), |ui| {
+            let mut collapse = egui::collapsing_header::CollapsingState::load_with_default_open(
+                ui.ctx(),
+                ui.id().with("body"),
+                !group.collapsed(),
+            );
+            collapse.set_open(!group.collapsed());
+            let openness = collapse.openness(ui.ctx());
+            group_row(ui, p, view, group, openness, actions);
+            if group.collapsed()
+                && drag.lifted.is_some_and(|id| {
+                    view.workspaces
+                        .iter()
+                        .any(|w| w.id == id && w.group == Some(group.id()))
+                })
+            {
+                *drag = WorkspaceDrag::default();
+            }
+            collapse.show_body_unindented(ui, |ui| {
+                ui.set_opacity(openness);
+                // A folder's children keep the row's full height and a quiet indent.
+                ui.scope_builder(
+                    UiBuilder::new().max_rect(Rect::from_min_max(
+                        ui.cursor().min + vec2(16.0, 0.0),
+                        ui.max_rect().max,
+                    )),
+                    |ui| {
+                        let rows: Vec<_> = view
+                            .workspaces
+                            .iter()
+                            .filter(|w| w.group == Some(group.id()))
+                            .collect();
+                        let mut idle = WorkspaceDrag::default();
+                        let child_drag =
+                            if drag.lifted.is_none_or(|id| rows.iter().any(|w| w.id == id)) {
+                                &mut *drag
+                            } else {
+                                &mut idle
+                            };
+                        if rows.is_empty() {
+                            let (rect, _) = ui.allocate_exact_size(
+                                vec2(ui.available_width(), 28.0),
+                                Sense::hover(),
+                            );
+                            ui.painter().text(
+                                rect.left_center() + vec2(9.0, 0.0),
+                                Align2::LEFT_CENTER,
+                                "No workspaces",
+                                theme::regular(11.5),
+                                p.muted,
+                            );
+                        } else {
+                            workspace_rows(
+                                ui,
+                                p,
+                                view,
+                                &rows,
+                                viewport.intersect(ui.clip_rect()),
+                                child_drag,
+                                actions,
+                            );
+                        }
+                    },
+                );
+            });
+        });
+    }
+    if drag
+        .lifted
+        .is_some_and(|id| !view.workspaces.iter().any(|w| w.id == id))
+    {
+        *drag = WorkspaceDrag::default();
     }
 }
 
@@ -1001,6 +1322,16 @@ pub fn sidebar(
     let drag = &mut state.sidebar_drag;
     let strip = Rect::from_min_size(rect.min, vec2(rect.width(), metrics::TOOLBAR_HEIGHT));
     drag_region(ui, strip, "sidebar-drag");
+    // Register the backdrop first so workspace and folder menus take precedence.
+    let background = ui.interact(
+        Rect::from_min_max(
+            Pos2::new(rect.left() + 2.0, strip.bottom()),
+            Pos2::new(rect.right() - 4.0, rect.bottom()),
+        ),
+        ui.id().with("sidebar-context"),
+        Sense::click(),
+    );
+    background.context_menu(|ui| creation_menu(ui, p, None, actions));
 
     ui.painter().text(
         Pos2::new(rect.left() + 18.0, strip.bottom() + 14.0),
@@ -1159,6 +1490,7 @@ mod tests {
     fn workspaces(ids: &[u64]) -> Vec<WorkspaceView> {
         ids.iter()
             .map(|id| WorkspaceView {
+                group: None,
                 id: WorkspaceId::new(*id),
                 name: format!("workspace {id}"),
                 cwd: "/srv/app".into(),
@@ -1190,6 +1522,8 @@ mod tests {
     struct Fixture {
         ctx: egui::Context,
         order: Vec<u64>,
+        groups: Vec<WorkspaceGroup>,
+        membership: Vec<(u64, WorkspaceGroupId)>,
         /// Window height; a short window makes the list scroll.
         height: f32,
         state: UiState,
@@ -1210,6 +1544,8 @@ mod tests {
             let mut fixture = Self {
                 ctx,
                 order: order.into(),
+                groups: Vec::new(),
+                membership: Vec::new(),
                 height,
                 state: UiState::default(),
                 actions: Vec::new(),
@@ -1220,9 +1556,17 @@ mod tests {
         }
 
         fn frame(&mut self, events: Vec<Event>) {
-            let views = workspaces(&self.order);
+            let mut views = workspaces(&self.order);
+            for workspace in &mut views {
+                workspace.group = self
+                    .membership
+                    .iter()
+                    .find(|(id, _)| *id == workspace.id.get())
+                    .map(|(_, group)| *group);
+            }
             let view = ChromeView {
                 workspaces: &views,
+                groups: &self.groups,
                 active: views.first().map(|workspace| workspace.id),
                 pane: None,
                 subtitle: "",
@@ -1250,6 +1594,31 @@ mod tests {
             );
             output.textures_delta.clear();
             for action in &actions {
+                if let Action::SetGroupCollapsed(group, collapsed) = action {
+                    let specs = self
+                        .groups
+                        .iter()
+                        .map(|folder| neptune_model::WorkspaceGroupSpec {
+                            id: folder.id(),
+                            name: folder.name().into(),
+                            collapsed: if folder.id() == *group {
+                                *collapsed
+                            } else {
+                                folder.collapsed()
+                            },
+                        })
+                        .collect();
+                    self.groups = neptune_model::Model::restore_grouped(
+                        Vec::new(),
+                        specs,
+                        None,
+                        true,
+                        Default::default(),
+                    )
+                    .unwrap()
+                    .groups()
+                    .to_owned();
+                }
                 if let Action::MoveWorkspace(id, index) = action {
                     let from = self.order.iter().position(|w| *w == id.get()).unwrap();
                     let moved = self.order.remove(from);
@@ -1284,6 +1653,43 @@ mod tests {
                 })
                 .collect()
         }
+    }
+
+    #[test]
+    fn folder_plus_creates_inside_its_group_without_toggling_or_selecting() {
+        let mut sidebar = Fixture::new(&[1, 2]);
+        let group = WorkspaceGroupId::new(7);
+        sidebar.groups = neptune_model::Model::restore_grouped(
+            Vec::new(),
+            vec![neptune_model::WorkspaceGroupSpec {
+                id: group,
+                name: "Projects".into(),
+                collapsed: false,
+            }],
+            None,
+            true,
+            Default::default(),
+        )
+        .unwrap()
+        .groups()
+        .to_owned();
+        sidebar.membership = vec![(2, group)];
+        sidebar.frame(vec![]);
+        let header_y = metrics::TOOLBAR_HEIGHT + 30.0 + ROW_HEIGHT + 4.0 + 17.0;
+        let plus = Pos2::new(216.0 - 8.0 - 17.0, header_y);
+        sidebar.frame(vec![Event::PointerMoved(plus)]);
+        sidebar.frame(vec![button(plus, true)]);
+        sidebar.frame(vec![button(plus, false)]);
+        assert!(matches!(sidebar.actions.as_slice(), [Action::NewInGroup(id)] if *id == group));
+        sidebar.actions.clear();
+        let header = Pos2::new(100.0, header_y);
+        sidebar.frame(vec![Event::PointerMoved(header)]);
+        sidebar.frame(vec![button(header, true)]);
+        sidebar.frame(vec![button(header, false)]);
+        assert!(
+            matches!(sidebar.actions.as_slice(), [Action::SetGroupCollapsed(id, true)] if *id == group)
+        );
+        assert!(sidebar.groups[0].collapsed());
     }
 
     #[test]
@@ -1443,6 +1849,7 @@ mod tests {
         let workspaces: Vec<WorkspaceView> = [(1, None), (2, None), (3, Some("me@devbox"))]
             .into_iter()
             .map(|(id, remote): (u64, Option<&str>)| WorkspaceView {
+                group: None,
                 id: WorkspaceId::new(id),
                 name: format!("workspace {id}"),
                 cwd: "/srv/app".into(),
@@ -1467,6 +1874,7 @@ mod tests {
                         Palette::for_config(&config),
                         &ChromeView {
                             workspaces: &workspaces,
+                            groups: &[],
                             active: Some(WorkspaceId::new(1)),
                             pane: Some(pane),
                             subtitle: "",

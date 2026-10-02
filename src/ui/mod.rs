@@ -9,7 +9,7 @@ pub mod preferences;
 pub mod search;
 pub mod workspace;
 use crate::{config::Config, terminal::Cache};
-use neptune_model::{Axis, Destination, PaneId, SplitId, WorkspaceId};
+use neptune_model::{Axis, Destination, PaneId, SplitId, WorkspaceGroupId, WorkspaceId};
 use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,8 +27,11 @@ pub enum OverlayState {
     Settings,
     Palette,
     Rename(WorkspaceId),
+    RenameGroup(WorkspaceGroupId),
+    NewGroup,
     /// Connect the workspace over SSH, or create a connected one with `None`.
     Ssh(Option<WorkspaceId>),
+    SshInGroup(WorkspaceGroupId),
     ConfirmClose(Close),
 }
 #[derive(Default)]
@@ -68,6 +71,17 @@ pub enum Action {
     Ratio(SplitId, f32),
     Rename(WorkspaceId),
     New,
+    NewInGroup(WorkspaceGroupId),
+    NewGroup,
+    CreateGroup(String),
+    RenameGroup(WorkspaceGroupId),
+    SetGroupName(WorkspaceGroupId, String),
+    SetGroupCollapsed(WorkspaceGroupId, bool),
+    MoveToGroup(WorkspaceId, Option<WorkspaceGroupId>),
+    RemoveGroup(WorkspaceGroupId),
+    SshInGroup(WorkspaceGroupId),
+    ConnectInGroup(WorkspaceGroupId, String),
+    CreateInGroup(PathBuf, WorkspaceGroupId),
     /// Open the SSH sheet for a workspace, or for a new one with `None`.
     Ssh(Option<WorkspaceId>),
     Connect {
@@ -109,6 +123,7 @@ pub enum Action {
 #[derive(Clone)]
 pub struct WorkspaceView {
     pub id: WorkspaceId,
+    pub group: Option<WorkspaceGroupId>,
     pub name: String,
     pub cwd: PathBuf,
     /// SSH destination of a remote workspace.

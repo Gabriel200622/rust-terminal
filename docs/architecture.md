@@ -19,7 +19,7 @@ The initial engine is `alacritty_terminal`, with PTYs provided by `portable-pty`
 
 ## Component boundaries
 
-`neptune-model` owns ordered workspaces, pane membership, stable pane/workspace/split identities, validated layouts, lifecycle, targeted commands and the optional SSH destination of a remote workspace. It depends only on `serde`. Model fields are private, and the pure controller returns effects; it opens no windows, shells or files.
+`neptune-model` owns ordered workspaces and folder groups, group and pane membership, stable group/pane/workspace/split identities, validated layouts, lifecycle, targeted commands and the optional SSH destination of a remote workspace. Groups are one level deep, retain empty folders and collapsed state, and share the workspace count limit. Group commands persist organization without restarting sessions; removing a group retains its workspaces. It depends only on `serde`. Model fields are private, and the pure controller returns effects; it opens no windows, shells or files.
 
 `terminal-core` owns PTY sessions and terminal state. Each pane is an independent session. Its public contract contains project-owned input modes, coordinates, colors, selection, events, owned viewport snapshots and budgeted search. Alacritty types and mutable grid locks remain internal.
 

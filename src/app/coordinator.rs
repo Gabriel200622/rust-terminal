@@ -271,6 +271,9 @@ impl App {
             && matches!(
                 action,
                 Action::Create(..)
+                    | Action::CreateInGroup(..)
+                    | Action::CreateGroup(_)
+                    | Action::ConnectInGroup(..)
                     | Action::Connect { .. }
                     | Action::Preferences(_)
                     | Action::ZoomUiIn
@@ -288,7 +291,14 @@ impl App {
                     Some("Too many workspace operations are waiting for restoration".into());
                 return;
             }
-            if matches!(action, Action::Create(..) | Action::Connect { .. }) {
+            if matches!(
+                action,
+                Action::Create(..)
+                    | Action::CreateInGroup(..)
+                    | Action::CreateGroup(_)
+                    | Action::ConnectInGroup(..)
+                    | Action::Connect { .. }
+            ) {
                 self.ui.overlay = OverlayState::None;
             }
             self.deferred_actions.push(action);
@@ -296,7 +306,54 @@ impl App {
             return;
         }
         match action {
-            Action::Create(cwd, name) => self.create_workspace(ctx, cwd, name, None),
+            Action::Create(cwd, name) => self.create_workspace(ctx, cwd, name, None, None),
+            Action::CreateInGroup(cwd, group) => {
+                self.create_workspace(ctx, cwd, None, None, Some(group))
+            }
+            Action::NewInGroup(group) => {
+                if let Some(dirs) = directories::BaseDirs::new() {
+                    self.action(ctx, Action::CreateInGroup(dirs.home_dir().into(), group));
+                } else {
+                    self.ui.error = Some("Could not determine your home directory".into());
+                }
+            }
+            Action::NewGroup => {
+                self.ui.rename_name.clear();
+                self.ui.overlay = OverlayState::NewGroup;
+                self.ui.overlay_focus = true;
+            }
+            Action::CreateGroup(name) => {
+                self.dispatch(ctx, Command::AddWorkspaceGroup { name });
+                self.ui.overlay = OverlayState::None;
+            }
+            Action::RenameGroup(group) => {
+                if let Some(folder) = self.controller.model().group(group) {
+                    self.ui.rename_name = folder.name().into();
+                    self.ui.overlay = OverlayState::RenameGroup(group);
+                    self.ui.overlay_focus = true;
+                }
+            }
+            Action::SetGroupName(group, name) => {
+                self.dispatch(ctx, Command::RenameWorkspaceGroup { group, name })
+            }
+            Action::SetGroupCollapsed(group, collapsed) => self.dispatch(
+                ctx,
+                Command::SetWorkspaceGroupCollapsed { group, collapsed },
+            ),
+            Action::MoveToGroup(workspace, group) => {
+                self.dispatch(ctx, Command::SetWorkspaceGroup { workspace, group })
+            }
+            Action::RemoveGroup(group) => self.dispatch(ctx, Command::RemoveWorkspaceGroup(group)),
+            Action::SshInGroup(group) => {
+                if self.controller.model().group(group).is_some() {
+                    self.ui.ssh_host.clear();
+                    self.ui.overlay = OverlayState::SshInGroup(group);
+                    self.ui.overlay_focus = true;
+                }
+            }
+            Action::ConnectInGroup(group, destination) => {
+                self.create_workspace(ctx, default_cwd(), None, Some(destination), Some(group))
+            }
             Action::Ssh(workspace) => {
                 // Only a local workspace can be connected; a remote one is
                 // disconnected first.
@@ -315,7 +372,7 @@ impl App {
             Action::Connect {
                 workspace: None,
                 destination,
-            } => self.create_workspace(ctx, default_cwd(), None, Some(destination)),
+            } => self.create_workspace(ctx, default_cwd(), None, Some(destination), None),
             Action::Connect {
                 workspace: Some(workspace),
                 destination,
@@ -581,6 +638,7 @@ impl App {
         cwd: PathBuf,
         name: Option<String>,
         remote: Option<String>,
+        group: Option<neptune_model::WorkspaceGroupId>,
     ) {
         let name = name.unwrap_or_else(|| match &remote {
             Some(destination) => remote_label(destination),
@@ -590,7 +648,15 @@ impl App {
                 .to_string_lossy()
                 .into_owned(),
         });
-        self.dispatch(ctx, Command::AddWorkspace { cwd, name, remote });
+        self.dispatch(
+            ctx,
+            Command::AddWorkspace {
+                cwd,
+                name,
+                remote,
+                group,
+            },
+        );
         self.ui.overlay = OverlayState::None;
     }
 

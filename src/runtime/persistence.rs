@@ -358,6 +358,7 @@ mod tests {
         let mut controller = Controller::new(Model::default());
         controller
             .dispatch(Command::AddWorkspace {
+                group: None,
                 cwd: PathBuf::from("/fake"),
                 name: name.into(),
                 remote: None,
