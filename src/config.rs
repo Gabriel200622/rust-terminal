@@ -609,7 +609,9 @@ font_size = 15.0
 
     // Atomic replacement guarantees complete contents, not that a racing
     // Windows open always succeeds. Test this Windows error policy on every
-    // host, but apply it only to the Windows stress-test reader below.
+    // host, but apply it only to the Windows stress-test reader below. That
+    // reader has observed ERROR_FILE_NOT_FOUND (2) during concurrent replaces;
+    // retry it within the same budget, then require the final file to exist.
     fn read_with_windows_retries(
         mut read: impl FnMut() -> std::io::Result<Vec<u8>>,
     ) -> std::io::Result<Vec<u8>> {
@@ -619,7 +621,7 @@ font_size = 15.0
         loop {
             match read() {
                 Err(error)
-                    if matches!(error.raw_os_error(), Some(5 | 32 | 33))
+                    if matches!(error.raw_os_error(), Some(2 | 5 | 32 | 33))
                         && Instant::now() < deadline =>
                 {
                     std::thread::sleep(Duration::from_millis(5));
@@ -630,8 +632,8 @@ font_size = 15.0
     }
 
     #[test]
-    fn concurrent_reader_recovers_from_windows_access_and_sharing_conflicts() {
-        for code in [5, 32, 33] {
+    fn concurrent_reader_recovers_from_transient_windows_replacement_conflicts() {
+        for code in [2, 5, 32, 33] {
             let mut attempts = 0;
             let bytes = read_with_windows_retries(|| {
                 attempts += 1;
@@ -650,9 +652,9 @@ font_size = 15.0
     #[test]
     fn concurrent_reader_surfaces_unexpected_errors_without_retrying() {
         for error in [
-            std::io::Error::from_raw_os_error(2),
             std::io::Error::from_raw_os_error(3),
             std::io::Error::from_raw_os_error(87),
+            std::io::Error::new(std::io::ErrorKind::NotFound, "no Windows error code"),
             std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
                 "no Windows error code",
@@ -672,19 +674,21 @@ font_size = 15.0
     }
 
     #[test]
-    fn concurrent_reader_surfaces_persistent_access_denial_after_timeout() {
-        let started = std::time::Instant::now();
-        let mut attempts = 0;
-        let error = read_with_windows_retries(|| {
-            attempts += 1;
-            Err(std::io::Error::from_raw_os_error(5))
-        })
-        .unwrap_err();
-        assert_eq!(error.raw_os_error(), Some(5));
-        assert!(attempts > 1);
-        // Each retry sleeps at least 5 ms within the 250 ms budget.
-        assert!(attempts <= 51);
-        assert!(started.elapsed() >= std::time::Duration::from_millis(250));
+    fn concurrent_reader_surfaces_persistent_replacement_errors_after_timeout() {
+        for code in [2, 5, 32, 33] {
+            let started = std::time::Instant::now();
+            let mut attempts = 0;
+            let error = read_with_windows_retries(|| {
+                attempts += 1;
+                Err(std::io::Error::from_raw_os_error(code))
+            })
+            .unwrap_err();
+            assert_eq!(error.raw_os_error(), Some(code));
+            assert!(attempts > 1);
+            // Each retry sleeps at least 5 ms within the 250 ms budget.
+            assert!(attempts <= 51);
+            assert!(started.elapsed() >= std::time::Duration::from_millis(250));
+        }
     }
 
     #[cfg(windows)]
