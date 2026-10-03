@@ -45,7 +45,8 @@ impl Edge {
 /// is accepted only through `WorkspaceSpec` and validated before model adoption.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Layout {
-    Leaf(PaneId),
+    /// Terminals sharing one place as tabs. Only `shown` is in view.
+    Tabs { panes: Vec<PaneId>, shown: PaneId },
     Split {
         id: SplitId,
         axis: Axis,
@@ -56,23 +57,55 @@ pub enum Layout {
 }
 
 impl Layout {
-    pub fn leaves(&self) -> Vec<PaneId> {
-        let mut leaves = Vec::new();
-        self.visit(&mut |pane| leaves.push(pane));
-        leaves
-    }
-
-    pub fn contains(&self, pane: PaneId) -> bool {
-        match self {
-            Self::Leaf(id) => *id == pane,
-            Self::Split { first, second, .. } => first.contains(pane) || second.contains(pane),
+    /// One terminal in a place of its own.
+    pub fn pane(pane: PaneId) -> Self {
+        Self::Tabs {
+            panes: vec![pane],
+            shown: pane,
         }
     }
 
-    /// Finds a pane sharing the requested edge, without wrapping. When several
-    /// panes share that edge, prefer the closest perpendicular centre; ties use
-    /// layout order. Split ratios determine positions independently of pixels.
+    /// Every pane, including tabs that are not in view.
+    pub fn panes(&self) -> Vec<PaneId> {
+        let mut panes = Vec::new();
+        self.visit(&mut |tabs, _| panes.extend(tabs));
+        panes
+    }
+
+    /// The pane in view in each tab group, in layout order.
+    pub fn shown(&self) -> Vec<PaneId> {
+        let mut shown = Vec::new();
+        self.visit(&mut |_, pane| shown.push(pane));
+        shown
+    }
+
+    /// The tab group holding `pane`, and which of its tabs is in view.
+    pub fn tabs(&self, pane: PaneId) -> Option<(&[PaneId], PaneId)> {
+        match self {
+            Self::Tabs { panes, shown } => panes.contains(&pane).then_some((panes, *shown)),
+            Self::Split { first, second, .. } => first.tabs(pane).or_else(|| second.tabs(pane)),
+        }
+    }
+
+    pub fn contains(&self, pane: PaneId) -> bool {
+        self.tabs(pane).is_some()
+    }
+
+    /// The tab after or before `pane` in its group, wrapping around. A pane
+    /// alone in its place has none.
+    pub fn next_tab(&self, pane: PaneId, forward: bool) -> Option<PaneId> {
+        let (tabs, _) = self.tabs(pane)?;
+        let position = tabs.iter().position(|id| *id == pane)?;
+        let step = if forward { 1 } else { tabs.len() - 1 };
+        Some(tabs[(position + step) % tabs.len()]).filter(|next| *next != pane)
+    }
+
+    /// Finds the pane in view across the requested edge of `pane`'s tab group,
+    /// without wrapping. When several groups share that edge, prefer the
+    /// closest perpendicular centre; ties use layout order. Split ratios
+    /// determine positions independently of pixels.
     pub fn adjacent(&self, pane: PaneId, direction: FocusDirection) -> Option<PaneId> {
+        let pane = self.tabs(pane)?.1;
         let mut regions = Vec::new();
         self.visit_regions(
             Bounds {
@@ -133,7 +166,7 @@ impl Layout {
 
     fn visit_regions(&self, bounds: Bounds, regions: &mut Vec<(PaneId, Bounds)>) {
         match self {
-            Self::Leaf(pane) => regions.push((*pane, bounds)),
+            Self::Tabs { shown, .. } => regions.push((*shown, bounds)),
             Self::Split {
                 axis,
                 ratio,
@@ -187,9 +220,14 @@ impl Layout {
             return Err(Error::InvalidLayout("layout is too deeply nested"));
         }
         match self {
-            Self::Leaf(id) => {
-                if !panes.contains(id) || !seen.insert(*id) {
-                    return Err(Error::InvalidLayout("layout leaf is missing or duplicated"));
+            Self::Tabs { panes: tabs, shown } => {
+                if !tabs.contains(shown) {
+                    return Err(Error::InvalidLayout("tab in view is not in its group"));
+                }
+                for id in tabs {
+                    if !panes.contains(id) || !seen.insert(*id) {
+                        return Err(Error::InvalidLayout("layout leaf is missing or duplicated"));
+                    }
                 }
             }
             Self::Split {
@@ -212,9 +250,9 @@ impl Layout {
         Ok(())
     }
 
-    pub(crate) fn visit(&self, visit: &mut impl FnMut(PaneId)) {
+    fn visit(&self, visit: &mut impl FnMut(&[PaneId], PaneId)) {
         match self {
-            Self::Leaf(pane) => visit(*pane),
+            Self::Tabs { panes, shown } => visit(panes, *shown),
             Self::Split { first, second, .. } => {
                 first.visit(visit);
                 second.visit(visit);
@@ -224,7 +262,7 @@ impl Layout {
 
     pub(crate) fn max_split_id(&self) -> u64 {
         match self {
-            Self::Leaf(_) => 0,
+            Self::Tabs { .. } => 0,
             Self::Split {
                 id, first, second, ..
             } => id
@@ -234,91 +272,71 @@ impl Layout {
         }
     }
 
-    /// Splits `target`, placing `pane` against the given edge of it.
+    /// Splits `target`'s tab group, placing `pane` against the given edge of it.
     pub(crate) fn split(&mut self, target: PaneId, pane: PaneId, id: SplitId, edge: Edge) -> bool {
         match self {
-            Self::Leaf(existing) if *existing == target => {
+            Self::Tabs { panes, .. } if panes.contains(&target) => {
+                let existing = std::mem::replace(self, Self::pane(pane));
                 let (first, second) = if edge.leading() {
-                    (pane, target)
+                    (Self::pane(pane), existing)
                 } else {
-                    (target, pane)
+                    (existing, Self::pane(pane))
                 };
                 *self = Self::Split {
                     id,
                     axis: edge.axis(),
                     ratio: 0.5,
-                    first: Box::new(Self::Leaf(first)),
-                    second: Box::new(Self::Leaf(second)),
+                    first: Box::new(first),
+                    second: Box::new(second),
                 };
                 true
             }
             Self::Split { first, second, .. } => {
                 first.split(target, pane, id, edge) || second.split(target, pane, id, edge)
             }
-            _ => false,
+            Self::Tabs { .. } => false,
         }
     }
 
-    /// Where to put a pane that nobody positioned by hand: against the roomiest
-    /// pane, dividing its longer side. Sizes are fractions of the workspace,
-    /// which is taken to be wider than tall; among equals `preferred` wins.
-    pub(crate) fn roomiest(&self, preferred: PaneId) -> (PaneId, Edge) {
-        const ASPECT: f32 = 1.6;
-        let mut best = (preferred, 0.0, 0.0);
-        self.visit_sizes(ASPECT, 1.0, &mut |pane, width, height| {
-            let (_, best_width, best_height) = best;
-            let gain = width * height - best_width * best_height;
-            if gain > 1e-4 || (gain > -1e-4 && pane == preferred) {
-                best = (pane, width, height);
-            }
-        });
-        let (pane, width, height) = best;
-        let edge = if width >= height {
-            Edge::Right
-        } else {
-            Edge::Bottom
-        };
-        (pane, edge)
-    }
-
-    fn visit_sizes(&self, width: f32, height: f32, visit: &mut impl FnMut(PaneId, f32, f32)) {
+    /// Adds `pane` to `target`'s tab group and brings it into view. Without an
+    /// index it follows `target`; an index past the end means last.
+    pub(crate) fn add_tab(&mut self, target: PaneId, pane: PaneId, index: Option<usize>) -> bool {
         match self {
-            Self::Leaf(pane) => visit(*pane, width, height),
-            Self::Split {
-                axis,
-                ratio,
-                first,
-                second,
-                ..
-            } => {
-                let (a, b) = match axis {
-                    Axis::Vertical => ((width * ratio, height), (width * (1.0 - ratio), height)),
-                    Axis::Horizontal => ((width, height * ratio), (width, height * (1.0 - ratio))),
+            Self::Tabs { panes, shown } => {
+                let Some(position) = panes.iter().position(|id| *id == target) else {
+                    return false;
                 };
-                first.visit_sizes(a.0, a.1, visit);
-                second.visit_sizes(b.0, b.1, visit);
+                let index = index.unwrap_or(position + 1).min(panes.len());
+                panes.insert(index, pane);
+                *shown = pane;
+                true
+            }
+            Self::Split { first, second, .. } => {
+                first.add_tab(target, pane, index) || second.add_tab(target, pane, index)
             }
         }
     }
 
-    /// Exchanges the positions of two panes.
-    pub(crate) fn swap(&mut self, a: PaneId, b: PaneId) {
+    /// Brings `pane` into view in its tab group.
+    pub(crate) fn show(&mut self, pane: PaneId) {
         match self {
-            Self::Leaf(pane) if *pane == a => *pane = b,
-            Self::Leaf(pane) if *pane == b => *pane = a,
-            Self::Leaf(_) => {}
+            Self::Tabs { panes, shown } => {
+                if panes.contains(&pane) {
+                    *shown = pane;
+                }
+            }
             Self::Split { first, second, .. } => {
-                first.swap(a, b);
-                second.swap(a, b);
+                first.show(pane);
+                second.show(pane);
             }
         }
     }
 
     /// The same panes in the same places, whatever the split identities and
-    /// ratios are.
+    /// ratios and whichever tabs are in view.
     pub(crate) fn same_arrangement(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::Leaf(a), Self::Leaf(b)) => a == b,
+            (Self::Tabs { panes: a, .. }, Self::Tabs { panes: b, .. }) => a == b,
             (
                 Self::Split {
                     axis: a,
@@ -337,9 +355,22 @@ impl Layout {
         }
     }
 
+    /// A tab group that loses the tab in view shows the one that followed it,
+    /// or the new last tab. A group that loses its only tab gives up its place.
     pub(crate) fn remove(self, pane: PaneId) -> Option<Self> {
         match self {
-            Self::Leaf(id) => (id != pane).then_some(Self::Leaf(id)),
+            Self::Tabs { mut panes, shown } => {
+                let Some(position) = panes.iter().position(|id| *id == pane) else {
+                    return Some(Self::Tabs { panes, shown });
+                };
+                panes.remove(position);
+                let shown = if shown == pane {
+                    *panes.get(position).or(panes.last())?
+                } else {
+                    shown
+                };
+                Some(Self::Tabs { panes, shown })
+            }
             Self::Split {
                 id,
                 axis,
@@ -379,7 +410,7 @@ impl Layout {
                         .or_else(|| second.set_ratio(target, value))
                 }
             }
-            Self::Leaf(_) => None,
+            Self::Tabs { .. } => None,
         }
     }
 }
@@ -397,7 +428,14 @@ mod tests {
     use super::*;
 
     fn leaf(id: u64) -> Layout {
-        Layout::Leaf(PaneId::new(id))
+        Layout::pane(PaneId::new(id))
+    }
+
+    fn tabs(ids: &[u64], shown: u64) -> Layout {
+        Layout::Tabs {
+            panes: ids.iter().copied().map(PaneId::new).collect(),
+            shown: PaneId::new(shown),
+        }
     }
 
     fn split(axis: Axis, ratio: f32, first: Layout, second: Layout) -> Layout {
@@ -492,5 +530,71 @@ mod tests {
             layout.adjacent(PaneId::new(1), FocusDirection::Right),
             Some(PaneId::new(3))
         );
+    }
+
+    #[test]
+    fn adjacent_moves_between_tab_groups_and_lands_on_the_tab_in_view() {
+        let layout = split(Axis::Vertical, 0.5, tabs(&[1, 2], 2), tabs(&[3, 4, 5], 4));
+        for from in [1, 2] {
+            assert_eq!(
+                layout.adjacent(PaneId::new(from), FocusDirection::Right),
+                Some(PaneId::new(4))
+            );
+        }
+        assert_eq!(
+            layout.adjacent(PaneId::new(5), FocusDirection::Left),
+            Some(PaneId::new(2))
+        );
+        assert_eq!(layout.adjacent(PaneId::new(1), FocusDirection::Left), None);
+        // Tabs are stepped through in order, around the ends of their group.
+        for (from, forward, to) in [(3, true, 4), (5, true, 3), (3, false, 5)] {
+            assert_eq!(
+                layout.next_tab(PaneId::new(from), forward),
+                Some(PaneId::new(to))
+            );
+        }
+        assert_eq!(leaf(1).next_tab(PaneId::new(1), true), None);
+        assert_eq!(layout.shown(), [PaneId::new(2), PaneId::new(4)]);
+        assert_eq!(layout.panes(), [1, 2, 3, 4, 5].map(PaneId::new));
+    }
+
+    #[test]
+    fn removing_the_tab_in_view_shows_its_follower_and_empties_collapse() {
+        let pane = PaneId::new;
+        let group = |layout: &Layout, id| {
+            layout
+                .tabs(pane(id))
+                .map(|(panes, shown)| (panes.to_vec(), shown))
+        };
+        let layout = split(Axis::Vertical, 0.5, tabs(&[1, 2, 3], 2), leaf(4));
+        let layout = layout.remove(pane(2)).unwrap();
+        assert_eq!(group(&layout, 1), Some((vec![pane(1), pane(3)], pane(3))));
+        let layout = layout.remove(pane(3)).unwrap();
+        assert_eq!(group(&layout, 1), Some((vec![pane(1)], pane(1))));
+        // A hidden tab leaves without changing what is in view.
+        let hidden = tabs(&[5, 6], 6).remove(pane(5)).unwrap();
+        assert_eq!(hidden, leaf(6));
+        assert_eq!(layout.remove(pane(1)), Some(leaf(4)));
+        assert_eq!(leaf(4).remove(pane(4)), None);
+    }
+
+    #[test]
+    fn tabs_join_after_their_target_or_at_an_index_and_come_into_view() {
+        let pane = PaneId::new;
+        let mut layout = split(Axis::Vertical, 0.5, tabs(&[1, 2], 1), leaf(3));
+        assert!(layout.add_tab(pane(1), pane(4), None));
+        assert!(layout.add_tab(pane(2), pane(5), Some(0)));
+        assert!(layout.add_tab(pane(2), pane(6), Some(usize::MAX)));
+        assert!(!layout.add_tab(pane(99), pane(7), None));
+        assert_eq!(
+            layout.tabs(pane(1)),
+            Some((&[5, 1, 4, 2, 6].map(pane)[..], pane(6)))
+        );
+        layout.show(pane(4));
+        layout.show(pane(99));
+        assert_eq!(layout.shown(), [pane(4), pane(3)]);
+        // Splitting a tab divides its whole group.
+        assert!(layout.split(pane(1), pane(8), SplitId::new(2), Edge::Left));
+        assert_eq!(layout.shown(), [pane(8), pane(4), pane(3)]);
     }
 }

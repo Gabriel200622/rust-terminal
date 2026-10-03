@@ -176,7 +176,7 @@ try:
     check('icon accessibility labels', icon_labels <= available_labels, 'window, sidebar and toolbar controls must expose descriptive native button labels')
     state_path = args.data_root / 'workspaces.json'
     before_creation = wait_until('initial workspace state', state)
-    key(app_modifier + '+t')
+    key(app_modifier + '+n')
     created_state = wait_until('new workspace persistence', lambda: (saved if len(saved['workspaces']) == len(before_creation['workspaces']) + 1 else None) if (saved := state()) else None)
     created = active_workspace(created_state)
     nodes = tree('01-new-workspace-tree')

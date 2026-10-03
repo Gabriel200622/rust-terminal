@@ -321,7 +321,7 @@ pub fn toolbar(
                 if view.sidebar < 1.0 {
                     ui.set_opacity(1.0 - view.sidebar);
                     let create =
-                        icons::button_with_hint(ui, Icon::Plus, "New workspace", &shortcut("T"));
+                        icons::button_with_hint(ui, Icon::Plus, "New workspace", &shortcut("N"));
                     ui.set_opacity(1.0);
                     if create.clicked() {
                         actions.push(Action::New);
@@ -355,6 +355,11 @@ pub fn toolbar(
                     .clicked()
                     {
                         actions.push(Action::Split(pane, neptune_model::Axis::Vertical));
+                    }
+                    if icons::button_with_hint(ui, Icon::Terminal, "New tab", &shortcut("T"))
+                        .clicked()
+                    {
+                        actions.push(Action::NewTab(pane));
                     }
                     if icons::button_with_hint(ui, Icon::Search, "Find in terminal", &shortcut("F"))
                         .clicked()
@@ -1901,7 +1906,7 @@ pub fn sidebar(
     );
     if response
         .on_hover_cursor(CursorIcon::PointingHand)
-        .on_hover_text(format!("New workspace   {}", shortcut("T")))
+        .on_hover_text(format!("New workspace   {}", shortcut("N")))
         .clicked()
     {
         actions.push(Action::New);
@@ -2152,7 +2157,7 @@ mod tests {
                         remote_cwd: None,
                         agent: None,
                     }],
-                    layout: neptune_model::Layout::Leaf(PaneId::new(*id)),
+                    layout: neptune_model::Layout::pane(PaneId::new(*id)),
                     active: PaneId::new(*id),
                 })
                 .collect();

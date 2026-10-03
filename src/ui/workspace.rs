@@ -17,7 +17,8 @@ use terminal_core::{Mode as TermMode, SessionMetadata, SessionStatus, ViewportSn
 pub struct PanePresentation {
     pub unread: usize,
     pub metadata: SessionMetadata,
-    pub snapshot: ViewportSnapshot,
+    /// The terminal's content; absent for a tab that is not in view.
+    pub snapshot: Option<ViewportSnapshot>,
     /// The shell has been requested but has not started yet.
     pub starting: bool,
     /// SSH destination when the terminal runs on another machine.
@@ -38,7 +39,8 @@ impl PanePresentation {
 pub struct Stage<'a> {
     pub presentations: &'a BTreeMap<PaneId, PanePresentation>,
     pub active: PaneId,
-    /// More than one pane is visible, so panes carry headers and focus cues.
+    /// The layout holds more than one terminal, so each place carries its
+    /// tabs and focus cues.
     pub multiple: bool,
     pub zoomed: bool,
     /// No overlay is open, so the focused terminal may own the keyboard.
@@ -74,10 +76,16 @@ pub struct StageOutput {
     pub drop: Option<(Destination, Rect)>,
 }
 
-/// Where a terminal dropped at `pointer` lands on the pane it is over: against
-/// the nearest edge, or in the pane's own place when dropped near its centre.
-/// The rectangle is the area the terminal would take.
-fn drop_destination(card: Rect, pointer: Pos2, pane: PaneId) -> (Destination, Rect) {
+/// Where a terminal dropped at `pointer` lands on the place it is over:
+/// against the nearest edge, or among the place's tabs when dropped near its
+/// centre. A terminal already there (`own`) can only leave for an edge. The
+/// rectangle is the area the terminal would take.
+fn drop_destination(
+    card: Rect,
+    pointer: Pos2,
+    pane: PaneId,
+    own: bool,
+) -> Option<(Destination, Rect)> {
     let x = (pointer.x - card.left()) / card.width().max(1.0);
     let y = (pointer.y - card.top()) / card.height().max(1.0);
     let (distance, edge) = [
@@ -90,7 +98,11 @@ fn drop_destination(card: Rect, pointer: Pos2, pane: PaneId) -> (Destination, Re
     .min_by(|a, b| a.0.total_cmp(&b.0))
     .unwrap_or((0.0, Edge::Right));
     if distance > 0.3 {
-        return (Destination::Swap(pane), card);
+        let tab = Destination::Tab {
+            pane,
+            index: usize::MAX,
+        };
+        return (!own).then_some((tab, card));
     }
     let half = metrics::GUTTER * 0.5;
     let centre = card.center();
@@ -100,7 +112,7 @@ fn drop_destination(card: Rect, pointer: Pos2, pane: PaneId) -> (Destination, Re
         Edge::Top => Rect::from_min_max(card.min, Pos2::new(card.right(), centre.y - half)),
         Edge::Bottom => Rect::from_min_max(Pos2::new(card.left(), centre.y + half), card.max),
     };
-    (Destination::Beside { pane, edge }, area)
+    Some((Destination::Beside { pane, edge }, area))
 }
 
 /// The program or shell a pane is showing. Prompt-style titles such as
@@ -238,6 +250,9 @@ fn pane_menu(ui: &mut Ui, p: Palette, id: PaneId, zoomed: bool, actions: &mut Ve
         chosen.extend([Action::Focus(id), Action::Find]);
     }
     helpers::menu_separator(ui, p);
+    if menu_item(ui, p, Icon::Plus, "New tab", &shortcut("T"), false) {
+        chosen.push(Action::NewTab(id));
+    }
     if menu_item(
         ui,
         p,
@@ -293,50 +308,97 @@ fn pane_menu(ui: &mut Ui, p: Palette, id: PaneId, zoomed: bool, actions: &mut Ve
     }
 }
 
-/// Reports whether the terminal is being carried by its title.
-fn pane_header(
+/// One tab of a place: the terminal's program and, where there is room, its
+/// folder. The tab is also the handle that carries the terminal elsewhere.
+/// Reports whether it is being carried.
+fn tab(
     ui: &mut Ui,
     id: PaneId,
-    header: Rect,
-    presentation: &PanePresentation,
-    reveal: f32,
+    rect: Rect,
+    // In view, the only tab of its place, and how far its controls are revealed.
+    (shown, alone, reveal): (bool, bool, f32),
     stage: &Stage,
     actions: &mut Vec<Action>,
 ) -> bool {
     let p = stage.p;
+    let Some(presentation) = stage.presentations.get(&id) else {
+        return false;
+    };
     let metadata = &presentation.metadata;
-    let selected = id == stage.active;
-    let show_close = header.width() >= 72.0;
-    let show_all = header.width() >= 260.0;
-    let controls_width = if show_all {
-        118.0
-    } else if show_close {
-        34.0
+    let response = ui
+        .interact(
+            rect,
+            ui.id().with(("pane-title", id)),
+            Sense::click_and_drag(),
+        )
+        .on_hover_cursor(CursorIcon::Grab);
+    response.widget_info(|| {
+        WidgetInfo::selected(
+            WidgetType::SelectableLabel,
+            true,
+            shown,
+            format!("Terminal tab {}", id.get()),
+        )
+    });
+    let closable = rect.width() >= 60.0;
+    let close = Rect::from_center_size(
+        Pos2::new(rect.right() - 12.0, rect.center().y),
+        Vec2::splat(18.0),
+    );
+    let close_response = closable.then(|| {
+        let response = ui.interact(close, ui.id().with(("tab-close", id)), Sense::click());
+        response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "Close terminal"));
+        response
+    });
+    let hovered = response.hovered()
+        || close_response
+            .as_ref()
+            .is_some_and(|response| response.hovered());
+
+    let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+    // A place with one terminal reads as a plain title, as it always has.
+    let fill = if shown && !alone {
+        0.08
+    } else if hovered && !alone {
+        0.045
     } else {
         0.0
     };
-    let text_rect = Rect::from_min_max(
-        Pos2::new((header.left() + 14.0).min(header.right()), header.top()),
-        Pos2::new(
-            (header.right() - controls_width - 6.0).max(header.left() + 14.0),
-            header.bottom(),
-        ),
-    );
-    let painter = ui.painter().with_clip_rect(text_rect);
+    if fill > 0.0 {
+        painter.rect_filled(rect, 7, theme::tint(p.fg, fill));
+    }
+    let mut left = rect.left() + 9.0;
+    if !shown && presentation.unread > 0 {
+        painter.circle_filled(Pos2::new(left + 3.0, rect.center().y), 3.0, p.attention);
+        left += 11.0;
+    }
+    let close_alpha = if hovered {
+        1.0
+    } else if shown {
+        reveal
+    } else {
+        0.0
+    };
+    let right = if closable && close_alpha > 0.0 {
+        close.left() - 3.0
+    } else {
+        rect.right() - 7.0
+    };
+    let room = (right - left).max(0.0);
     let title = elided(
         &painter,
         &pane_label(metadata),
         theme::medium(12.0),
-        if selected { p.fg } else { p.secondary },
-        text_rect.width().min(220.0),
+        if shown && id == stage.active {
+            p.fg
+        } else {
+            p.secondary
+        },
+        room,
     );
     let title_width = title.size().x;
-    galley_at(
-        &painter,
-        Pos2::new(text_rect.left(), header.center().y + 1.0),
-        title,
-    );
-    let remaining = text_rect.width() - title_width - 9.0;
+    galley_at(&painter, Pos2::new(left, rect.center().y + 1.0), title);
+    let remaining = room - title_width - 9.0;
     if remaining > 36.0 {
         let folder = match &presentation.remote {
             Some(destination) => destination.clone(),
@@ -348,29 +410,50 @@ fn pane_header(
         };
         galley_at(
             &painter,
-            Pos2::new(
-                text_rect.left() + title_width + 9.0,
-                header.center().y + 1.0,
-            ),
+            Pos2::new(left + title_width + 9.0, rect.center().y + 1.0),
             elided(&painter, &folder, theme::regular(11.5), p.muted, remaining),
         );
     }
-    // The title is also the handle that carries the terminal elsewhere.
-    let title_response = ui
-        .interact(
-            text_rect,
-            ui.id().with(("pane-title", id)),
-            Sense::click_and_drag(),
-        )
-        .on_hover_cursor(CursorIcon::Grab);
-    if title_response.clicked() || title_response.drag_started() {
+    if let Some(close_response) = close_response {
+        if close_alpha > 0.0 {
+            if close_response.hovered() {
+                painter.rect_filled(close, 5, theme::tint(p.fg, 0.1));
+            }
+            icons::paint(
+                &painter,
+                close.shrink(4.5),
+                Icon::Close,
+                theme::tint(
+                    if close_response.hovered() {
+                        p.fg
+                    } else {
+                        p.secondary
+                    },
+                    close_alpha,
+                ),
+            );
+        }
+        if close_response
+            .on_hover_cursor(CursorIcon::PointingHand)
+            .on_hover_text(format!("Close terminal   {}", shortcut("W")))
+            .clicked()
+        {
+            actions.push(Action::ClosePane(id));
+        }
+    }
+
+    if response.clicked() || response.drag_started() {
         actions.push(Action::Focus(id));
     }
-    if title_response.double_clicked() {
+    if response.double_clicked() {
         actions.push(Action::Zoom);
     }
-    let carried = title_response.dragged();
-    title_response.on_hover_text(format!(
+    if response.middle_clicked() {
+        actions.push(Action::ClosePane(id));
+    }
+    let carried = response.dragged();
+    response.context_menu(|ui| pane_menu(ui, p, id, stage.zoomed, actions));
+    response.on_hover_text(format!(
         "{}\n{}",
         if metadata.title.is_empty() {
             pane_label(metadata)
@@ -382,51 +465,121 @@ fn pane_header(
             None => metadata.cwd.display().to_string(),
         }
     ));
-    if !show_close {
-        return carried;
+    carried
+}
+
+/// The tabs of one place and the controls that act on the terminal in view.
+fn pane_header(
+    ui: &mut Ui,
+    (tabs, shown): (&[PaneId], PaneId),
+    header: Rect,
+    reveal: f32,
+    stage: &Stage,
+    actions: &mut Vec<Action>,
+    output: &mut StageOutput,
+) {
+    let show_new = header.width() >= 72.0;
+    let show_all = header.width() >= 260.0;
+    let controls_width = if show_all {
+        118.0
+    } else if show_new {
+        34.0
+    } else {
+        0.0
+    };
+    // The tabs stand clear of the focus ring that follows the place's edge.
+    let left = (header.left() + 6.0).min(header.right());
+    let strip = Rect::from_min_max(
+        Pos2::new(left, header.top() + 6.0),
+        Pos2::new(
+            (header.right() - controls_width - 6.0).max(left),
+            header.bottom() - 2.0,
+        ),
+    );
+    let width = (strip.width() / tabs.len() as f32).min(220.0);
+    let slot = |index: usize| {
+        Rect::from_min_size(
+            Pos2::new(strip.left() + width * index as f32, strip.top()),
+            vec2((width - 2.0).max(0.0), strip.height()),
+        )
+    };
+    for (index, id) in tabs.iter().enumerate() {
+        let state = (*id == shown, tabs.len() == 1, reveal);
+        if tab(ui, *id, slot(index), state, stage, actions) {
+            output.dragging = Some(*id);
+        }
+    }
+    // A carried terminal dropped on the tabs lands between them.
+    if let Some(dragged) = stage.drag
+        && tabs != [dragged]
+        && let Some(pointer) = ui.ctx().pointer_interact_pos()
+        && header.contains(pointer)
+    {
+        let others: Vec<_> = (0..tabs.len())
+            .filter(|index| tabs[*index] != dragged)
+            .map(slot)
+            .collect();
+        let index = others
+            .iter()
+            .filter(|slot| slot.center().x < pointer.x)
+            .count();
+        let x = match others.get(index) {
+            Some(slot) => slot.left() - 1.0,
+            None => others
+                .last()
+                .map_or(strip.left(), |slot| slot.right() + 1.0),
+        };
+        output.drop = Some((
+            Destination::Tab { pane: shown, index },
+            Rect::from_min_max(
+                Pos2::new(x - 1.5, strip.top() + 2.0),
+                Pos2::new(x + 1.5, strip.bottom() - 2.0),
+            ),
+        ));
+    }
+    if !show_new {
+        return;
     }
     ui.scope_builder(
         UiBuilder::new()
-            .id_salt(("pane-controls", id))
+            .id_salt(("pane-controls", shown))
             .max_rect(Rect::from_min_max(
-                Pos2::new(header.right() - controls_width, header.top() + 1.0),
-                header.max - vec2(4.0, 1.0),
+                Pos2::new(header.right() - controls_width, strip.top() - 1.0),
+                Pos2::new(header.right() - 4.0, strip.bottom() + 1.0),
             ))
             .layout(Layout::right_to_left(Align::Center)),
         |ui| {
             ui.set_clip_rect(header.intersect(ui.clip_rect()));
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.set_opacity(reveal);
-            if icons::button_with_hint(ui, Icon::Close, "Close terminal", &shortcut("W")).clicked()
-            {
-                actions.push(Action::ClosePane(id));
+            if show_all {
+                if icons::button_with_hint(ui, Icon::SplitHorizontal, "Split below", &shortcut("E"))
+                    .clicked()
+                {
+                    actions.extend([Action::Focus(shown), Action::Split(shown, Axis::Horizontal)]);
+                }
+                if icons::button_with_hint(ui, Icon::SplitVertical, "Split right", &shortcut("D"))
+                    .clicked()
+                {
+                    actions.extend([Action::Focus(shown), Action::Split(shown, Axis::Vertical)]);
+                }
+                if icons::button_with_hint(ui, Icon::Maximize, "Zoom terminal", &shortcut("Enter"))
+                    .clicked()
+                {
+                    actions.extend([Action::Focus(shown), Action::Zoom]);
+                }
             }
-            if !show_all {
-                return;
-            }
-            if icons::button_with_hint(ui, Icon::SplitHorizontal, "Split below", &shortcut("E"))
-                .clicked()
-            {
-                actions.extend([Action::Focus(id), Action::Split(id, Axis::Horizontal)]);
-            }
-            if icons::button_with_hint(ui, Icon::SplitVertical, "Split right", &shortcut("D"))
-                .clicked()
-            {
-                actions.extend([Action::Focus(id), Action::Split(id, Axis::Vertical)]);
-            }
-            if icons::button_with_hint(ui, Icon::Maximize, "Zoom terminal", &shortcut("Enter"))
-                .clicked()
-            {
-                actions.extend([Action::Focus(id), Action::Zoom]);
+            if icons::button_with_hint(ui, Icon::Plus, "New tab", &shortcut("T")).clicked() {
+                actions.push(Action::NewTab(shown));
             }
         },
     );
-    carried
 }
 
+/// Draws one place of the layout: its tabs and the terminal in view.
 fn draw_pane(
     ui: &mut Ui,
-    id: PaneId,
+    (tabs, id): (&[PaneId], PaneId),
     place: Placement,
     pane: &mut PaneRender,
     stage: &Stage,
@@ -458,8 +611,9 @@ fn draw_pane(
     if let Some(geometry) = pane.cache.geometry(ui, inset(place.settled), stage.config) {
         actions.push(Action::Resize(id, geometry));
     }
-    pane.cache
-        .prepare(ui, &presentation.snapshot, stage.config, p);
+    if let Some(snapshot) = &presentation.snapshot {
+        pane.cache.prepare(ui, snapshot, stage.config, p);
+    }
     let surface = pane.cache.background();
     ui.painter()
         .rect_filled(card, metrics::PANE_RADIUS, surface);
@@ -473,17 +627,15 @@ fn draw_pane(
             hovered || selected,
             0.12,
         );
-        if pane_header(
+        pane_header(
             ui,
-            id,
+            (tabs, id),
             Rect::from_min_size(card.min, vec2(card.width(), header_height)),
-            presentation,
             reveal,
             stage,
             actions,
-        ) {
-            output.dragging = Some(id);
-        }
+            output,
+        );
     }
 
     ui.scope_builder(UiBuilder::new().id_salt(id).max_rect(body), |ui| {
@@ -604,7 +756,7 @@ fn draw_pane(
             );
         }
     }
-    // A carried terminal recedes where it was; any other pane can receive it.
+    // A carried terminal recedes where it was; any place can receive it.
     let lifted = animate(
         ui.ctx(),
         ui.id().with(("pane-lifted", id)),
@@ -618,11 +770,13 @@ fn draw_pane(
             theme::tint(p.chrome, 0.6 * lifted),
         );
     }
-    if stage.drag.is_some_and(|dragged| dragged != id)
+    if let Some(dragged) = stage.drag
+        && tabs != [dragged]
         && let Some(pointer) = ui.ctx().pointer_interact_pos()
         && card.contains(pointer)
+        && pointer.y >= card.top() + header_height
     {
-        output.drop = Some(drop_destination(card, pointer, id));
+        output.drop = drop_destination(card, pointer, id, tabs.contains(&dragged));
     }
 
     if presentation.starting {
@@ -765,9 +919,9 @@ pub fn draw_node(
     output: &mut StageOutput,
 ) {
     match node {
-        neptune_model::Layout::Leaf(id) => {
-            if let Some(pane) = panes.get_mut(id) {
-                draw_pane(ui, *id, place, pane, stage, actions, output);
+        neptune_model::Layout::Tabs { panes: tabs, shown } => {
+            if let Some(pane) = panes.get_mut(shown) {
+                draw_pane(ui, (tabs, *shown), place, pane, stage, actions, output);
             }
         }
         neptune_model::Layout::Split {
@@ -864,9 +1018,9 @@ fn glide(ctx: &egui::Context, from: Rect, target: Rect) -> Rect {
     next
 }
 
-/// Feedback for a terminal carried by its header: the area it would take on
-/// the pane under the pointer, and a chip that follows the pointer over the
-/// whole window. Releasing over a pane moves the terminal there.
+/// Feedback for a terminal carried by its tab: the area it would take on the
+/// place under the pointer, and a chip that follows the pointer over the
+/// whole window. Releasing over a place moves the terminal there.
 pub fn pane_drag(ui: &mut Ui, stage: &Stage, output: &StageOutput, actions: &mut Vec<Action>) {
     let ctx = ui.ctx().clone();
     let p = stage.p;
@@ -906,13 +1060,6 @@ pub fn pane_drag(ui: &mut Ui, stage: &Stage, output: &StageOutput, actions: &mut
             Stroke::new(1.5, theme::tint(p.accent, 0.9 * opacity)),
             StrokeKind::Inside,
         );
-        if matches!(target, Some((Destination::Swap(_), _)))
-            && area.width().min(area.height()) > 48.0
-        {
-            let badge = Rect::from_center_size(area.center(), Vec2::splat(32.0));
-            capsule(painter, badge, p);
-            icons::paint(painter, badge.shrink(9.0), Icon::Swap, p.accent);
-        }
     }
 
     let carried = stage.drag.filter(|pane| output.dragging == Some(*pane));
@@ -1070,7 +1217,7 @@ mod tests {
                             PanePresentation {
                                 unread: 0,
                                 metadata: metadata(""),
-                                snapshot: ViewportSnapshot::blank(80, 24),
+                                snapshot: Some(ViewportSnapshot::blank(80, 24)),
                                 starting: false,
                                 remote: None,
                             },
@@ -1081,8 +1228,8 @@ mod tests {
                     id: neptune_model::SplitId::new(1),
                     axis: Axis::Vertical,
                     ratio: 0.5,
-                    first: Box::new(neptune_model::Layout::Leaf(ids[0])),
-                    second: Box::new(neptune_model::Layout::Leaf(ids[1])),
+                    first: Box::new(neptune_model::Layout::pane(ids[0])),
+                    second: Box::new(neptune_model::Layout::pane(ids[1])),
                 },
                 drag: None,
             };
@@ -1176,7 +1323,21 @@ mod tests {
                     edge: Edge::Right,
                 },
             ),
-            (Pos2::new(600.0, 200.0), Destination::Swap(second)),
+            (
+                Pos2::new(600.0, 200.0),
+                Destination::Tab {
+                    pane: second,
+                    index: usize::MAX,
+                },
+            ),
+            // On the other place's tabs: before its only tab.
+            (
+                Pos2::new(430.0, 15.0),
+                Destination::Tab {
+                    pane: second,
+                    index: 0,
+                },
+            ),
         ] {
             let mut bench = Bench::new();
             let carried = bench.carry_to(pos);
@@ -1192,6 +1353,70 @@ mod tests {
             assert_eq!(bench.drag, None);
             assert!(moves(&bench.frame(vec![])).is_empty());
         }
+    }
+
+    #[test]
+    fn tabs_out_of_view_take_focus_on_a_click_and_split_away_when_dragged_to_an_edge() {
+        let (first, third) = (PaneId::new(1), PaneId::new(3));
+        let mut bench = Bench::new();
+        // The first place holds two tabs, with the first in view.
+        let presentation = PanePresentation {
+            unread: 1,
+            metadata: metadata(""),
+            snapshot: None,
+            starting: false,
+            remote: None,
+        };
+        bench.presentations.insert(third, presentation);
+        if let neptune_model::Layout::Split { first: place, .. } = &mut bench.layout {
+            **place = neptune_model::Layout::Tabs {
+                panes: vec![first, third],
+                shown: first,
+            };
+        }
+        bench.frame(vec![]);
+        // Two tabs share the strip left of the first place's controls.
+        let hidden = Pos2::new(200.0, 15.0);
+        bench.frame(vec![egui::Event::PointerMoved(hidden)]);
+        bench.button(hidden, true);
+        let released = bench.button(hidden, false);
+        assert!(moves(&released).is_empty());
+        assert!(
+            released
+                .iter()
+                .any(|action| matches!(action, Action::Focus(pane) if *pane == third))
+        );
+
+        // Carried by its tab to the bottom of its own place, the first
+        // terminal leaves the tab it shared the place with.
+        let below = Pos2::new(200.0, 380.0);
+        bench.carry_to(below);
+        assert_eq!(bench.drag, Some(first));
+        assert_eq!(
+            moves(&bench.button(below, false)),
+            [(
+                first,
+                Destination::Beside {
+                    pane: first,
+                    edge: Edge::Bottom
+                }
+            )]
+        );
+        // Dropped past the other tab, it trades places with it.
+        bench.carry_to(Pos2::new(240.0, 15.0));
+        assert_eq!(
+            moves(&bench.button(Pos2::new(240.0, 15.0), false)),
+            [(
+                first,
+                Destination::Tab {
+                    pane: first,
+                    index: 1
+                }
+            )]
+        );
+        // Its own place has no centre to drop on.
+        bench.carry_to(Pos2::new(200.0, 200.0));
+        assert!(moves(&bench.button(Pos2::new(200.0, 200.0), false)).is_empty());
     }
 
     #[test]
@@ -1229,10 +1454,10 @@ mod tests {
     }
 
     #[test]
-    fn a_drop_lands_against_the_nearest_edge_or_swaps_near_the_centre() {
+    fn a_drop_lands_against_the_nearest_edge_or_joins_the_tabs_near_the_centre() {
         let card = Rect::from_min_size(Pos2::new(100.0, 50.0), vec2(400.0, 200.0));
         let pane = PaneId::new(3);
-        let at = |x: f32, y: f32| drop_destination(card, Pos2::new(x, y), pane);
+        let at = |x: f32, y: f32| drop_destination(card, Pos2::new(x, y), pane, false).unwrap();
         let beside = |edge| Destination::Beside { pane, edge };
         assert_eq!(at(120.0, 150.0).0, beside(Edge::Left));
         assert_eq!(at(480.0, 150.0).0, beside(Edge::Right));
@@ -1241,7 +1466,15 @@ mod tests {
         // Distance is relative to the pane, so a wide pane's corner still
         // resolves to the edge the pointer is proportionally closest to.
         assert_eq!(at(180.0, 60.0).0, beside(Edge::Top));
-        assert_eq!(at(300.0, 150.0), (Destination::Swap(pane), card));
+        let tab = Destination::Tab {
+            pane,
+            index: usize::MAX,
+        };
+        assert_eq!(at(300.0, 150.0), (tab, card));
+        // A tab of this place can leave for an edge, not join where it is.
+        let own = |x: f32| drop_destination(card, Pos2::new(x, 150.0), pane, true);
+        assert_eq!(own(300.0), None);
+        assert_eq!(own(480.0).map(|drop| drop.0), Some(beside(Edge::Right)));
         // Each edge takes its half of the pane, less the gutter between them.
         let (_, left) = at(120.0, 150.0);
         let (_, right) = at(480.0, 150.0);
@@ -1262,15 +1495,15 @@ mod tests {
             id: neptune_model::SplitId::new(1),
             axis: Axis::Vertical,
             ratio: 0.5,
-            first: Box::new(neptune_model::Layout::Leaf(left)),
-            second: Box::new(neptune_model::Layout::Leaf(right)),
+            first: Box::new(neptune_model::Layout::pane(left)),
+            second: Box::new(neptune_model::Layout::pane(right)),
         };
         let presentations: BTreeMap<_, _> = [left, right]
             .map(|id| {
                 let presentation = PanePresentation {
                     unread: 0,
                     metadata: metadata("zsh"),
-                    snapshot: ViewportSnapshot::blank(80, 24),
+                    snapshot: Some(ViewportSnapshot::blank(80, 24)),
                     starting: false,
                     remote: None,
                 };

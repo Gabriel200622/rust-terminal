@@ -358,7 +358,18 @@ impl App {
             let pane = self.controller.model().active_pane();
             let action = if command {
                 match key {
-                    egui::Key::T | egui::Key::N => Some(Action::New),
+                    egui::Key::T => Some(pane.map_or(Action::New, Action::NewTab)),
+                    egui::Key::N => Some(Action::New),
+                    egui::Key::PageDown | egui::Key::PageUp => self
+                        .controller
+                        .model()
+                        .active_workspace()
+                        .and_then(|id| self.controller.model().workspace(id))
+                        .and_then(|workspace| {
+                            let forward = key == egui::Key::PageDown;
+                            workspace.layout().next_tab(workspace.active(), forward)
+                        })
+                        .map(Action::Focus),
                     egui::Key::D => pane.map(|id| Action::Split(id, neptune_model::Axis::Vertical)),
                     egui::Key::E => {
                         pane.map(|id| Action::Split(id, neptune_model::Axis::Horizontal))

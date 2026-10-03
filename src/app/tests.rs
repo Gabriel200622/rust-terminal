@@ -1585,6 +1585,78 @@ fn command_digits_select_workspaces_by_position_even_when_shift_changes_the_symb
 }
 
 #[test]
+fn tab_shortcuts_open_and_step_through_the_tabs_of_the_focused_place() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let ctx = egui::Context::default();
+    app.startup = None;
+    let command = if cfg!(target_os = "macos") {
+        egui::Modifiers::MAC_CMD | egui::Modifiers::COMMAND
+    } else {
+        egui::Modifiers::CTRL | egui::Modifiers::SHIFT
+    };
+    // Without a terminal to open a tab beside, there is nothing to step to.
+    assert!(!press(
+        &mut app,
+        &ctx,
+        key(egui::Key::PageDown, None, command)
+    ));
+    app.controller
+        .dispatch(Command::AddWorkspace {
+            group: None,
+            cwd: root.path().into(),
+            name: "First".into(),
+            remote: None,
+        })
+        .unwrap();
+    let first = app.controller.model().active_pane().unwrap();
+    assert!(!press(
+        &mut app,
+        &ctx,
+        key(egui::Key::PageDown, None, command)
+    ));
+    assert!(press(&mut app, &ctx, key(egui::Key::T, None, command)));
+    let second = app.controller.model().active_pane().unwrap();
+    assert!(press(&mut app, &ctx, key(egui::Key::T, None, command)));
+    let third = app.controller.model().active_pane().unwrap();
+    let workspace = &app.controller.model().workspaces()[0];
+    assert_eq!(app.controller.model().workspaces().len(), 1);
+    assert_eq!(
+        workspace.layout().tabs(first),
+        Some((&[first, second, third][..], third))
+    );
+    for (pressed, focused) in [
+        (egui::Key::PageDown, first),
+        (egui::Key::PageUp, third),
+        (egui::Key::PageUp, second),
+    ] {
+        assert!(press(&mut app, &ctx, key(pressed, None, command)));
+        assert_eq!(app.controller.model().active_pane(), Some(focused));
+    }
+    // Only the tab in view is drawn; the others contribute their titles.
+    let presentations = app.presentations();
+    assert_eq!(app.shown(), [second]);
+    for pane in [first, second, third] {
+        assert_eq!(presentations[&pane].snapshot.is_some(), pane == second);
+    }
+    // Zooming keeps the focused terminal's tabs within reach.
+    app.ui.zoomed = true;
+    assert!(press(
+        &mut app,
+        &ctx,
+        key(egui::Key::PageDown, None, command)
+    ));
+    assert_eq!(app.shown(), [third]);
+    // Without the command chord the keys belong to the terminal.
+    assert!(!press(
+        &mut app,
+        &ctx,
+        key(egui::Key::PageDown, None, egui::Modifiers::NONE)
+    ));
+    assert_eq!(app.controller.model().active_pane(), Some(third));
+}
+
+#[test]
 fn moving_a_workspace_keeps_focus_and_renumbers_the_position_shortcuts() {
     let root = tempfile::tempdir().unwrap();
     let (mut app, _sender) = fixture(root.path());
