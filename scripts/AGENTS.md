@@ -50,6 +50,9 @@ NEPTUNE_UPDATE_CAPTURE="$PWD/artifacts/native-update.png" \
 
 `NEPTUNE_UPDATE_SCREEN=notification` selects the notification; `preferences`
 selects Preferences; `ready` and `error` review those sheet states.
+Preferences opens on Updates; `NEPTUNE_PREFERENCES_PANE` names another pane
+(`general`, `appearance`, `text`, `shell`, `notifications`), and
+`NEPTUNE_PREFERENCES_SEARCH` opens it on the results for a query.
 `NEPTUNE_UPDATE_NARROW=1` uses a 640×400 window. Each launch
 exits after its capture and removes its temporary data root. These are visual
 fixtures, not proof of an actual published/signed installer download.

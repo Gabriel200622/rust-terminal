@@ -967,6 +967,7 @@ impl eframe::App for App {
                 &self.config,
                 &self.updates,
                 &mut self.ui.preferences,
+                &mut self.ui.preference_view,
                 &mut self.ui.shells,
                 &mut actions,
             ),

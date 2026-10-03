@@ -776,6 +776,33 @@ impl Group {
             add_control,
         )
     }
+
+    /// Supporting text inside the card, beneath the rows it explains.
+    pub fn note(&mut self, ui: &mut Ui, text: &str) {
+        let width = ui.available_width();
+        let galley = ui.painter().layout(
+            text.to_owned(),
+            theme::regular(11.5),
+            self.p.secondary,
+            width - 28.0,
+        );
+        let (_, rect) = ui.allocate_space(vec2(width, galley.size().y + 20.0));
+        if self.rows > 0 {
+            ui.painter().line_segment(
+                [
+                    Pos2::new(rect.left() + 14.0, rect.top()),
+                    Pos2::new(rect.right(), rect.top()),
+                ],
+                self.p.hairline(),
+            );
+        }
+        self.rows += 1;
+        ui.painter().galley(
+            Pos2::new(rect.left() + 14.0, rect.top() + 10.0),
+            galley,
+            Color32::PLACEHOLDER,
+        );
+    }
 }
 
 /// A row in a pop-up menu. The hovered row takes the accent, as native menus do.

@@ -58,6 +58,8 @@ pub struct UiState {
     pub overlay: OverlayState,
     pub close_status: CloseStatus,
     pub preferences: theme_browser::State,
+    /// The Preferences pane in view and the settings search.
+    pub preference_view: preferences::View,
     pub shells: preferences::ShellPicker,
     pub palette_query: String,
     /// Highlighted command; reset whenever the query changes.

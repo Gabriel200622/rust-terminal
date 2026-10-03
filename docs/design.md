@@ -202,16 +202,36 @@ icon buttons keep a 28-point target around a 16-point glyph.
   "Disconnect from SSH?", "Quit Neptune?"). The SSH sheet asks only for a host,
   states that connecting an existing workspace restarts its terminals, and
   names the problem in place of that note while the host is unusable.
-- **Preferences.** General settings are grouped rows that apply immediately.
+- **Preferences.** A source list beside one pane of settings, as a desktop
+  settings window is laid out. The list is a surface of its own in the window
+  material, concentric with the sheet, and names the panes with an icon:
+  General, Appearance, Text, Shell, Notifications and Updates. The selected
+  pane is marked as a selected workspace is, its name titles the content, and
+  the close control trails that title. Each pane is a short column of labelled
+  cards: rows with the control at the trailing edge, and the note that explains
+  them inside the same card, under a hairline. Settings apply immediately, so
+  there is no confirming action; "Reset to defaults" is a row in General and
+  retains the custom themes and the favorites. The sheet keeps one height for
+  every pane and remembers the pane in view while the app runs. A sheet too
+  narrow for names keeps the list as icons with tooltips.
+  A search field leads the source list and takes the keyboard when the sheet
+  opens; in a narrow sheet it takes the title's place. Typing replaces the
+  pane with "Results": the matching rows as working controls, in cards named
+  for their pane and section, while each pane in the list counts what was
+  found in it and the others recede. Every word typed must match a setting's
+  label, its pane or another common word for it ("dark mode" finds the theme,
+  "caret" the cursor); a misspelling is accepted only when nothing matches as
+  typed. Enter opens the pane of the first result, choosing a pane leaves the
+  search, and Escape clears the search before it closes the sheet.
   Appearance leads with the theme in use: a miniature drawn in its own colours,
   its name and where it comes from. The whole row opens the theme catalog.
-  Below it are a window zoom percentage stepper, a font size stepper with its
-  Ctrl+Shift+Plus/Minus and Ctrl+Shift+0 shortcuts (Command+Shift on macOS), a
-  slider for line spacing, a segmented cursor style, and switches for boolean
-  settings. Reset retains the custom themes and the favorites.
+  Below it is a window zoom percentage stepper. Text has a font size stepper
+  with its Ctrl+Shift+Plus/Minus and Ctrl+Shift+0 shortcuts (Command+Shift on
+  macOS), a slider for line spacing, a segmented cursor style and the blink
+  switch. Boolean settings are switches.
 - **Themes.** The catalog and the editor are screens of the Preferences sheet.
-  A back control leads the title, and the sheet widens over 160 ms to make room
-  for the grid. The search field takes the keyboard and shares a line with the
+  A back control leads the title, and they take the sheet's full width in
+  place of the source list. The search field takes the keyboard and shares a line with the
   All/Dark/Light/Custom/Favorites filter. Cards are grouped as "Favorites",
   "Your themes", "Neptune" and "iTerm2 collection"; each is a miniature of the
   window with sample text in the theme's colours, never terminal contents. Only
