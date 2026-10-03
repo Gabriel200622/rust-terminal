@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { Footer, Nav } from "@/components/site/chrome";
 import { Downloads, DownloadsLoading } from "@/components/site/download";
-import { getRelease } from "@/lib/github-releases";
+import { getDownloadPage } from "@/lib/download-page";
 
 export const metadata: Metadata = {
   title: "Download Neptune",
@@ -11,8 +11,8 @@ export const metadata: Metadata = {
   alternates: { canonical: "/download" },
 };
 
-async function Stable() {
-  return <Downloads channel="stable" {...await getRelease("stable")} />;
+async function Download() {
+  return <Downloads {...await getDownloadPage("stable")} />;
 }
 
 export default function Page() {
@@ -21,7 +21,7 @@ export default function Page() {
       <Nav />
       <main className="overflow-x-clip">
         <Suspense fallback={<DownloadsLoading channel="stable" />}>
-          <Stable />
+          <Download />
         </Suspense>
       </main>
       <Footer />

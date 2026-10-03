@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Icon } from "../icons";
 import { Segmented } from "../neptune/controls";
@@ -70,7 +71,7 @@ function ChannelSwitch({ channel }: { channel: Channel }) {
         style={{ transform: channel === "beta" ? "translateX(100%)" : undefined }}
       />
       {channels.map(([id, label, href]) => (
-        <a
+        <Link
           key={id}
           href={href}
           aria-current={channel === id ? "page" : undefined}
@@ -79,28 +80,40 @@ function ChannelSwitch({ channel }: { channel: Channel }) {
           }`}
         >
           {label}
-        </a>
+        </Link>
       ))}
     </nav>
   );
 }
 
-function Hero({ channel, children }: { channel: Channel; children: React.ReactNode }) {
+function Hero({
+  channel,
+  stableAvailable,
+  children,
+}: {
+  channel: Channel;
+  stableAvailable: boolean;
+  children: React.ReactNode;
+}) {
   return (
     <section
       id="top"
       className="relative mx-auto flex w-full max-w-[1180px] flex-col items-center px-5 pt-12 sm:px-8 sm:pt-16"
     >
       <Glow className="top-[45%] h-[560px]" />
-      <div className="animate-rise">
-        <ChannelSwitch channel={channel} />
-      </div>
+      {stableAvailable && (
+        <div className="animate-rise">
+          <ChannelSwitch channel={channel} />
+        </div>
+      )}
       <h1 className="mt-8 max-w-[15ch] animate-rise text-center text-[clamp(40px,6.6vw,72px)] leading-[0.98] font-semibold tracking-[-0.045em] text-balance [animation-delay:40ms]">
         {channel === "beta" ? "Try Neptune Beta." : "Download Neptune."}
       </h1>
       <p className="mt-6 max-w-[34rem] animate-rise text-center text-[clamp(16px,1.6vw,18px)] leading-[1.5] text-secondary [animation-delay:80ms]">
         {channel === "beta"
-          ? "Early builds of what comes next. Beta builds may have rough edges; Stable is recommended for everyday work."
+          ? `Early builds of what comes next. Beta builds may have rough edges${
+              stableAvailable ? "; Stable is recommended for everyday work." : "."
+            }`
           : "A native terminal for macOS, Windows and Linux. Real shells, GPU rendering and a quiet place to work."}
       </p>
       <div className="mt-8 flex w-full animate-rise flex-col items-center [animation-delay:120ms]">
@@ -497,7 +510,15 @@ function Verify({ release, recommended }: { release: Release; recommended: Packa
   );
 }
 
-function Empty({ channel, unavailable }: { channel: Channel; unavailable: boolean }) {
+function Empty({
+  channel,
+  stableAvailable,
+  unavailable,
+}: {
+  channel: Channel;
+  stableAvailable: boolean;
+  unavailable: boolean;
+}) {
   const page = channel === "beta" ? "/download/beta" : "/download";
   const [title, text, action] = unavailable
     ? [
@@ -508,18 +529,18 @@ function Empty({ channel, unavailable }: { channel: Channel; unavailable: boolea
           <Icon name="refresh" size={14} />
         </a>,
       ]
-    : channel === "beta"
+    : channel === "beta" && stableAvailable
       ? [
           "No beta release published yet",
           "Beta builds appear here once they are published. Stable is the recommended download.",
-          <a key="stable" className={primary} href="/download">
+          <Link key="stable" className={primary} href="/download">
             Get Stable
             <Icon name="arrowRight" size={14} />
-          </a>,
+          </Link>,
         ]
       : [
-          "No stable release published yet",
-          "Completed releases appear here once they are published. You can build Neptune from source today.",
+          `No ${channel} release published yet`,
+          "Releases appear here once they are published. You can build Neptune from source today.",
           <a key="build" className={primary} href="#install">
             Build from source
             <Icon name="arrowDown" size={14} />
@@ -547,10 +568,12 @@ function Empty({ channel, unavailable }: { channel: Channel; unavailable: boolea
 
 export function Downloads({
   channel,
+  stableAvailable,
   release,
   unavailable,
 }: {
   channel: Channel;
+  stableAvailable: boolean;
   release: Release | null;
   unavailable: boolean;
 }) {
@@ -589,8 +612,8 @@ export function Downloads({
   if (!release) {
     return (
       <>
-        <Hero channel={channel}>
-          <Empty channel={channel} unavailable={unavailable} />
+        <Hero channel={channel} stableAvailable={stableAvailable}>
+          <Empty channel={channel} stableAvailable={stableAvailable} unavailable={unavailable} />
         </Hero>
         <div className="mt-32 sm:mt-40">
           <Install
@@ -608,7 +631,7 @@ export function Downloads({
 
   return (
     <>
-      <Hero channel={channel}>
+      <Hero channel={channel} stableAvailable={stableAvailable}>
         <Primary
           channel={channel}
           release={release}
@@ -649,7 +672,7 @@ export function Downloads({
 export function DownloadsLoading({ channel }: { channel: Channel }) {
   return (
     <>
-      <Hero channel={channel}>
+      <Hero channel={channel} stableAvailable={false}>
         <div role="status" className="flex h-[76px] flex-col items-center">
           <div className="h-10 w-[300px] max-w-full rounded-pane bg-control" />
           <span className="sr-only">Loading downloads</span>

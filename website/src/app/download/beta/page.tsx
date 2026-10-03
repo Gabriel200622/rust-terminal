@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { Footer, Nav } from "@/components/site/chrome";
 import { Downloads, DownloadsLoading } from "@/components/site/download";
-import { getRelease } from "@/lib/github-releases";
+import { getDownloadPage } from "@/lib/download-page";
 
 export const metadata: Metadata = {
   title: "Download Neptune Beta",
@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 };
 
 async function Beta() {
-  return <Downloads channel="beta" {...await getRelease("beta")} />;
+  return <Downloads {...await getDownloadPage("beta")} />;
 }
 
 export default function Page() {
