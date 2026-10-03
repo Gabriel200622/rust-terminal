@@ -16,6 +16,10 @@ pub struct Config {
     pub line_height: f32,
     pub scrollback: usize,
     pub shell: Option<String>,
+    /// Arguments for `shell`, such as `-d Ubuntu` for `wsl.exe`. Omitted when
+    /// empty, so settings without arguments still load in older versions.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub shell_args: Vec<String>,
     pub cursor: Cursor,
     pub cursor_blink: bool,
     pub sidebar_width: f32,
@@ -125,6 +129,7 @@ impl Default for Config {
             line_height: 1.4,
             scrollback: 10_000,
             shell: None,
+            shell_args: Vec::new(),
             cursor: Cursor::Block,
             cursor_blink: false,
             sidebar_width: 216.0,
@@ -212,6 +217,10 @@ impl Config {
         if let Some(shell) = &self.shell {
             anyhow::ensure!(!shell.trim().is_empty(), "shell cannot be empty");
         }
+        anyhow::ensure!(
+            self.shell.is_some() || self.shell_args.is_empty(),
+            "shell_args require a shell"
+        );
         Ok(())
     }
     /// Whether `theme` is built in, bundled or a saved custom theme.
@@ -766,6 +775,22 @@ font_size = 15.0
                 );
             }
         }
+    }
+
+    #[test]
+    fn shell_arguments_round_trip_and_are_omitted_when_empty() {
+        let plain = toml::to_string(&Config::default()).unwrap();
+        assert!(!plain.contains("shell_args"));
+        let config = Config {
+            shell: Some("wsl.exe".into()),
+            shell_args: vec!["-d".into(), "Ubuntu 24.04".into()],
+            ..Config::default()
+        };
+        let mut restored: Config = toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
+        restored.validate().unwrap();
+        assert_eq!(restored, config);
+        let mut orphaned: Config = toml::from_str("shell_args = [\"-l\"]").unwrap();
+        assert!(orphaned.validate().is_err());
     }
 
     #[test]

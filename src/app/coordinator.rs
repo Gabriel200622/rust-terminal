@@ -19,7 +19,7 @@ pub(super) fn session_options(
 ) -> SessionOptions {
     let (shell, args) = match remote {
         Some(remote) => (Some(client.into()), ssh::arguments(remote, remote_cwd)),
-        None => (config.shell.clone(), Vec::new()),
+        None => (config.shell.clone(), config.shell_args.clone()),
     };
     SessionOptions {
         cwd,
@@ -580,6 +580,7 @@ impl App {
                     if !self.ui.preferences.editing() {
                         self.ui.preferences = Default::default();
                     }
+                    self.ui.shells = Default::default();
                     self.ui.overlay = OverlayState::Settings;
                 }
             }
@@ -588,6 +589,7 @@ impl App {
                     self.ui.preferences = Default::default();
                     self.ui.preferences.browse();
                 }
+                self.ui.shells = Default::default();
                 self.ui.overlay = OverlayState::Settings;
             }
             Action::Palette => {

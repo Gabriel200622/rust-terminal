@@ -4,6 +4,7 @@ pub mod clipboard;
 pub mod fonts;
 pub(crate) mod keyboard;
 pub mod links;
+pub mod shells;
 pub mod updates;
 pub mod window;
 

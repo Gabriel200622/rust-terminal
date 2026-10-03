@@ -9,6 +9,10 @@ the signed desktop update manifest; do not maintain a second release-notes file.
 
 ### What's New
 
+- Pick your shell from a list in Preferences, as in Windows Terminal. Neptune
+  finds Command Prompt, PowerShell, WSL distributions, Git Bash, Visual Studio
+  developer prompts and Windows Terminal profiles on Windows, and the installed
+  shells on macOS and Linux. Custom… still takes any program.
 - Keep working after minimizing on macOS. A window minimized with the yellow
   button no longer comes back from the Dock frozen.
 - Receive terminal alerts while Neptune is minimized or covered, and confirm
