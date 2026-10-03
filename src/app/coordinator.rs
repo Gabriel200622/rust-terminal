@@ -414,6 +414,11 @@ impl App {
             Action::SetGroupName(group, name) => {
                 self.dispatch(ctx, Command::RenameWorkspaceGroup { group, name })
             }
+            Action::GroupDefaultDirectory(group) => self.edit_directory(group),
+            Action::BrowseGroupDirectory(group) => self.browse_directory(ctx, group),
+            Action::SetGroupDefaultDirectory(group, directory) => {
+                self.set_directory(ctx, group, directory)
+            }
             Action::SetGroupCollapsed(group, collapsed) => self.dispatch(
                 ctx,
                 Command::SetWorkspaceGroupCollapsed { group, collapsed },
@@ -638,6 +643,7 @@ impl App {
                 self.search_task = None;
             }
             Action::CloseOverlay => {
+                self.cancel_directory_check();
                 self.pending_close = None;
                 if self.ui.overlay == OverlayState::Update {
                     self.updates.dismiss();
@@ -735,7 +741,6 @@ impl App {
         }
     }
 
-    /// Adds a workspace named after its folder, or after its host when remote.
     /// Opens a terminal beside `pane`, in the directory that terminal is in:
     /// across a split, or as a tab in the same place without an axis.
     fn open_beside(
@@ -789,6 +794,15 @@ impl App {
         remote: Option<String>,
         group: Option<neptune_model::WorkspaceGroupId>,
     ) {
+        let cwd = if remote.is_none() {
+            group
+                .and_then(|id| self.controller.model().group(id))
+                .and_then(neptune_model::WorkspaceGroup::default_directory)
+                .map(PathBuf::from)
+                .unwrap_or(cwd)
+        } else {
+            cwd
+        };
         let name = name.unwrap_or_else(|| match &remote {
             Some(destination) => remote_label(destination),
             None => cwd

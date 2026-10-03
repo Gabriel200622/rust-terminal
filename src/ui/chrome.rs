@@ -1289,6 +1289,10 @@ fn group_row(
                 actions.push(Action::RenameGroup(group.id()));
                 ui.close();
             }
+            if menu_item(ui, p, Icon::Folder, "Default directory…", "", false) {
+                actions.push(Action::GroupDefaultDirectory(group.id()));
+                ui.close();
+            }
             if menu_item(ui, p, Icon::Close, "Remove group", "", false) {
                 actions.push(Action::RemoveGroup(group.id()));
                 ui.close();
@@ -2136,6 +2140,7 @@ mod tests {
                         id: g.id(),
                         name: g.name().into(),
                         collapsed: g.collapsed(),
+                        default_directory: g.default_directory().map(std::path::Path::to_path_buf),
                     })
                     .collect(),
                 Some(self.sidebar_order.clone()),
@@ -2164,6 +2169,7 @@ mod tests {
                         id: WorkspaceGroupId::new(*id),
                         name: format!("group {id}"),
                         collapsed: *collapsed,
+                        default_directory: None,
                     })
                     .collect(),
                 None,
@@ -2248,6 +2254,7 @@ mod tests {
             Vec::new(),
             vec![neptune_model::WorkspaceGroupSpec {
                 id: group,
+                default_directory: None,
                 name: "Projects".into(),
                 collapsed: false,
             }],

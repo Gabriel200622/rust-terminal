@@ -208,6 +208,10 @@ fn commands(view: &PaletteView) -> Vec<Command> {
                 Action::RenameGroup(group.id()),
             ),
             (
+                format!("Set default directory for group {}", group.name()),
+                Action::GroupDefaultDirectory(group.id()),
+            ),
+            (
                 format!(
                     "{} group {}",
                     if group.collapsed() {
@@ -665,6 +669,40 @@ pub fn show(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn group_directory_commands_capture_each_group_even_with_duplicate_names() {
+        let config = Config::default();
+        let model = neptune_model::Model::restore_grouped(
+            Vec::new(),
+            [1, 2]
+                .into_iter()
+                .map(|id| neptune_model::WorkspaceGroupSpec {
+                    id: neptune_model::WorkspaceGroupId::new(id),
+                    name: "Projects".into(),
+                    collapsed: true,
+                    default_directory: None,
+                })
+                .collect(),
+            None,
+            true,
+            Default::default(),
+        )
+        .unwrap();
+        let list = commands(&PaletteView {
+            groups: model.groups(),
+            ..view(&config, &[])
+        });
+        let targets: Vec<_> = list
+            .iter()
+            .flat_map(|command| &command.actions)
+            .filter_map(|action| match action {
+                Action::GroupDefaultDirectory(group) => Some(group.get()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(targets, [1, 2]);
+    }
 
     fn view<'a>(config: &'a Config, workspaces: &'a [WorkspaceView]) -> PaletteView<'a> {
         PaletteView {

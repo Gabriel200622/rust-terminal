@@ -117,6 +117,129 @@ fn rename(
     }
 }
 
+fn default_directory(
+    ctx: &egui::Context,
+    p: Palette,
+    state: &mut UiState,
+    group: neptune_model::WorkspaceGroupId,
+    actions: &mut Vec<Action>,
+) {
+    let busy = state.directory_pending || state.directory_browsing;
+    let mut save = confirmed_by_enter(ctx, state) && !busy;
+    let mut browse = false;
+    let mut reset = false;
+    let mut cancel = false;
+    // Reserve the window margin, header and footer so actions stay reachable
+    // when a validation error makes the form taller.
+    let body_height = (ctx.content_rect().height() - 24.0 - 52.0 - 62.0).max(60.0);
+    let output = sheet(
+        ctx,
+        p,
+        "Default directory",
+        440.0,
+        SheetPlacement::Center,
+        |ui| {
+            // Areas remember their previous size; allow the body to grow
+            // when validation adds a message, within the current window.
+            ui.set_max_height(ctx.content_rect().height() - 24.0);
+            sheet_header(ui, p, "Default directory", None);
+            egui::ScrollArea::vertical()
+                .id_salt("group-directory-form")
+                .max_height(body_height)
+                .show(ui, |ui| {
+                    padded(ui, 20.0, |ui| {
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(&state.directory_group)
+                                    .font(theme::medium(12.0))
+                                    .color(p.secondary),
+                            )
+                            .truncate(),
+                        );
+                        ui.add_space(8.0);
+                        ui.add_enabled_ui(!busy, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 8.0;
+                                let browse_width = (ui
+                                    .painter()
+                                    .layout_no_wrap("Browse…".into(), theme::medium(13.0), p.fg)
+                                    .size()
+                                    .x
+                                    + 32.0)
+                                    .max(72.0);
+                                let width = ui.available_width()
+                                    - browse_width
+                                    - ui.spacing().item_spacing.x;
+                                let field = text_field(
+                                    ui,
+                                    p,
+                                    Id::new("group-default-directory"),
+                                    &mut state.directory_path,
+                                    "Path or ~/folder",
+                                    "Workspace group default directory",
+                                    width,
+                                );
+                                if state.overlay_focus && accepts_focus(ui) {
+                                    field.request_focus();
+                                    state.overlay_focus = false;
+                                }
+                                if field.changed() {
+                                    state.directory_selected = None;
+                                    state.directory_error = None;
+                                }
+                                browse = button(ui, p, "Browse…", ButtonKind::Secondary).clicked();
+                            });
+                        });
+                        ui.add_space(8.0);
+                        ui.add_enabled_ui(!busy, |ui| {
+                            reset =
+                                button(ui, p, "Use home directory", ButtonKind::Quiet).clicked();
+                        });
+                        if let Some(error) = &state.directory_error {
+                            ui.add_space(8.0);
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(error)
+                                        .font(theme::regular(12.0))
+                                        .color(p.red),
+                                )
+                                .wrap(),
+                            );
+                        }
+                    });
+                });
+            footer(ui, "directory-actions", |ui| {
+                ui.add_enabled_ui(!busy, |ui| {
+                    save |= button(
+                        ui,
+                        p,
+                        if state.directory_pending {
+                            "Checking…"
+                        } else {
+                            "Save"
+                        },
+                        ButtonKind::Primary,
+                    )
+                    .clicked();
+                });
+                cancel = button(ui, p, "Cancel", ButtonKind::Secondary).clicked();
+            });
+        },
+    );
+    if cancel || output.backdrop_clicked {
+        actions.push(Action::CloseOverlay);
+    } else if reset {
+        actions.push(Action::SetGroupDefaultDirectory(group, None));
+    } else if browse {
+        actions.push(Action::BrowseGroupDirectory(group));
+    } else if save {
+        actions.push(Action::SetGroupDefaultDirectory(
+            group,
+            Some(state.directory_path.clone()),
+        ));
+    }
+}
+
 /// Connects a workspace over SSH, or creates a connected one when `workspace`
 /// is `None`. It asks only for the host: signing in happens in the terminal,
 /// through the system client, and a new workspace is named after its host.
@@ -313,6 +436,9 @@ fn confirm_close(
 
 pub fn show(ctx: &egui::Context, p: Palette, state: &mut UiState, actions: &mut Vec<Action>) {
     match state.overlay {
+        OverlayState::GroupDefaultDirectory(group) => {
+            default_directory(ctx, p, state, group, actions)
+        }
         target @ (OverlayState::Rename(_)
         | OverlayState::RenameGroup(_)
         | OverlayState::NewGroup) => rename(ctx, p, state, target, actions),
@@ -391,6 +517,149 @@ mod tests {
                 assert!(actions.is_empty());
             }
         }
+    }
+
+    #[test]
+    fn directory_validation_errors_keep_save_and_cancel_inside_their_clip_rect() {
+        for size in [vec2(640.0, 400.0), vec2(480.0, 320.0), vec2(360.0, 240.0)] {
+            let ctx = egui::Context::default();
+            ctx.set_fonts(crate::platform::fonts::bundled_definitions());
+            let config = crate::config::Config::default();
+            theme::apply(&ctx, &config);
+            let p = Palette::for_config(&config);
+            let mut state = UiState {
+                overlay: OverlayState::GroupDefaultDirectory(neptune_model::WorkspaceGroupId::new(
+                    1,
+                )),
+                directory_group: "Project".into(),
+                ..Default::default()
+            };
+            for frame in 0..8 {
+                if frame == 4 {
+                    state.directory_error =
+                        Some("Cannot open this directory: access denied. ".repeat(5));
+                }
+                let mut actions = Vec::new();
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, size)),
+                        ..Default::default()
+                    },
+                    |ui| show(ui.ctx(), p, &mut state, &mut actions),
+                );
+                output.textures_delta.clear();
+                if frame >= 5 {
+                    let mut buttons = 0;
+                    for shape in &output.shapes {
+                        if let egui::Shape::Text(text) = &shape.shape
+                            && matches!(text.galley.text(), "Browse…" | "Save" | "Cancel")
+                        {
+                            buttons += 1;
+                            assert!(
+                                shape
+                                    .clip_rect
+                                    .contains_rect(text.galley.rect.translate(text.pos.to_vec2())),
+                                "{} clipped at {size:?}",
+                                text.galley.text()
+                            );
+                        }
+                    }
+                    assert_eq!(buttons, 3, "browse and footer actions visible at {size:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn default_directory_owns_focus_and_only_a_fresh_enter_submits_its_captured_target() {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(crate::platform::fonts::bundled_definitions());
+        let config = crate::config::Config::default();
+        theme::apply(&ctx, &config);
+        let p = Palette::for_config(&config);
+        let group = neptune_model::WorkspaceGroupId::new(7);
+        let mut state = UiState {
+            overlay: OverlayState::GroupDefaultDirectory(group),
+            overlay_focus: true,
+            directory_path: "/project".into(),
+            ..Default::default()
+        };
+        let frame = |state: &mut UiState, events| {
+            let mut actions = Vec::new();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(640.0, 400.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| show(ui.ctx(), p, state, &mut actions),
+            );
+            output.textures_delta.clear();
+            actions
+        };
+        let enter = |pressed| egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        assert!(frame(&mut state, vec![enter(true)]).is_empty());
+        for _ in 0..3 {
+            assert!(frame(&mut state, vec![]).is_empty());
+        }
+        assert_eq!(
+            ctx.memory(|memory| memory.focused()),
+            Some(Id::new("group-default-directory"))
+        );
+        assert!(frame(&mut state, vec![enter(true)]).is_empty());
+        assert!(frame(&mut state, vec![enter(false)]).is_empty());
+        state.directory_pending = true;
+        assert!(frame(&mut state, vec![enter(true)]).is_empty());
+        assert!(frame(&mut state, vec![enter(false)]).is_empty());
+        state.directory_pending = false;
+        let actions = frame(&mut state, vec![enter(true)]);
+        assert!(
+            matches!(actions.as_slice(), [Action::SetGroupDefaultDirectory(target, Some(path))] if *target == group && path == "/project")
+        );
+        assert_eq!(
+            state.overlay,
+            OverlayState::GroupDefaultDirectory(group),
+            "validation owns closing the sheet"
+        );
+        assert!(frame(&mut state, vec![enter(false)]).is_empty());
+        ctx.memory_mut(|memory| memory.request_focus(Id::new("group-default-directory")));
+        assert!(
+            frame(
+                &mut state,
+                vec![egui::Event::Key {
+                    key: egui::Key::Tab,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }]
+            )
+            .is_empty()
+        );
+        assert!(
+            frame(
+                &mut state,
+                vec![egui::Event::Key {
+                    key: egui::Key::Tab,
+                    physical_key: None,
+                    pressed: false,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }]
+            )
+            .is_empty()
+        );
+        let actions = frame(&mut state, vec![enter(true)]);
+        assert!(
+            matches!(actions.as_slice(), [Action::BrowseGroupDirectory(target)] if *target == group),
+            "Enter on Browse opens the picker without submitting the path"
+        );
     }
 
     #[test]

@@ -106,8 +106,13 @@ icon buttons keep a 28-point target around a 16-point glyph.
   folder and its name; its count yields to a plus control on hover or focus.
   Clicking the row reveals or hides indented workspaces with the native 120 ms
   ease-out collapse animation and a matching fade. Double-click renames; the
-  folder menu creates local or SSH workspaces, renames, or removes the folder
-  while retaining its workspaces. Workspace menus offer "Move to group" and
+  folder menu creates local or SSH workspaces, sets a default local directory,
+  renames, or removes the folder while retaining its workspaces. "Default
+  directory…" opens a compact sheet with the group name, editable path, native
+  "Browse…" folder picker, Save, Cancel and "Use home directory". Selecting a
+  folder edits the path until Save; the sheet omits explanatory paragraphs.
+  Tabs and splits inherit their source terminal’s directory. Workspace menus
+  offer "Move to group" and
   "Ungrouped". Collapse never suspends output. Group organization and collapsed
   state restore, and shortcut/palette selection reveals the selected workspace.
   Dragging a folder row reorders groups as blocks with their visible workspaces,

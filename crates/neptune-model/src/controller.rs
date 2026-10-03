@@ -40,6 +40,11 @@ pub enum Command {
         group: WorkspaceGroupId,
         collapsed: bool,
     },
+    /// Changes only the starting directory of future local workspaces.
+    SetWorkspaceGroupDefaultDirectory {
+        group: WorkspaceGroupId,
+        directory: Option<PathBuf>,
+    },
     SetWorkspaceGroup {
         workspace: WorkspaceId,
         group: Option<WorkspaceGroupId>,
@@ -279,6 +284,15 @@ impl Controller {
                     return Err(Error::WorkspaceLimit);
                 }
                 self.check_pane_capacity(0)?;
+                let cwd = if remote.is_none() {
+                    group
+                        .and_then(|id| self.model.group(id))
+                        .and_then(WorkspaceGroup::default_directory)
+                        .map(PathBuf::from)
+                        .unwrap_or(cwd)
+                } else {
+                    cwd
+                };
                 let id = WorkspaceId::new(self.model.next_workspace);
                 let pane_id = PaneId::new(self.model.next_pane);
                 let next_workspace = self
@@ -338,6 +352,7 @@ impl Controller {
                     id,
                     name,
                     collapsed: false,
+                    default_directory: None,
                 });
                 dirty = true;
             }
@@ -355,6 +370,14 @@ impl Controller {
                 let folder = self.model.group_mut(group)?;
                 if folder.collapsed != collapsed {
                     folder.collapsed = collapsed;
+                    dirty = true;
+                }
+            }
+            Command::SetWorkspaceGroupDefaultDirectory { group, directory } => {
+                crate::workspace::validate_default_directory(directory.as_deref())?;
+                let folder = self.model.group_mut(group)?;
+                if folder.default_directory != directory {
+                    folder.default_directory = directory;
                     dirty = true;
                 }
             }
@@ -2890,6 +2913,189 @@ mod group_tests {
             })
             .unwrap();
         assert_ne!(controller.model().groups()[0].id(), before.groups()[0].id());
+    }
+
+    #[test]
+    fn group_default_only_changes_new_local_workspaces_and_is_restored() {
+        let directory = if cfg!(windows) {
+            r"C:\project"
+        } else {
+            "/project"
+        };
+        let mut controller = Controller::new(Model::default());
+        controller
+            .dispatch(Command::AddWorkspace {
+                cwd: "/original".into(),
+                name: "original".into(),
+                group: None,
+                remote: None,
+            })
+            .unwrap();
+        let original = controller.model().active_workspace().unwrap();
+        let pane = controller.model().active_pane().unwrap();
+        controller
+            .dispatch(Command::AddWorkspaceGroup {
+                name: "Projects".into(),
+            })
+            .unwrap();
+        let group = controller.model().groups()[0].id();
+        controller
+            .dispatch(Command::SetWorkspaceGroup {
+                workspace: original,
+                group: Some(group),
+            })
+            .unwrap();
+        let original_workspace = controller.model().workspace(original).unwrap().clone();
+        let effects = controller
+            .dispatch(Command::SetWorkspaceGroupDefaultDirectory {
+                group,
+                directory: Some(directory.into()),
+            })
+            .unwrap();
+        assert!(matches!(effects.as_slice(), [Effect::Persist { .. }]));
+        assert_eq!(
+            controller.model().workspace(original),
+            Some(&original_workspace)
+        );
+        for command in [
+            Command::AddTab {
+                workspace: original,
+                pane,
+                cwd: "/current-tab".into(),
+            },
+            Command::SplitPane {
+                workspace: original,
+                pane,
+                axis: Axis::Horizontal,
+                cwd: "/current-split".into(),
+            },
+        ] {
+            let expected = match &command {
+                Command::AddTab { cwd, .. } | Command::SplitPane { cwd, .. } => cwd.clone(),
+                _ => unreachable!(),
+            };
+            let effects = controller.dispatch(command).unwrap();
+            assert!(effects.iter().any(
+                |effect| matches!(effect, Effect::StartSession { cwd, .. } if cwd == &expected)
+            ));
+        }
+        let restored = Model::restore_ordered(
+            controller.model().specs(),
+            controller.model().group_specs(),
+            Some(controller.model().sidebar_order().to_vec()),
+            controller.model().active_workspace(),
+            true,
+            crate::Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            restored.group(group).unwrap().default_directory(),
+            Some(std::path::Path::new(directory))
+        );
+        controller = Controller::new(restored);
+        for (membership, remote, expected) in [
+            (Some(group), None, directory),
+            (None, None, "/provided"),
+            (Some(group), Some("host".to_owned()), "/provided"),
+        ] {
+            let effects = controller
+                .dispatch(Command::AddWorkspace {
+                    cwd: "/provided".into(),
+                    name: "new".into(),
+                    group: membership,
+                    remote,
+                })
+                .unwrap();
+            let workspace = controller
+                .model()
+                .workspace(controller.model().active_workspace().unwrap())
+                .unwrap();
+            assert_eq!(workspace.cwd(), std::path::Path::new(expected));
+            assert!(effects.iter().any(|effect| matches!(effect, Effect::StartSession { cwd, remote_cwd: None, .. } if cwd == std::path::Path::new(expected))));
+        }
+        let effects = controller.dispatch(Command::RestartPane(pane)).unwrap();
+        assert!(effects.iter().any(|effect| matches!(effect, Effect::StartSession { cwd, .. } if cwd == original_workspace.pane(pane).unwrap().cwd())));
+        controller
+            .dispatch(Command::RemoveWorkspaceGroup(group))
+            .unwrap();
+        assert_eq!(
+            controller.model().workspace(original).unwrap().group(),
+            None
+        );
+        assert_eq!(
+            controller
+                .model()
+                .workspace(original)
+                .unwrap()
+                .pane(pane)
+                .unwrap()
+                .cwd(),
+            original_workspace.pane(pane).unwrap().cwd()
+        );
+    }
+
+    #[test]
+    fn group_directory_changes_are_atomic_idempotent_and_resettable() {
+        let directory = if cfg!(windows) {
+            r"C:\project"
+        } else {
+            "/project"
+        };
+        let mut controller = Controller::new(Model::default());
+        controller
+            .dispatch(Command::AddWorkspaceGroup {
+                name: "Projects".into(),
+            })
+            .unwrap();
+        let group = controller.model().groups()[0].id();
+        for (target, directory, error) in [
+            (group, Some("relative".into()), Error::InvalidDirectory),
+            (group, Some("/bad\0path".into()), Error::InvalidDirectory),
+            (
+                WorkspaceGroupId::new(99),
+                Some(directory.into()),
+                Error::UnknownWorkspaceGroup(WorkspaceGroupId::new(99)),
+            ),
+        ] {
+            let before = controller.model().clone();
+            let generation = controller.generation();
+            assert_eq!(
+                controller.dispatch(Command::SetWorkspaceGroupDefaultDirectory {
+                    group: target,
+                    directory
+                }),
+                Err(error)
+            );
+            assert_eq!(controller.model(), &before);
+            assert_eq!(controller.generation(), generation);
+        }
+        let set = Command::SetWorkspaceGroupDefaultDirectory {
+            group,
+            directory: Some(directory.into()),
+        };
+        controller.dispatch(set.clone()).unwrap();
+        assert!(controller.dispatch(set).unwrap().is_empty());
+        let mut groups = controller.model().group_specs();
+        groups[0].default_directory = Some("relative".into());
+        assert_eq!(
+            Model::restore_grouped(Vec::new(), groups, None, true, crate::Limits::default()),
+            Err(Error::InvalidDirectory)
+        );
+        controller
+            .dispatch(Command::SetWorkspaceGroupDefaultDirectory {
+                group,
+                directory: None,
+            })
+            .unwrap();
+        let effects = controller
+            .dispatch(Command::AddWorkspace {
+                cwd: "/provided".into(),
+                name: "new".into(),
+                group: Some(group),
+                remote: None,
+            })
+            .unwrap();
+        assert!(effects.iter().any(|effect| matches!(effect, Effect::StartSession { cwd, .. } if cwd == std::path::Path::new("/provided"))));
     }
 
     #[test]

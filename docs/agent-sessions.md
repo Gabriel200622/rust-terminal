@@ -44,8 +44,8 @@ saved reference is kept.
 `--command` takes precedence in its target pane and starts a shell there.
 `--no-restore` and `restore_workspaces = false` retain their existing meaning.
 Neptune restores new processes, not unfinished tool execution or process memory.
-Only provider, session ID and directory are saved in workspace schema 7, which
-reads versions 1–6. Invalid references receive the same recovery-copy protection
+Only provider, session ID and directory are saved in workspace schema 8, which
+reads versions 1–7. Invalid references receive the same recovery-copy protection
 as other damaged workspace state. Prompts, transcripts, arbitrary commands,
 credentials and permission-bypass flags are not saved or replayed. Transcripts
 remain owned by the CLI. Launch-only options and temporary environment changes

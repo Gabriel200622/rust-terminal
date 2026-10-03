@@ -2,6 +2,7 @@
 
 pub mod clipboard;
 pub mod file_drag;
+pub(crate) mod folders;
 pub mod fonts;
 pub(crate) mod keyboard;
 pub mod links;

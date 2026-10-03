@@ -38,6 +38,8 @@ pub(super) fn fixture(root: &std::path::Path) -> (App, mpsc::SyncSender<Startup>
         capture_sent: false,
         exit_approved: false,
         pending_close: None,
+        directory_check: None,
+        folder_picker: Default::default(),
         ephemeral: true,
         preference_generation: 0,
         ime_composing: false,

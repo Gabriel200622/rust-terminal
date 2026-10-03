@@ -30,6 +30,20 @@ Secondary-click the **Workspaces** heading or empty sidebar space for **New work
 
 Use **Move to group** in a workspace's menu to organize existing workspaces, or choose **Ungrouped** to move one out. Workspaces can be reordered within their group by dragging or with **Move up** and **Move down**. Drag a group by its folder row to place it at the top, between ungrouped workspaces, or beside another group; its workspaces move with it. Ungrouped workspace rows can also be dragged around groups. Escape cancels the drag, and the new order is saved on release. Group commands are also available in the palette. Collapsing or removing a group keeps its shells running; removing it leaves its workspaces ungrouped in the folder's former position. Names, membership, empty groups, mixed sidebar order, and collapsed state are saved with the workspace organization. Groups do not nest.
 
+Choose **Default directory…** from a group's context menu to set the starting
+folder for new local workspaces created in that group. Enter an absolute local
+path or `~/folder`, or use **Browse…** to choose a folder in the native file
+picker, then **Save**. Canceling the picker keeps your current path. The palette
+offers **Set default directory for group …** when the sidebar is hidden. **Use home directory** removes the default.
+
+Existing workspaces and terminals keep their directories. New tabs and splits
+always follow the current directory of the terminal they open beside; restarts
+and restoration use each terminal's last directory. Moving a workspace between
+groups does not change its sessions. Group defaults are saved across launches
+and apply to local workspaces; SSH workspaces retain their remote directory
+behavior. If a saved group folder becomes unavailable, edit or remove the default
+before creating another local workspace there.
+
 ## SSH workspaces
 
 A workspace can be connected to another machine over SSH. Every terminal in it, including new splits and restarted terminals, then opens on that host instead of in a local shell. Secondary-click a workspace and choose **Connect over SSH…** to move all of its terminals to a host, or run **New SSH workspace** from the command palette. **Disconnect from SSH** returns the workspace to local shells. Connecting or disconnecting replaces the workspace's terminals, so processes running in them stop. A terminal keeps its session when it is moved, so it can be moved only between workspaces on the same machine.
