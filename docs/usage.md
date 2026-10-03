@@ -72,7 +72,7 @@ for setup, exact-session requirements and platform limitations.
 
 ## Notifications
 
-Processes can request attention through OSC 9, OSC 99 and OSC 777. Pane rings, sidebar unread badges and the toolbar notification popover keep track of alerts, with optional native desktop banners. See [notifications and agent setup](notifications.md) for Claude Code, Codex, OpenCode, pi and shell examples.
+Processes can request attention through BEL, OSC 9, OSC 99 and OSC 777. BEL produces a generic **Terminal bell** alert. Pane rings, sidebar unread badges and the toolbar notification popover keep track of alerts, with optional native desktop banners. See [notifications and agent setup](notifications.md) for Claude Code, Codex, OpenCode, pi and shell examples.
 
 ## Command-line options
 

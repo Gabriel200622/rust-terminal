@@ -89,6 +89,8 @@ pub struct App {
     ime_composing: bool,
     /// The terminal widget that owned the keyboard on the previous frame.
     terminal_focus: Option<egui::Id>,
+    /// Window focus is reconciled during logic, including minimized frames.
+    window_focused: Option<bool>,
     /// A sheet or the palette was open when focus was last reconciled.
     overlay_was_open: bool,
     _font_shortcut_monitor: crate::platform::keyboard::FontShortcutMonitor,
@@ -200,6 +202,7 @@ impl App {
             preference_generation: 0,
             ime_composing: false,
             terminal_focus: None,
+            window_focused: None,
             overlay_was_open: false,
             diagnostics: diagnostics::Diagnostics::new(launch.diagnostics),
             link_opener: Default::default(),
@@ -213,6 +216,18 @@ impl App {
         }
     }
     fn poll(&mut self, ctx: &egui::Context) {
+        let focused = Self::window_has_focus(ctx);
+        if self.window_focused != Some(focused) {
+            let reported = self
+                .controller
+                .model()
+                .active_pane()
+                .and_then(|pane| self.sessions.get(pane))
+                .is_none_or(|session| session.focus(focused).is_ok());
+            if reported {
+                self.window_focused = Some(focused);
+            }
+        }
         self.updates.configure(self.config.release_channel);
         self.updates.poll(
             ctx,
@@ -258,9 +273,8 @@ impl App {
                     }
                     if let Some(session) = self.sessions.get(pane) {
                         set_session_palette(session, Palette::for_config(&self.config));
-                        if self.controller.model().active_pane() == Some(pane) {
-                            let _ = session.focus(true);
-                        }
+                        let _ = session
+                            .focus(focused && self.controller.model().active_pane() == Some(pane));
                     }
                     self.dispatch(ctx, Command::SessionStarted { pane, generation });
                     self.diagnostics
@@ -382,6 +396,9 @@ impl App {
         {
             ctx.request_repaint_after(Duration::from_millis(30));
         }
+    }
+    fn window_has_focus(ctx: &egui::Context) -> bool {
+        ctx.input(|input| input.focused && !input.viewport().minimized.unwrap_or(false))
     }
     fn complete_startup(&mut self, ctx: &egui::Context, startup: Startup) {
         self.startup = None;

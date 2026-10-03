@@ -62,5 +62,5 @@ warn_running_processes = true
 check_updates = true
 release_channel = "stable" # stable | beta
 
-# Native desktop banners for OSC notifications. Pane rings and history stay enabled.
+# Native desktop banners for BEL/OSC notifications. Pane rings and history stay enabled.
 desktop_notifications = true

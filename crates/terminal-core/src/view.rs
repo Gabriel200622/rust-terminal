@@ -276,7 +276,8 @@ pub enum TerminalEvent {
     CloseNotification { id: String },
 }
 
-/// Plain text supplied explicitly by a terminal program, never inferred from output.
+/// An explicit terminal attention request. BEL uses a generic title; OSC text
+/// comes from the program, never from inspecting ordinary output.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Notification {
     pub id: Option<String>,

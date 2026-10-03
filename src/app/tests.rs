@@ -42,6 +42,7 @@ pub(super) fn fixture(root: &std::path::Path) -> (App, mpsc::SyncSender<Startup>
         preference_generation: 0,
         ime_composing: false,
         terminal_focus: None,
+        window_focused: None,
         overlay_was_open: false,
         _font_shortcut_monitor: Default::default(),
         diagnostics: diagnostics::Diagnostics::new(false),
@@ -265,6 +266,64 @@ fn hidden_tick(app: &mut App, ctx: &egui::Context, close: bool) -> Vec<egui::Vie
         .viewport_commands
         .remove(&egui::ViewportId::ROOT)
         .unwrap_or_default()
+}
+
+#[test]
+#[cfg(unix)]
+fn hidden_window_reports_focus_loss_even_when_a_dialog_owns_input() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _) = fixture(root.path());
+    app.startup = None;
+    app.command = None;
+    app.config.shell = Some("/bin/sh".into());
+    app.config.desktop_notifications = false;
+    let ctx = egui::Context::default();
+    app.dispatch(
+        &ctx,
+        Command::AddWorkspace {
+            group: None,
+            cwd: root.path().into(),
+            name: "Notification probe".into(),
+            remote: None,
+        },
+    );
+    let pane = app.controller.model().active_pane().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while app.sessions.get(pane).is_none() {
+        app.poll(&ctx);
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    app.sessions.get(pane).unwrap().write(
+        b"stty raw -echo; printf '\\033[?1004h'; while :; do bytes=$(dd bs=1 count=3 2>/dev/null | od -An -tx1 | tr -d ' \\n'); [ \"$bytes\" = 1b5b4f ] && break; done; printf '1b 5b 4f\\007'\r",
+    ).unwrap();
+    while !app
+        .sessions
+        .get(pane)
+        .unwrap()
+        .modes()
+        .contains(terminal_core::TermMode::FOCUS_IN_OUT)
+    {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    app.ui.overlay = OverlayState::Settings;
+    while app.notifications.entries().count() == 0 {
+        hidden_tick(&mut app, &ctx, false);
+        assert!(
+            Instant::now() < deadline,
+            "Codex never received focus loss while minimized"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        app.sessions
+            .get(pane)
+            .unwrap()
+            .screen_text()
+            .contains("1b 5b 4f")
+    );
+    assert_eq!(app.notifications.unread(Some(pane)), 1);
 }
 
 #[test]
