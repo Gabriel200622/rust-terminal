@@ -36,6 +36,7 @@ pub enum OverlayState {
     Update,
     Palette,
     Rename(WorkspaceId),
+    GroupDefaultDirectory(WorkspaceGroupId),
     RenameGroup(WorkspaceGroupId),
     NewGroup,
     /// Connect the workspace over SSH, or create a connected one with `None`.
@@ -68,6 +69,13 @@ pub struct UiState {
     /// Highlighted command; reset whenever the query changes.
     pub palette_selected: usize,
     pub rename_name: String,
+    pub directory_path: String,
+    /// Preserve a chosen folder's native path until the user edits its text.
+    pub directory_selected: Option<PathBuf>,
+    pub directory_group: String,
+    pub directory_pending: bool,
+    pub directory_browsing: bool,
+    pub directory_error: Option<String>,
     pub ssh_host: String,
     /// A dialog field should take keyboard focus on its first frame.
     pub overlay_focus: bool,
@@ -105,6 +113,9 @@ pub enum Action {
     NewInGroup(WorkspaceGroupId),
     NewGroup,
     CreateGroup(String),
+    GroupDefaultDirectory(WorkspaceGroupId),
+    SetGroupDefaultDirectory(WorkspaceGroupId, Option<String>),
+    BrowseGroupDirectory(WorkspaceGroupId),
     RenameGroup(WorkspaceGroupId),
     SetGroupName(WorkspaceGroupId, String),
     SetGroupCollapsed(WorkspaceGroupId, bool),

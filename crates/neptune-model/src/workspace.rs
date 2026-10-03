@@ -19,6 +19,7 @@ pub enum Error {
     InvalidIdentity,
     InvalidSidebarOrder,
     InvalidName,
+    InvalidDirectory,
     InvalidRemote,
     RemoteMismatch,
     IdentityExhausted,
@@ -42,6 +43,7 @@ impl std::fmt::Display for Error {
             Self::InvalidIdentity => f.write_str("Identities must be nonzero and unique"),
             Self::InvalidSidebarOrder => f.write_str("Sidebar order must contain every group and ungrouped workspace exactly once"),
             Self::InvalidName => f.write_str("Name cannot be empty"),
+            Self::InvalidDirectory => f.write_str("Default directory must be an absolute local path"),
             Self::InvalidRemote => f.write_str(
                 "SSH host must be a destination such as user@host, without spaces or a leading dash",
             ),
@@ -53,6 +55,15 @@ impl std::fmt::Display for Error {
     }
 }
 impl std::error::Error for Error {}
+
+pub(crate) fn validate_default_directory(directory: Option<&Path>) -> Result<(), Error> {
+    if let Some(directory) = directory
+        && (!directory.is_absolute() || directory.as_os_str().as_encoded_bytes().contains(&0))
+    {
+        return Err(Error::InvalidDirectory);
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
@@ -198,6 +209,7 @@ pub struct WorkspaceGroupSpec {
     pub id: WorkspaceGroupId,
     pub name: String,
     pub collapsed: bool,
+    pub default_directory: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -205,6 +217,7 @@ pub struct WorkspaceGroup {
     pub(crate) id: WorkspaceGroupId,
     pub(crate) name: String,
     pub(crate) collapsed: bool,
+    pub(crate) default_directory: Option<PathBuf>,
 }
 impl WorkspaceGroup {
     pub fn id(&self) -> WorkspaceGroupId {
@@ -215,6 +228,11 @@ impl WorkspaceGroup {
     }
     pub fn collapsed(&self) -> bool {
         self.collapsed
+    }
+    /// Starting directory for new local workspaces in this group. Terminals
+    /// within each workspace continue to inherit their source pane's directory.
+    pub fn default_directory(&self) -> Option<&Path> {
+        self.default_directory.as_deref()
     }
 }
 
@@ -340,6 +358,7 @@ impl Model {
             if group.name.trim().is_empty() {
                 return Err(Error::InvalidName);
             }
+            validate_default_directory(group.default_directory.as_deref())?;
             model.next_group = model.next_group.max(
                 group
                     .id
@@ -351,6 +370,7 @@ impl Model {
                 id: group.id,
                 name: group.name,
                 collapsed: group.collapsed,
+                default_directory: group.default_directory,
             });
         }
         let mut workspace_ids = HashSet::new();
@@ -513,6 +533,7 @@ impl Model {
                 id: group.id,
                 name: group.name.clone(),
                 collapsed: group.collapsed,
+                default_directory: group.default_directory.clone(),
             })
             .collect()
     }

@@ -9,8 +9,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Version 6 adds per-pane agent resume references. Versions 1–5 remain readable.
-pub const SCHEMA_VERSION: u32 = 7;
+/// Version 8 adds workspace group default directories. Versions 1–7 remain readable.
+pub const SCHEMA_VERSION: u32 = 8;
 const MAX_STATE_BYTES: u64 = 8 * 1024 * 1024;
 
 /// This DTO is the disk contract. Runtime layout serialization cannot change it.
@@ -58,6 +58,8 @@ pub struct SavedWorkspaceGroup {
     pub id: WorkspaceGroupId,
     pub name: String,
     pub collapsed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_directory: Option<PathBuf>,
 }
 impl SavedWorkspaceGroup {
     fn into_spec(self) -> WorkspaceGroupSpec {
@@ -65,6 +67,7 @@ impl SavedWorkspaceGroup {
             id: self.id,
             name: self.name,
             collapsed: self.collapsed,
+            default_directory: self.default_directory,
         }
     }
 }
@@ -159,6 +162,7 @@ impl StateSnapshot {
                     id: group.id(),
                     name: group.name().into(),
                     collapsed: group.collapsed(),
+                    default_directory: group.default_directory().map(Path::to_path_buf),
                 })
                 .collect(),
             active: model.active_workspace(),
@@ -409,6 +413,14 @@ fn restore_versioned(snapshot: StateSnapshot, limits: Limits, report: &mut LoadR
     let requested_active = snapshot.active;
     let mut groups = Vec::new();
     for group in snapshot.groups {
+        if let Some(directory) = &group.default_directory
+            && !directory.is_dir()
+        {
+            report.diagnostics.push(format!(
+                "Workspace group {:?}: default directory {} is unavailable; retained it so it can be changed before creating new workspaces",
+                group.name, directory.display()
+            ));
+        }
         let name = group.name.clone();
         let mut candidate = groups.clone();
         candidate.push(group.into_spec());
@@ -525,7 +537,7 @@ fn restore_versioned(snapshot: StateSnapshot, limits: Limits, report: &mut LoadR
                 }
                 order
             });
-            if snapshot.version == SCHEMA_VERSION && order.is_none() {
+            if snapshot.version >= 6 && order.is_none() {
                 report
                     .diagnostics
                     .push("Missing sidebar order; restored the historical workspace order".into());
@@ -1329,6 +1341,12 @@ mod group_tests {
             .unwrap();
         let group = controller.model().groups()[0].id();
         controller
+            .dispatch(Command::SetWorkspaceGroupDefaultDirectory {
+                group,
+                directory: Some(root.path().into()),
+            })
+            .unwrap();
+        controller
             .dispatch(Command::AddWorkspace {
                 cwd: root.path().into(),
                 name: "app".into(),
@@ -1365,6 +1383,92 @@ mod group_tests {
     }
 
     #[test]
+    fn version_seven_groups_without_defaults_migrate_without_changing_directories() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("workspaces.json");
+        let mut controller = Controller::new(Model::default());
+        controller
+            .dispatch(Command::AddWorkspaceGroup {
+                name: "Projects".into(),
+            })
+            .unwrap();
+        let group = controller.model().groups()[0].id();
+        controller
+            .dispatch(Command::AddWorkspace {
+                cwd: root.path().into(),
+                name: "app".into(),
+                group: Some(group),
+                remote: None,
+            })
+            .unwrap();
+        let mut saved =
+            serde_json::to_value(StateSnapshot::from_model(controller.model())).unwrap();
+        assert!(saved["groups"][0].get("default_directory").is_none());
+        assert!(saved["workspaces"][0].get("default_directory").is_none());
+        saved["version"] = 7.into();
+        std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let report = load_state(&path, Limits::default());
+        assert!(report.can_write && report.migrated);
+        assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+        let restored = report.model.unwrap();
+        assert!(restored.group(group).unwrap().default_directory().is_none());
+        assert_eq!(
+            serde_json::to_value(StateSnapshot::from_model(&restored)).unwrap()["workspaces"],
+            serde_json::to_value(StateSnapshot::from_model(controller.model())).unwrap()["workspaces"]
+        );
+    }
+
+    #[test]
+    fn missing_group_default_preserves_the_group_existing_workspaces_and_original_bytes() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("workspaces.json");
+        let missing = root.path().join("missing");
+        let mut controller = Controller::new(Model::default());
+        controller
+            .dispatch(Command::AddWorkspaceGroup {
+                name: "Projects".into(),
+            })
+            .unwrap();
+        let group = controller.model().groups()[0].id();
+        controller
+            .dispatch(Command::AddWorkspace {
+                cwd: root.path().into(),
+                name: "app".into(),
+                group: Some(group),
+                remote: None,
+            })
+            .unwrap();
+        controller
+            .dispatch(Command::SetWorkspaceGroupDefaultDirectory {
+                group,
+                directory: Some(missing.clone()),
+            })
+            .unwrap();
+        let bytes = serde_json::to_vec(&StateSnapshot::from_model(controller.model())).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        let report = load_state(&path, Limits::default());
+        assert!(report.can_write);
+        assert!(report.diagnostics.iter().any(
+            |message| message.contains("default directory") && message.contains("unavailable")
+        ));
+        let restored = report.model.unwrap();
+        assert_eq!(
+            restored.group(group).unwrap().default_directory(),
+            Some(missing.as_path())
+        );
+        assert_eq!(
+            serde_json::to_value(StateSnapshot::from_model(&restored)).unwrap()["workspaces"],
+            serde_json::to_value(StateSnapshot::from_model(controller.model())).unwrap()["workspaces"]
+        );
+        let recovery = std::fs::read_dir(root.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|file| file != &path)
+            .unwrap();
+        assert_eq!(std::fs::read(recovery).unwrap(), bytes);
+    }
+
+    #[test]
     fn missing_or_invalid_folders_recover_workspaces_and_preserve_original_bytes() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("workspaces.json");
@@ -1383,6 +1487,7 @@ mod group_tests {
             id: WorkspaceGroupId::new(7),
             name: " ".into(),
             collapsed: true,
+            default_directory: None,
         });
         let bytes = serde_json::to_vec(&snapshot).unwrap();
         std::fs::write(&path, &bytes).unwrap();

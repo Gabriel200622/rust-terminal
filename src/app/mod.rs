@@ -4,6 +4,7 @@ mod attachments;
 mod closing;
 mod coordinator;
 mod diagnostics;
+mod directory;
 mod image_preview;
 mod input;
 mod ssh;
@@ -84,6 +85,8 @@ pub struct App {
     capture_sent: bool,
     exit_approved: bool,
     pending_close: Option<closing::PendingClose>,
+    directory_check: Option<directory::PendingDirectory>,
+    folder_picker: crate::platform::folders::Picker,
     ephemeral: bool,
     preference_generation: u64,
     /// An input-method composition is in progress.
@@ -200,6 +203,8 @@ impl App {
             capture_sent: false,
             exit_approved: false,
             pending_close: None,
+            directory_check: None,
+            folder_picker: crate::platform::folders::Picker::new(cc),
             ephemeral,
             preference_generation: 0,
             ime_composing: false,
@@ -704,6 +709,7 @@ impl eframe::App for App {
         use crate::platform::window::{self, WindowOperation};
         self.frame_started = Instant::now();
         self.file_drag.attach(frame, ctx);
+        self.poll_directory(ctx);
         window::sync_minimized(
             ctx,
             frame

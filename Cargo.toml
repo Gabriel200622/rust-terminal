@@ -36,6 +36,8 @@ toml = "0.9"
 serde_json = "1"
 directories = "6"
 arboard = "3"
+rfd = "0.17.2"
+pollster = "1.0.1"
 png = "0.18"
 # Decodes the pictures that terminal paths name, for their hover preview.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
