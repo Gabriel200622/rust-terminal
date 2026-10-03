@@ -39,28 +39,35 @@ authorization for that version.
 
 ### First-public-release status: 2026-10-02
 
-The owner reported that the private **0.1.2** draft failed acceptance:
+Before any public release, the owner explicitly requested a reset of the private
+release history: withdraw the old GitHub releases and all existing tags, then
+build and publish **0.1.0-rc.1** as Neptune's first public preview. The intended
+stable version is now **0.1.0**. The withdrawn private preparations are preserved
+in Git history and local release evidence; they are not public stable releases.
+This owner-authorized cleanup is a one-time exception to preserving tags, not a
+change to the policy for subsequent releases.
 
-- macOS Apple Silicon: the Dock icon becomes visibly larger while Neptune runs;
-  it has the expected size after the app closes.
-- Linux (Ubuntu 26.04.1 x64): the downloaded AppImage lacked execute permission.
-  Enabling owner execution allowed a native launch, and the owner confirmed that
-  double-click now works. The DEB worked in owner testing. Gear Lever integration
-  has not been independently accepted.
+The public preview remains a GitHub **prerelease**, is never marked latest, and
+is offered through the Beta channel. Publication is explicitly authorized; full
+native acceptance remains pending and must not be reported as passed. Stable
+preparation still requires an accepted **0.1.0-rc.N**. Acceptance fixes increment
+only `N`, keeping `0.1.0` fixed.
 
-It must remain unpublished; its `v0.1.2` tag is preserved. The macOS icon still
-requires a fixed build and native retest; other platform acceptance remains open.
-Because the stable tag is already occupied, the next intended stable version is
-**0.1.3**: prepare **0.1.3-rc.1** after the fixes, then increment only the RC
-number until acceptance passes. This is the transition from the earlier workflow,
-not a reason to keep allocating stable versions during testing.
+The earlier private acceptance failures informed the current source: the macOS
+runtime icon uses the padded macOS asset, and Linux AppImage instructions explain
+browser-download execute permissions. macOS Dock sizing needs native retesting.
+The Ubuntu host's Gear Lever startup failure was separately resolved by
+installing the Flatpak NVIDIA extension matching the host driver; it was not a
+Neptune AppImage defect. Installer and platform checks must use the new RC's
+actual bytes. Higher-version private installations require a manual install of
+this reset candidate because the updater intentionally refuses downgrades.
 
 ## Prepare a release candidate
 
 Release helpers require Python 3.11+; native release jobs provision Python 3.13.
 Manifest signing uses OpenSSL's Ed25519 support on the final Linux runner.
 
-Use `v0.1.3-rc.1`, `v0.1.3-rc.2` for acceptance candidates and `v0.1.3` for
+Use `v0.1.0-rc.1`, `v0.1.0-rc.2` for acceptance candidates and `v0.1.0` for
 their eventual stable release. SemVer is strict:
 no leading zeroes in core or numeric prerelease identifiers. Build metadata is
 accepted but does not affect precedence and must not be used to offer an update.
@@ -77,9 +84,9 @@ as changes land. No raw commit list. Prepare each RC on a feature branch based
 on `main`, following the normal PR flow:
 
 ```sh
-# First candidate for the intended 0.1.3 stable release:
-python3 scripts/release.py prepare 0.1.3-rc.1
-python3 scripts/release.py validate v0.1.3-rc.1
+# First candidate for the intended 0.1.0 stable release:
+python3 scripts/release.py prepare 0.1.0-rc.1
+python3 scripts/release.py validate v0.1.0-rc.1
 # Review Cargo.toml, Cargo.lock and CHANGELOG.md, then commit via a PR.
 ```
 
@@ -89,8 +96,8 @@ version mismatches and unprovisioned updater trust keys fail validation. After
 fixes and useful Unreleased notes, prepare the next candidate:
 
 ```sh
-python3 scripts/release.py prepare 0.1.3-rc.2
-python3 scripts/release.py validate v0.1.3-rc.2
+python3 scripts/release.py prepare 0.1.0-rc.2
+python3 scripts/release.py validate v0.1.0-rc.2
 # Review and merge through a green PR as usual.
 ```
 
@@ -108,11 +115,11 @@ exact resulting `main` SHA, use a clean retained checkout:
 git fetch origin main --tags
 git switch main
 git pull --ff-only origin main
-python3 scripts/release.py validate v0.1.3-rc.1
+python3 scripts/release.py validate v0.1.0-rc.1
 gh run list --repo zevem/neptune --workflow ci.yml --commit "$(git rev-parse HEAD)"
 # Confirm the exact main push run succeeded, then, only with release authorization:
-git tag -a v0.1.3-rc.1 -m "Neptune 0.1.3-rc.1"
-git push origin refs/tags/v0.1.3-rc.1
+git tag -a v0.1.0-rc.1 -m "Neptune 0.1.0-rc.1"
+git push origin refs/tags/v0.1.0-rc.1
 ```
 
 Subsequent candidates use the same commands with their `-rc.N` version.
@@ -171,7 +178,7 @@ release-publication authorization:
 
 ```sh
 # Optional public RC; this does not publish a stable release:
-gh release edit v0.1.3-rc.1 --repo zevem/neptune --draft=false --prerelease --latest=false
+gh release edit v0.1.0-rc.1 --repo zevem/neptune --draft=false --prerelease --latest=false
 ```
 
 ## Promote an accepted release candidate
@@ -186,13 +193,13 @@ gh release edit v0.1.3-rc.1 --repo zevem/neptune --draft=false --prerelease --la
    under Unreleased before running the helper; it does not collect RC notes for you.
 
    ```sh
-   python3 scripts/release.py prepare 0.1.3
-   python3 scripts/release.py validate v0.1.3
+   python3 scripts/release.py prepare 0.1.0
+   python3 scripts/release.py validate v0.1.0
    ```
 
 3. Review and merge through green PR CI, then require successful main-push CI for
    the exact resulting SHA. With authorization to release that stable version,
-   use the tag procedure above with `v0.1.3` and message `Neptune 0.1.3`.
+   use the tag procedure above with `v0.1.0` and message `Neptune 0.1.0`.
 4. The workflow builds and signs new stable installers and leaves a private draft.
    Verify all eight assets and native acceptance of those exact final installers,
    including install/launch and version/update-channel behavior. RC evidence does
@@ -202,7 +209,7 @@ gh release edit v0.1.3-rc.1 --repo zevem/neptune --draft=false --prerelease --la
    draft as stable and **latest**:
 
    ```sh
-   gh release edit v0.1.3 --repo zevem/neptune --draft=false --prerelease=false --latest
+   gh release edit v0.1.0 --repo zevem/neptune --draft=false --prerelease=false --latest
    ```
 
 Verify public GitHub downloads, `neptune.rs/download`, all five installer links,
