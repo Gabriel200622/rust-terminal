@@ -173,6 +173,23 @@ impl Workspace {
     pub fn pane(&self, id: PaneId) -> Option<&Pane> {
         self.panes.iter().find(|pane| pane.id == id)
     }
+
+    /// Takes a pane that is leaving out of the layout. Focus on it passes to
+    /// whatever is then in view in its place: the tab that followed it, or the
+    /// neighbouring tab group once its own is empty.
+    pub(crate) fn remove_from_layout(&mut self, pane: PaneId) -> Result<(), Error> {
+        let place = self.layout.shown().iter().position(|id| *id == pane);
+        self.layout = self
+            .layout
+            .clone()
+            .remove(pane)
+            .ok_or(Error::InvalidLayout("removed every leaf"))?;
+        if self.active == pane {
+            let shown = self.layout.shown();
+            self.active = shown[place.unwrap_or(0).min(shown.len() - 1)];
+        }
+        Ok(())
+    }
 }
 
 /// Construction data for a sidebar folder. Groups contain workspaces, never groups.
@@ -385,8 +402,11 @@ impl Model {
                 return Err(Error::UnknownPane(spec.active));
             }
             spec.layout.validate(&members, &mut split_ids)?;
+            // The focused pane is always the tab in view in its place.
+            let mut layout = spec.layout;
+            layout.show(spec.active);
             model.next_split = model.next_split.max(
-                spec.layout
+                layout
                     .max_split_id()
                     .checked_add(1)
                     .ok_or(Error::IdentityExhausted)?,
@@ -415,7 +435,7 @@ impl Model {
                         lifecycle: Lifecycle::Starting,
                     })
                     .collect(),
-                layout: spec.layout,
+                layout,
                 active: spec.active,
             });
         }

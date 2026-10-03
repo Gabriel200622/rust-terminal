@@ -63,6 +63,13 @@ fn commands(view: &PaletteView) -> Vec<Command> {
         list.extend([
             command(
                 "Terminal",
+                Icon::Plus,
+                "New tab",
+                shortcut("T"),
+                [Action::NewTab(pane)],
+            ),
+            command(
+                "Terminal",
                 Icon::SplitVertical,
                 "Split right",
                 shortcut("D"),
@@ -134,6 +141,19 @@ fn commands(view: &PaletteView) -> Vec<Command> {
             ),
         ]);
         if let Some(layout) = view.layout {
+            for (forward, title, key) in
+                [(true, "Next tab", "PgDn"), (false, "Previous tab", "PgUp")]
+            {
+                if let Some(target) = layout.next_tab(pane, forward) {
+                    list.push(command(
+                        "Terminal",
+                        Icon::Terminal,
+                        title,
+                        shortcut(key),
+                        [Action::Focus(target)],
+                    ));
+                }
+            }
             for (direction, title, arrow) in [
                 (FocusDirection::Left, "Focus pane to the left", "←"),
                 (FocusDirection::Right, "Focus pane to the right", "→"),
@@ -156,7 +176,7 @@ fn commands(view: &PaletteView) -> Vec<Command> {
         "Workspace",
         Icon::Plus,
         "New workspace",
-        shortcut("T"),
+        shortcut("N"),
         [Action::New],
     ));
     list.push(command(
@@ -861,8 +881,11 @@ mod tests {
             id: neptune_model::SplitId::new(1),
             axis: Axis::Vertical,
             ratio: 0.5,
-            first: Box::new(neptune_model::Layout::Leaf(PaneId::new(1))),
-            second: Box::new(neptune_model::Layout::Leaf(PaneId::new(2))),
+            first: Box::new(neptune_model::Layout::Tabs {
+                panes: vec![PaneId::new(1), PaneId::new(3)],
+                shown: PaneId::new(1),
+            }),
+            second: Box::new(neptune_model::Layout::pane(PaneId::new(2))),
         };
         let list = commands(&PaletteView {
             pane: Some(PaneId::new(1)),
@@ -880,6 +903,13 @@ mod tests {
         assert!(
             matches!(navigation[0].actions[..], [Action::Focus(target)] if target == PaneId::new(2))
         );
+        // Two tabs share the focused place, so either direction reaches the other.
+        for title in ["Next tab", "Previous tab"] {
+            let command = list.iter().find(|command| command.title == title).unwrap();
+            assert!(
+                matches!(command.actions[..], [Action::Focus(target)] if target == PaneId::new(3))
+            );
+        }
     }
 
     #[test]

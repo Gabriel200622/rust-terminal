@@ -131,7 +131,7 @@ class Regression:
         self.screenshot("00-single-pane")
         state_path = self.args.data_root / "workspaces.json"
         before = json.loads(state_path.read_text())
-        self.key("ctrl+shift+t", pause=0.8)
+        self.key("ctrl+shift+n", pause=0.8)
         self.screenshot("01-new-workspace")
         state = json.loads(state_path.read_text())
         created = next(workspace for workspace in state["workspaces"] if workspace["id"] == state["active"])
