@@ -543,8 +543,16 @@ pub fn show(
 }
 
 /// A search field: a magnifier leads the text and a clear control trails it.
-fn search_field(ui: &mut Ui, p: Palette, text: &mut String, width: f32) -> Response {
-    let id = Id::new("theme-search");
+/// `label` is its accessible name; the caller owns `id` so it can take focus.
+pub(super) fn search_field(
+    ui: &mut Ui,
+    p: Palette,
+    id: Id,
+    text: &mut String,
+    hint: &str,
+    label: &str,
+    width: f32,
+) -> Response {
     let (_, rect) = ui.allocate_space(vec2(width, metrics::CONTROL_HEIGHT));
     field_frame(ui, p, rect, id, true);
     icons::paint(
@@ -568,10 +576,10 @@ fn search_field(ui: &mut Ui, p: Palette, text: &mut String, width: f32) -> Respo
         ui,
         inner,
         Layout::left_to_right(Align::Center),
-        "theme-search-text",
-        |ui| bare_text_edit(ui, id, text, "Search themes", 13.0, inner.width()),
+        ("search-text", id),
+        |ui| bare_text_edit(ui, id, text, hint, 13.0, inner.width()),
     );
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::TextEdit, true, "Search themes"));
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::TextEdit, true, label));
     if clearable {
         let target = Rect::from_center_size(
             Pos2::new(rect.right() - 16.0, rect.center().y),
@@ -792,7 +800,17 @@ fn toolbar(ui: &mut Ui, p: Palette, state: &mut State) -> (bool, f32) {
         search,
         Layout::left_to_right(Align::Center),
         "theme-search",
-        |ui| search_field(ui, p, &mut state.query, search.width()),
+        |ui| {
+            search_field(
+                ui,
+                p,
+                Id::new("theme-search"),
+                &mut state.query,
+                "Search themes",
+                "Search themes",
+                search.width(),
+            )
+        },
     );
     // A sheet measures itself in a hidden first pass, where focus cannot be held.
     if state.focus_search && ui.is_enabled() && !ui.is_sizing_pass() {

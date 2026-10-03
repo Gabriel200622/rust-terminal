@@ -581,6 +581,7 @@ impl App {
                         self.ui.preferences = Default::default();
                     }
                     self.ui.shells = Default::default();
+                    self.ui.preference_view.opened();
                     self.ui.overlay = OverlayState::Settings;
                 }
             }
@@ -589,6 +590,8 @@ impl App {
                     self.ui.preferences = Default::default();
                     self.ui.preferences.browse();
                 }
+                // Leaving the catalog returns to the pane that opens it.
+                self.ui.preference_view.pane = ui::preferences::Pane::Appearance;
                 self.ui.shells = Default::default();
                 self.ui.overlay = OverlayState::Settings;
             }

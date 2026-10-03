@@ -333,7 +333,10 @@ impl App {
                 } else if self.ui.pane_drag.is_some() {
                     self.cancel_pane_drag(ctx);
                 } else if self.ui.overlay != OverlayState::None {
-                    if self.ui.overlay != OverlayState::Settings || !self.ui.preferences.back() {
+                    // Preferences leaves the theme screens, then a search, first.
+                    if self.ui.overlay != OverlayState::Settings
+                        || !(self.ui.preferences.back() || self.ui.preference_view.back())
+                    {
                         self.action(ctx, Action::CloseOverlay);
                     }
                 } else if searching {

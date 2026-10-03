@@ -1,7 +1,7 @@
 //! Native update notification and explicit verified-download/install sheet.
 use super::{
     Action,
-    helpers::{ButtonKind, SheetPlacement, button, caption, padded, sheet, sheet_header},
+    helpers::{ButtonKind, Group, SheetPlacement, button, caption, padded, sheet, sheet_header},
 };
 use crate::{
     runtime::updates::{UpdateStatus, Updates},
@@ -29,24 +29,37 @@ fn status(updates: &Updates) -> String {
     }
 }
 
+/// The installed version with a manual check, the release on offer and the
+/// state of the last check, as rows of one Preferences card.
 pub fn preferences_status(
     ui: &mut egui::Ui,
     p: Palette,
     updates: &Updates,
+    rows: &mut Group,
     actions: &mut Vec<Action>,
 ) {
-    caption(ui, p, &status(updates));
-    ui.horizontal_wrapped(|ui| {
-        ui.add_enabled_ui(!updates.busy(), |ui| {
-            if button(ui, p, "Check for updates", ButtonKind::Secondary).clicked() {
-                actions.push(Action::CheckUpdates);
+    rows.row(
+        ui,
+        &format!("Neptune {}", env!("CARGO_PKG_VERSION")),
+        |ui| {
+            ui.add_enabled_ui(!updates.busy(), |ui| {
+                if button(ui, p, "Check for updates", ButtonKind::Secondary).clicked() {
+                    actions.push(Action::CheckUpdates);
+                }
+            });
+        },
+    );
+    if let Some(release) = &updates.release {
+        rows.row(ui, &format!("Version {}", release.version), |ui| {
+            if button(ui, p, "Review update", ButtonKind::Secondary).clicked() {
+                actions.push(Action::ReviewUpdate);
             }
         });
-        if updates.release.is_some() && button(ui, p, "Review update", ButtonKind::Quiet).clicked()
-        {
-            actions.push(Action::ReviewUpdate);
-        }
-    });
+    }
+    // An idle updater has nothing to add to the installed version.
+    if !matches!(updates.status, UpdateStatus::Idle) {
+        rows.note(ui, &status(updates));
+    }
 }
 
 pub fn notification(ctx: &egui::Context, p: Palette, updates: &Updates, actions: &mut Vec<Action>) {

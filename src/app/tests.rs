@@ -2329,6 +2329,28 @@ fn theme_browser_escape_returns_to_preferences_before_closing_overlay() {
 }
 
 #[test]
+fn escape_leaves_a_settings_search_before_closing_preferences() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    app.startup = None;
+    app.ui.overlay = OverlayState::Settings;
+    app.ui.preference_view = ui::preferences::View::searching("font");
+    let ctx = egui::Context::default();
+    press(
+        &mut app,
+        &ctx,
+        key(egui::Key::Escape, None, egui::Modifiers::NONE),
+    );
+    assert_eq!(app.ui.overlay, OverlayState::Settings);
+    press(
+        &mut app,
+        &ctx,
+        key(egui::Key::Escape, None, egui::Modifiers::NONE),
+    );
+    assert_eq!(app.ui.overlay, OverlayState::None);
+}
+
+#[test]
 fn theme_color_popup_escape_keeps_preferences_open() {
     let root = tempfile::tempdir().unwrap();
     let (mut app, _sender) = fixture(root.path());
@@ -2390,6 +2412,10 @@ fn preferences_reopen_on_the_general_settings_and_themes_on_the_catalog() {
     app.action(&ctx, Action::Themes);
     assert_eq!(app.ui.overlay, OverlayState::Settings);
     assert!(app.ui.preferences.open);
+    assert_eq!(
+        app.ui.preference_view.pane,
+        ui::preferences::Pane::Appearance
+    );
     // Without a draft the shortcut closes, and the next opening starts over.
     app.action(&ctx, Action::Settings);
     assert_eq!(app.ui.overlay, OverlayState::None);
@@ -2567,7 +2593,17 @@ fn capture_update_native() {
                 },
                 window_state::LoadReport::default(),
             );
-            if screen != "preferences" {
+            if screen == "preferences" {
+                use ui::preferences::Pane;
+                if let Ok(query) = std::env::var("NEPTUNE_PREFERENCES_SEARCH") {
+                    app.ui.preference_view = ui::preferences::View::searching(&query);
+                }
+                let pane = std::env::var("NEPTUNE_PREFERENCES_PANE").unwrap_or_default();
+                app.ui.preference_view.pane = Pane::ALL
+                    .into_iter()
+                    .find(|entry| entry.title().eq_ignore_ascii_case(&pane))
+                    .unwrap_or(Pane::Updates);
+            } else {
                 app.updates.release = Some(crate::runtime::updates::tests::visual_release());
                 use crate::runtime::updates::UpdateStatus;
                 app.updates.status = match screen.as_str() {
