@@ -11,9 +11,49 @@ their preparation records remain in Git history.
 
 ### What's New
 
+## [0.1.0-rc.2] - 2026-10-03
+
+### What's New
+
+- Keep several terminals as tabs within each split. Open a tab with
+  Ctrl+Shift+T, step through tabs with Ctrl+Shift+PageDown/PageUp, and drag tabs
+  between splits or workspaces. Ctrl+Shift+N opens a new workspace.
+- Find settings in reorganized Preferences, with dedicated General, Appearance,
+  Text, Shell, Notifications and Updates panes and searchable controls.
+- Fit more workspaces in the sidebar with shorter rows and tighter group spacing.
 - Avoid multi-second GPU presentation stalls observed after idle on Linux with
-  NVIDIA graphics under XWayland. The reported intermittent native Wayland
-  freeze still needs a capture of the blocking state.
+  NVIDIA graphics under XWayland.
+- Restore Claude Code sessions after Powerlevel10k's instant prompt releases
+  the terminal, avoiding zsh startup warnings and redirected terminal I/O.
+- Avoid briefly flashing the close-confirmation overlay when closing a terminal.
+- Show the latest published Beta download on the website until the first stable
+  release is available, with a live preview reflecting the current desktop UI.
+
+### Acceptance notes and known limitations
+
+- This candidate is a private draft for acceptance testing. Full native acceptance
+  on every platform remains pending; it is not a production-stable release.
+- Saved workspaces now use schema version 7. Older workspace files still load,
+  but RC1 cannot save over layouts written by RC2. Back up workspace state before
+  testing if you need to return to RC1.
+- The reported intermittent native Wayland freeze still needs a capture of the
+  blocking state. The XWayland fix does not establish native Wayland acceptance.
+- Windows installers remain unsigned and may show an unverified-publisher or
+  SmartScreen warning. Both macOS installers require signing and notarization;
+  all installers are covered by signed update metadata and build attestations.
+- Linux x64 packages require glibc 2.35 or newer and working host graphics
+  drivers. Browser-downloaded AppImages need execute permission before launch;
+  enable it in file Properties or run `chmod u+x` on the downloaded file.
+- Workspace restoration starts fresh shells and SSH connections; arbitrary
+  running commands and process memory are not restored. Coding-agent resumption
+  remains limited to supported provider sessions on local Unix terminals.
+- SSH requires an installed OpenSSH client and a POSIX remote shell. Remote
+  directory tracking is integrated for zsh; other shells need OSC 7 integration.
+- Kitty graphics and comprehensive complex-script shaping remain unsupported.
+  Keypad identity and some keyboard-layout information depend on the window
+  toolkit. IME, accessibility and mixed-DPI behavior still need native acceptance.
+- Private drafts are excluded from website downloads and automatic updates.
+  Automatic updates never downgrade; install this candidate manually for testing.
 
 ## [0.1.0-rc.1] - 2026-10-02
 
