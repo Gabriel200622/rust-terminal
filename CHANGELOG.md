@@ -15,6 +15,9 @@ the signed desktop update manifest; do not maintain a second release-notes file.
   before a hidden window closes running terminals.
 - See clean window corners on Windows 11. The window follows the system's own
   rounded corners and border instead of leaving gaps inside them.
+- Keep zsh command history between Neptune sessions on macOS. Commands are
+  saved to your usual `~/.zsh_history` again, so history search and
+  autosuggestions remember them in new terminals and SSH sessions.
 
 ## [0.1.3-rc.1] - 2026-10-02
 

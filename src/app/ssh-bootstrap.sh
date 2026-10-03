@@ -42,6 +42,8 @@ if [[ -n $_neptune_user_zdotdir_set ]]; then
 else
     unset ZDOTDIR
 fi
+# Global zshrc (macOS /etc/zshrc) ran with the startup directory as ZDOTDIR.
+[[ $HISTFILE == $_neptune_dir/* ]] && HISTFILE=${ZDOTDIR-$HOME}/${HISTFILE#$_neptune_dir/}
 [[ -r ${ZDOTDIR-$HOME}/.zshrc ]] && source "${ZDOTDIR-$HOME}/.zshrc"
 _neptune_user_zdotdir=${ZDOTDIR-$HOME}
 _neptune_user_zdotdir_set=${ZDOTDIR+x}

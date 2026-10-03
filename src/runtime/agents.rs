@@ -273,14 +273,23 @@ fn configure_shell(
                 if user_dir.is_some() { "1" } else { "0" }.into(),
             ));
             let restore = "if [[ $NEPTUNE_USER_ZDOTDIR_SET == 1 ]]; then ZDOTDIR=$NEPTUNE_USER_ZDOTDIR; else unset ZDOTDIR; fi\n";
+            let quoted_dotdir = quote(&dotdir.to_string_lossy());
             let capture = format!(
-                "NEPTUNE_USER_ZDOTDIR=${{ZDOTDIR-$HOME}}\nNEPTUNE_USER_ZDOTDIR_SET=${{+ZDOTDIR}}\nZDOTDIR={}\n",
-                quote(&dotdir.to_string_lossy())
+                "NEPTUNE_USER_ZDOTDIR=${{ZDOTDIR-$HOME}}\nNEPTUNE_USER_ZDOTDIR_SET=${{+ZDOTDIR}}\nZDOTDIR={quoted_dotdir}\n"
+            );
+            // Global zshrc (macOS /etc/zshrc) runs while this directory is
+            // ZDOTDIR and puts HISTFILE in it; keep history in the user's ZDOTDIR.
+            let history = format!(
+                "[[ $HISTFILE == {quoted_dotdir}/* ]] && HISTFILE=${{ZDOTDIR-$HOME}}/${{HISTFILE#{quoted_dotdir}/}}\n"
             );
             for file in [".zshenv", ".zprofile", ".zshrc", ".zlogin"] {
-                let mut content = format!(
-                    "{restore}[[ -r ${{ZDOTDIR-$HOME}}/{file} ]] && source \"${{ZDOTDIR-$HOME}}/{file}\"\n"
-                );
+                let mut content = restore.to_owned();
+                if file == ".zshrc" {
+                    content.push_str(&history);
+                }
+                content.push_str(&format!(
+                    "[[ -r ${{ZDOTDIR-$HOME}}/{file} ]] && source \"${{ZDOTDIR-$HOME}}/{file}\"\n"
+                ));
                 match file {
                     ".zshrc" => content.push_str(&format!("if [[ ! -o login ]]; then\n{setup}unset NEPTUNE_USER_ZDOTDIR NEPTUNE_USER_ZDOTDIR_SET\nelse\n{capture}fi\n")),
                     ".zlogin" => content.push_str(&format!("{setup}unset NEPTUNE_USER_ZDOTDIR NEPTUNE_USER_ZDOTDIR_SET\n")),
@@ -844,5 +853,59 @@ mod tests {
             assert!(session.screen_text().contains("neptune-agents-"));
             session.shutdown();
         }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn zsh_history_stays_in_the_user_directory() {
+        use std::sync::Arc;
+        use terminal_core::TerminalSession;
+        if !std::path::Path::new("/bin/zsh").is_file() {
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        std::fs::create_dir(&home).unwrap();
+        std::fs::write(home.join(".zshenv"), "unsetopt GLOBAL_RCS\n").unwrap();
+        // Stand in for macOS /etc/zshrc, which sets HISTFILE from the startup
+        // ZDOTDIR before the user's .zshrc.
+        std::fs::write(
+            home.join(".zprofile"),
+            "HISTFILE=$FIXTURE_STARTUP_DIR/.zsh_history\n",
+        )
+        .unwrap();
+        std::fs::write(home.join(".zshrc"), "PROMPT='NEPTUNE> '\n").unwrap();
+        let bridge = AgentBridge::default();
+        let mut options = SessionOptions {
+            cwd: home.clone(),
+            env: vec![
+                ("HOME".into(), home.to_string_lossy().into_owned()),
+                ("SHELL".into(), "/bin/zsh".into()),
+            ],
+            ..Default::default()
+        };
+        bridge
+            .prepare(PaneId::new(1), 1, &mut options, None, Arc::new(|| {}))
+            .unwrap();
+        let startup = option_env(&options, "ZDOTDIR").unwrap();
+        options.env.push(("FIXTURE_STARTUP_DIR".into(), startup));
+        let session = TerminalSession::spawn(options, Arc::new(|| {})).unwrap();
+        session
+            .write(b"print -r -- \"$HISTFILE\" > \"$HOME/histfile\"\r")
+            .unwrap();
+        let output = home.join("histfile");
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !std::fs::read_to_string(&output).is_ok_and(|text| text.ends_with('\n')) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "zsh startup failed: {}",
+                session.screen_text()
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            std::fs::read_to_string(&output).unwrap(),
+            format!("{}\n", home.join(".zsh_history").display())
+        );
+        session.shutdown();
     }
 }

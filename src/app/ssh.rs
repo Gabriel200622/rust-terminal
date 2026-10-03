@@ -91,12 +91,13 @@ mod tests {
             dotdir.join(".zshenv"),
             // Keep the real bootstrap and user login ordering while excluding
             // unrelated system startup such as Ubuntu's interactive compinit.
-            "unsetopt GLOBAL_RCS\nfpath=(\"$ZDOTDIR/insecure-completions\" $fpath)\nNEPTUNE_STARTUP+=\"env \"\n",
+            // HISTFILE stands in for macOS /etc/zshrc, which uses the startup ZDOTDIR.
+            "unsetopt GLOBAL_RCS\nfpath=(\"$ZDOTDIR/insecure-completions\" $fpath)\nNEPTUNE_STARTUP+=\"env \"\nHISTFILE=$_neptune_dir/.zsh_history\n",
         )
         .unwrap();
         std::fs::write(
             dotdir.join(".zlogin"),
-            "printf '%slogin' \"$NEPTUNE_STARTUP\" > \"$HOME/startup\"\ncd \"$HOME\"\n",
+            "printf '%slogin' \"$NEPTUNE_STARTUP\" > \"$HOME/startup\"\nprintf '%s' \"$HISTFILE\" > \"$HOME/histfile\"\ncd \"$HOME\"\n",
         )
         .unwrap();
         let session = bootstrap(root.path(), Some(&dotdir), Some(&project));
@@ -104,6 +105,10 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(root.path().join("startup")).unwrap(),
             "env profile rc login"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("histfile")).unwrap(),
+            dotdir.join(".zsh_history").to_str().unwrap()
         );
         assert!(!root.path().join("injected").exists());
         assert!(!std::fs::read_dir(root.path()).unwrap().any(|entry| {
