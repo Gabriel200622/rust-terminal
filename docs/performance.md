@@ -4,6 +4,11 @@ Neptune uses a native Rust PTY and terminal parser with a GPU-rendered interface
 The parser, PTY transport, shaping, GPU work, and input latency need separate
 measurements. A fast parser alone does not establish terminal rendering speed.
 
+The [Linux prerelease freeze investigation](linux-freeze-investigation.md)
+records a GPU acquisition stall after idle, the tested presentation change,
+and the distinction between XWayland evidence and the unresolved native
+Wayland report.
+
 ## Recorded parser baseline
 
 On 2026-09-30, the release parser benchmark recorded:
