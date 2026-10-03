@@ -32,6 +32,15 @@ Closing an agent normally clears its reference. Closing a pane or workspace
 removes it; changing SSH hosts clears it; cancelling a close leaves it intact.
 A split starts a fresh shell. Hidden workspaces still receive hook updates.
 
+A restored agent needs the terminal. [Powerlevel10k's instant prompt](https://github.com/romkatv/powerlevel10k#how-do-i-configure-instant-prompt) redirects
+stdin to `/dev/null` and captures stdout/stderr until the first prompt. Resuming
+Claude inside that window selects its non-interactive mode, which can report
+`No deferred tool marker found` and trigger Powerlevel10k's initialization warning.
+The Zsh adapter ends instant prompt with `p10k clear-instant-prompt` before
+resuming. If other startup configuration leaves input or output redirected,
+Neptune does not start the agent as a batch command: the shell opens and the
+saved reference is kept.
+
 `--command` takes precedence in its target pane and starts a shell there.
 `--no-restore` and `restore_workspaces = false` retain their existing meaning.
 Neptune restores new processes, not unfinished tool execution or process memory.
@@ -75,6 +84,15 @@ and the providers' documentation on 2026-10-02:
 
 ## Focused verification
 
+The startup regression covers both login and non-login Zsh with redirected
+stdio. The helper integration test independently redirects stdin and stdout on
+a real PTY for both providers and asserts that no CLI runs or prints output:
+
+```sh
+cargo test -p neptune-terminal --lib runtime::agents --locked
+cargo test -p neptune-terminal --test agent_restore --locked
+```
+
 `python3 scripts/verify-agent-restore.py` runs deterministic CLI fixtures in an
 isolated native app, with fresh storage and a unique inspection endpoint. It
 checks independent IDs in one directory, graceful close/reopen, normal exit,
@@ -90,3 +108,13 @@ The deterministic native regression additionally verifies normal agent exit and
 Ctrl+C. These checks establish Linux behavior, not macOS/Windows readiness or
 performance. Focused model, persistence, runtime and application tests, desktop
 library Clippy and the architecture boundary check passed.
+
+The Powerlevel10k warning was separately reproduced on 2026-10-02 in the native
+Linux/X11 app using the user's unmodified Zsh configuration and Claude Code
+2.1.288. The old build printed both the initialization warning and the deferred
+tool marker error. The fixed development build with `inspection` reopened the
+same session through both login and non-login Zsh, displayed its earlier
+conversation, and answered new requests without either warning. Captures were
+reviewed at 1100×700 and 640×440. Normal Claude exit returned to the shell and
+cleared the saved reference. Both regression tests were also observed failing
+with their respective protections removed, then passing with the fix restored.

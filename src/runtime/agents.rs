@@ -165,7 +165,7 @@ impl AgentBridge {
                 (RUN.into(), String::new()),
                 ("PATH".into(), format!("{shim_path}:{path}")),
             ]);
-            configure_shell(options, startup.path(), resume)?;
+            configure_shell(options, startup.path(), &std::env::current_exe()?, resume)?;
             let (old, retired) = {
                 let mut shared = self
                     .shared
@@ -229,6 +229,7 @@ impl AgentBridge {
 fn configure_shell(
     options: &mut SessionOptions,
     directory: &std::path::Path,
+    helper: &std::path::Path,
     resume: Option<&AgentSession>,
 ) -> std::io::Result<()> {
     let default_shell = options.shell.is_none();
@@ -244,13 +245,17 @@ fn configure_shell(
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or_default();
-    let helper = std::env::current_exe()?;
     let resume_json = resume
         .filter(|agent| agent.is_valid())
         .map(serde_json::to_string)
         .transpose()?;
     let mut setup = "export PATH=\"$NEPTUNE_AGENT_SHIMS:$PATH\"\n".to_owned();
     if let Some(resume) = &resume_json {
+        if name == "zsh" {
+            // Powerlevel10k's instant prompt keeps stdio off the terminal until the
+            // first prompt, later than any startup file; the agent needs it now.
+            setup.push_str("(( ${+functions[p10k]} )) && p10k clear-instant-prompt\n");
+        }
         // Quoted literal data, never interpolated terminal input. This runs after user startup files.
         setup.push_str(&format!(
             "{} --agent-restore {}\n",
@@ -483,6 +488,11 @@ pub fn cli(args: &[String]) -> anyhow::Result<Option<i32>> {
                     .ok_or_else(|| anyhow::anyhow!("Missing resume reference"))?,
             )?;
             anyhow::ensure!(agent.is_valid(), "Invalid resume reference");
+            // Startup files can leave stdio redirected. Without the terminal the CLI
+            // would run as a batch job; keep the reference and leave the shell quiet.
+            if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+                return Ok(Some(0));
+            }
             let arguments = match &agent.session_id {
                 Some(id) => vec![
                     match agent.kind {
@@ -912,6 +922,60 @@ mod tests {
             format!("{}\n", home.join(".zsh_history").display())
         );
         session.shutdown();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn zsh_restore_gets_the_terminal_back_from_instant_prompt() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::Arc;
+        use terminal_core::TerminalSession;
+        if !std::path::Path::new("/bin/zsh").is_file() {
+            return;
+        }
+        for login in [true, false] {
+            let root = tempfile::tempdir().unwrap();
+            let home = root.path().join("home");
+            std::fs::create_dir(&home).unwrap();
+            std::fs::write(home.join(".zshenv"), "unsetopt GLOBAL_RCS\n").unwrap();
+            // Stand in for Powerlevel10k: stdio is redirected for the rest of startup
+            // and returned only by its clear-instant-prompt command.
+            std::fs::write(
+                home.join(".zshrc"),
+                "exec {fd0}<&0 {fd1}>&1 {fd2}>&2 0</dev/null 1>/dev/null 2>&1\np10k() { [[ $# == 1 && $1 == clear-instant-prompt ]] || return 1; exec 0<&$fd0 1>&$fd1 2>&$fd2 }\n",
+            )
+            .unwrap();
+            let helper = root.path().join("helper");
+            std::fs::write(
+                &helper,
+                "#!/bin/sh\nstdio=redirected\n[ -t 0 ] && [ -t 1 ] && [ -t 2 ] && stdio=terminal\necho \"$stdio\" > \"$HOME/restore\"\n",
+            )
+            .unwrap();
+            std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let mut options = SessionOptions {
+                shell: (!login).then(|| "/bin/zsh".into()),
+                cwd: home.clone(),
+                env: vec![
+                    ("HOME".into(), home.to_string_lossy().into_owned()),
+                    ("ZDOTDIR".into(), home.to_string_lossy().into_owned()),
+                    ("SHELL".into(), "/bin/zsh".into()),
+                ],
+                ..Default::default()
+            };
+            configure_shell(&mut options, root.path(), &helper, Some(&agent(FIRST))).unwrap();
+            let session = TerminalSession::spawn(options, Arc::new(|| {})).unwrap();
+            let output = home.join("restore");
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while !std::fs::read_to_string(&output).is_ok_and(|text| text.ends_with('\n')) {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "zsh startup failed: {}",
+                    session.screen_text()
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+            assert_eq!(std::fs::read_to_string(&output).unwrap(), "terminal\n");
+            session.shutdown();
+        }
     }
     #[cfg(unix)]
     #[test]
