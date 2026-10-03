@@ -228,6 +228,7 @@ pub(super) fn engine_loop(
                     });
                     let marks = prompt_scanner.advance(chunk);
                     let mut grid = terminal.lock();
+                    let was_reporting_focus = grid.mode().contains(TermMode::FOCUS_IN_OUT);
                     let started = Instant::now();
                     let mut offset = 0;
                     for (end, mark) in marks {
@@ -243,6 +244,12 @@ pub(super) fn engine_loop(
                         offset = end;
                     }
                     processor.advance(&mut *grid, &chunk[offset..]);
+                    report_focus_on_enable(
+                        &grid,
+                        was_reporting_focus,
+                        &shared,
+                        &notification_input,
+                    );
                     // Commit visible changes before releasing their grid lock.
                     if processor.sync_bytes_count() < chunk.len() {
                         shared.changed();
@@ -279,7 +286,9 @@ pub(super) fn engine_loop(
             .is_some_and(|deadline| deadline <= Instant::now())
         {
             let mut grid = terminal.lock();
+            let was_reporting_focus = grid.mode().contains(TermMode::FOCUS_IN_OUT);
             processor.stop_sync(&mut *grid);
+            report_focus_on_enable(&grid, was_reporting_focus, &shared, &notification_input);
             shared.changed();
         }
         // Small PTY reads should not each cause a waitpid/WaitForSingleObject
@@ -386,6 +395,26 @@ pub(super) fn engine_loop(
         close_conpty(&master, &shared);
     }
     shared.changed_force();
+}
+
+fn report_focus_on_enable(
+    terminal: &Term<EventProxy>,
+    was_reporting: bool,
+    shared: &Shared,
+    input: &SyncSender<Input>,
+) {
+    if !was_reporting && terminal.mode().contains(TermMode::FOCUS_IN_OUT) {
+        // TUIs start assuming focus. A pane may have lost it before the
+        // program requested reports, so supply its actual state on enable.
+        let bytes = if terminal.is_focused {
+            b"\x1b[I"
+        } else {
+            b"\x1b[O"
+        };
+        if let Err(error) = shared.enqueue(input, Input::Write(bytes.to_vec())) {
+            shared.error(error);
+        }
+    }
 }
 
 #[cfg(unix)]

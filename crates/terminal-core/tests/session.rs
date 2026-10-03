@@ -580,6 +580,44 @@ fn process_activity_detects_exec_replacing_the_shell_and_jobs_without_job_contro
 }
 
 #[test]
+fn notification_focus_reporting_enabled_in_a_hidden_pane_reports_current_focus() {
+    for enable in [r"\033[?1004h", r"\033[?2026h\033[?1004h"] {
+        let session = shell(&format!(
+            r"stty raw -echo; printf 'READY\r\n'; dd bs=1 count=1 >/dev/null 2>&1; printf '{enable}'; dd bs=1 count=3 2>/dev/null | od -An -tx1",
+        ));
+        wait_for(|| screen(&session).contains("READY"));
+        session.focus(false).unwrap();
+        session.write(b"x").unwrap();
+        wait_for(|| matches!(session.metadata().status, SessionStatus::Exited { .. }));
+        let output = screen(&session);
+        // GNU and BSD od use different spacing; compare the actual reply bytes.
+        let bytes: Vec<u8> = output
+            .split_whitespace()
+            .filter_map(|word| u8::from_str_radix(word, 16).ok())
+            .collect();
+        assert_eq!(bytes, b"\x1b[O", "Missing focus-out reply: {output}");
+        wait_for(|| session.metrics().active_workers == 0);
+    }
+}
+
+#[test]
+fn codex_bel_fallback_crosses_the_real_pty_as_an_attention_notification() {
+    // Codex 0.160.0's auto backend emits exactly BEL for TERM_PROGRAM=neptune.
+    let session = shell(r"printf '\007VISIBLE'");
+    wait_for(|| matches!(session.metadata().status, SessionStatus::Exited { .. }));
+    let events = session.drain_events();
+    assert_eq!(session.metadata().bell_count, 1);
+    assert_eq!(events.len(), 1, "Codex's completion bell produced no alert");
+    assert!(matches!(
+        &events[0],
+        terminal_core::TerminalEvent::Notification(n) if n.title == "Terminal bell"
+            && n.body.is_empty()
+    ));
+    assert!(screen(&session).contains("VISIBLE"));
+    wait_for(|| session.metrics().active_workers == 0);
+}
+
+#[test]
 fn notification_osc_events_cross_the_real_pty_without_polluting_screen_text() {
     let session = shell(
         r"printf '\033]9;Attention\007\033]777;notify;Build;Done\033\\'; printf '\033]99;i=one:d=0;Review\007'; printf '\033]99;i=one:p=body;Ready\007VISIBLE'",
@@ -597,12 +635,15 @@ fn notification_osc_events_cross_the_real_pty_without_polluting_screen_text() {
 
 #[test]
 fn notification_flood_keeps_the_event_queue_bounded() {
-    let session =
-        shell(r"i=0; while [ $i -lt 1000 ]; do printf '\033]9;Ready\007'; i=$((i + 1)); done");
-    wait_for(|| matches!(session.metadata().status, SessionStatus::Exited { .. }));
-    assert_eq!(session.drain_events().len(), 64);
-    assert!(session.metrics().dropped_events >= 936);
-    wait_for(|| session.metrics().active_workers == 0);
+    for sequence in [r"\033]9;Ready\007", r"\007"] {
+        let session = shell(&format!(
+            r"i=0; while [ $i -lt 1000 ]; do printf '{sequence}'; i=$((i + 1)); done",
+        ));
+        wait_for(|| matches!(session.metadata().status, SessionStatus::Exited { .. }));
+        assert_eq!(session.drain_events().len(), 64);
+        assert!(session.metrics().dropped_events >= 936);
+        wait_for(|| session.metrics().active_workers == 0);
+    }
 }
 
 #[test]

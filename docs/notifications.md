@@ -1,6 +1,6 @@
 # Terminal notifications
 
-Programs can ask for attention by writing OSC 9, OSC 99 or OSC 777 to their
+Programs can ask for attention by writing BEL, OSC 9, OSC 99 or OSC 777 to their
 Neptune terminal. Neptune rings the pane in amber, shows the latest alert and an
 unread count on its workspace row (a collapsed folder sums its workspaces), and
 puts a dot on the toolbar bell. The bell and the **Notifications** palette
@@ -31,6 +31,7 @@ Run one of these in a Neptune shell (POSIX `printf`):
 
 ```sh
 printf '\033]9;Ready for review\007'
+printf '\007'
 printf '\033]777;notify;Build complete;Ready for review\033\\'
 printf '\033]99;i=build:d=0;Build complete\033\\'
 printf '\033]99;i=build:p=body;Ready for review\033\\'
@@ -45,8 +46,10 @@ In PowerShell:
 The process must emit the sequence to the pane's PTY. Output captured by a hook
 runner, a log file or a remote server cannot reach Neptune automatically. SSH
 works when the remote program emits OSC through its terminal; multiplexers may
-need their own passthrough configuration. Bare BEL and ordinary output are not
-attention notifications.
+need their own passthrough configuration. BEL has no title or body, so it produces
+a **Terminal bell** alert; this includes bells from shell line editors and other
+programs. A BEL that terminates an OSC does not produce an extra bell alert.
+Ordinary output does not produce attention notifications.
 
 ## Coding agents
 
@@ -56,7 +59,22 @@ The examples below are integration recipes, not evidence of live agent runs.
 
 ### Codex
 
-Merge into the `[tui]` section of your Codex user configuration:
+Codex's interactive CLI enables notifications by default, but emits them only
+when it considers the terminal unfocused. Finishing an agent turn is the trigger;
+this does not require exiting the Codex process. In Codex CLI 0.160.0, `auto`
+recognizes a fixed list of terminals for OSC 9 and uses BEL for Neptune.
+Neptune handles that fallback as a generic **Terminal bell** in-app alert and,
+when enabled, a native desktop banner. Switching panes/workspaces or leaving or
+minimizing the window supplies the focus loss that Codex's default requires.
+
+For message text and notifications even while looking at Codex, run:
+
+```sh
+codex -c tui.notifications=true -c 'tui.notification_method="osc9"' -c 'tui.notification_condition="always"'
+```
+
+To keep those choices, merge into the `[tui]` section of your Codex user
+configuration (`~/.codex/config.toml`, or `$CODEX_HOME/config.toml`):
 
 ```toml
 [tui]
@@ -67,7 +85,15 @@ notification_condition = "always"
 
 Use `"unfocused"` instead of `"always"` to have Codex emit only when it considers
 the terminal unfocused. Explicit `osc9` avoids relying on terminal-name detection.
-See the [official Codex configuration sample](https://learn.chatgpt.com/docs/config-file/config-sample).
+Disabling `tui.notifications` or filtering out `agent-turn-complete` suppresses
+completion alerts. `codex exec` does not run the TUI notification path.
+
+The separate `notify` setting launches an external command with a JSON argument
+for `agent-turn-complete`. It is independent of TUI alerts; it does not itself
+create a Neptune notification. To feed Neptune, such a command must write an OSC
+to the originating PTY (for example, `/dev/tty` on Unix), rather than to captured
+stdout. Neptune does not read Codex transcripts or copy prompt/response contents
+into diagnostics. See [official Codex notification configuration](https://learn.chatgpt.com/docs/config-file/config-advanced#notifications).
 
 ### Claude Code
 
@@ -140,6 +166,7 @@ queued follow-ups finish. See [pi's notification extension example](https://gith
 
 ## Protocol scope and limits
 
+- BEL: a generic **Terminal bell** alert, with no inferred message contents.
 - OSC 9: plain message; numeric ConEmu subcommands such as `9;4` progress are
   ignored.
 - OSC 777: `notify;title;body`; semicolons in the body are retained.

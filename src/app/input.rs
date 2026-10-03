@@ -83,7 +83,9 @@ impl App {
                     });
                     continue;
                 }
-                InputAction::Focus(focused) => session.focus(focused),
+                // Window focus is handled by poll even when a dialog owns
+                // input or eframe skips UI for a minimized window.
+                InputAction::Focus(_) => continue,
             };
             if let Err(error) = result {
                 self.diagnostics.failure(

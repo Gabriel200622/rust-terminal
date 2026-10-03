@@ -39,7 +39,8 @@ grid mutex between 16 KiB slices. Input accepts at most one MiB per call and two
 MiB pending across at most 64 messages. Clipboard delivery holds at most 64
 notifications and one MiB of payload, with a 64 KiB per-event maximum. Overflow
 drops oldest notifications, oversized events are discarded, and metrics count
-both. OSC 9/99/777 process notifications share this queue; their observer bounds
+both. BEL uses a generic attention notification; OSC 9/99/777 process notifications
+share this queue, and their observer bounds
 sequences, text and incomplete chunks independently. See [notification protocol
 scope](../../docs/notifications.md#protocol-scope-and-limits). Clipboard reads remain disabled; the application runtime consumes stores. Slow child processes apply PTY
 backpressure instead of blocking the UI or accumulating unlimited output.

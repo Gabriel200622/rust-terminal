@@ -255,7 +255,13 @@ impl EventListener for EventProxy {
             }
             Event::Bell => {
                 self.shared.metadata.lock().bell_count += 1;
-                self.shared.force_repaint();
+                // Codex and other TUIs use BEL when their OSC auto-detection
+                // does not recognize the host terminal. BEL has no message.
+                self.shared
+                    .push_event(crate::TerminalEvent::Notification(crate::Notification {
+                        title: "Terminal bell".into(),
+                        ..Default::default()
+                    }));
             }
             Event::PtyWrite(text) => self.reply(text),
             Event::ColorRequest(index, formatter) => {

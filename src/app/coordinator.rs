@@ -197,7 +197,7 @@ impl App {
                     if let Some(id) = new
                         && let Some(session) = self.sessions.get(id)
                     {
-                        let _ = session.focus(true);
+                        let _ = session.focus(Self::window_has_focus(ctx));
                     }
                 }
                 Effect::ResetSearch => {
