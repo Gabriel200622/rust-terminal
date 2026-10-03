@@ -897,14 +897,16 @@ impl eframe::App for App {
             self.terminal_input(&ctx, rect, context);
         }
         self.terminal_focus = output.active_terminal;
-        // Sheets dim the whole window, following its rounded shape.
+        // Sheets dim the whole window, following its rounded shape. A close
+        // check owns input but has no sheet until confirmation is needed.
         let dim = ui::helpers::animate(
             &ctx,
             egui::Id::new("overlay-scrim"),
             !matches!(
                 self.ui.overlay,
                 OverlayState::None | OverlayState::Palette | OverlayState::Notifications
-            ),
+            ) && !(matches!(self.ui.overlay, OverlayState::ConfirmClose(_))
+                && self.ui.close_status == ui::CloseStatus::Checking),
             0.16,
         );
         let dim = if self.ui.overlay == OverlayState::Palette {
