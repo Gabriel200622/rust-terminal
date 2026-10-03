@@ -1,0 +1,160 @@
+# User guide
+
+A native Rust terminal for focused work. GPU rendering, real shell sessions, and a quiet workspace interface inspired by cmux and Ghostty. The interface follows a native, Apple-style visual language: a full-height sidebar, a unified toolbar, terminals as rounded content surfaces, and one accent colour for focus. See [the interface direction](design.md).
+
+[Project overview](../README.md) · [Installation](installation.md)
+
+- [Workspaces and terminals](#workspaces-and-terminals)
+- [Workspace groups](#workspace-groups)
+- [SSH workspaces](#ssh-workspaces)
+- [Closing terminals safely](#closing-terminals-safely)
+- [Coding agent sessions](#coding-agent-sessions)
+- [Notifications](#notifications)
+- [Command-line options](#command-line-options)
+- [Preferences and themes](#preferences-and-themes)
+- [Storage and restoration](#storage-and-restoration)
+- [Keyboard shortcuts](#keyboard-shortcuts)
+- [Updates](#updates)
+
+## Workspaces and terminals
+
+Workspace navigation, independent shell panes, split layouts, scrollback, terminal search, selection/clipboard, a command palette, and settings are integrated in the native interface. Every action is listed in the command palette with its shortcut; secondary-click a terminal or a workspace for its menu, double-click a workspace to rename it, drag a workspace to reorder the sidebar, and drag the sidebar's edge to resize it. Terminals in a workspace are tabs: several can share one place with one in view, and a split puts places side by side. With several terminals in a workspace, drag one by its tab to rearrange them: drop it on an edge of a place to sit beside it (on an edge of its own place to split it away from its neighbours), on the centre or among the tabs of another place to join them, or on a workspace in the sidebar to move it there with its shell still running. Escape cancels the drag, and the command palette lists "Move terminal to …" for each other workspace. Terminal text uses bundled JetBrains Mono; interface text uses Geist. Font licenses accompany the assets.
+
+Hold Command on macOS or Ctrl on Linux/Windows to reveal small shortcut hints in the top-right of the first nine workspace rows. The hints follow the workspace order and disappear when you release the modifier; `⇧` means Shift. Selecting a workspace with its shortcut or the palette opens its group if it is collapsed.
+
+New workspace opens and selects a fresh shell at `~` immediately. Rename it later by double-clicking its sidebar row or choosing Rename workspace from its menu or the command palette.
+
+## Workspace groups
+
+Secondary-click the **Workspaces** heading or empty sidebar space for **New workspace**, **New SSH workspace**, and **New workspace group**. A group is a folder containing local or SSH workspaces. Click its name to expand or collapse it; hover the row and click **+** to open a new shell inside it. Secondary-click the folder to create an SSH workspace, rename it, or remove the group. Double-click also renames.
+
+Use **Move to group** in a workspace's menu to organize existing workspaces, or choose **Ungrouped** to move one out. Workspaces can be reordered within their group by dragging or with **Move up** and **Move down**. Drag a group by its folder row to place it at the top, between ungrouped workspaces, or beside another group; its workspaces move with it. Ungrouped workspace rows can also be dragged around groups. Escape cancels the drag, and the new order is saved on release. Group commands are also available in the palette. Collapsing or removing a group keeps its shells running; removing it leaves its workspaces ungrouped in the folder's former position. Names, membership, empty groups, mixed sidebar order, and collapsed state are saved with the workspace organization. Groups do not nest.
+
+## SSH workspaces
+
+A workspace can be connected to another machine over SSH. Every terminal in it, including new splits and restarted terminals, then opens on that host instead of in a local shell. Secondary-click a workspace and choose **Connect over SSH…** to move all of its terminals to a host, or run **New SSH workspace** from the command palette. **Disconnect from SSH** returns the workspace to local shells. Connecting or disconnecting replaces the workspace's terminals, so processes running in them stop. A terminal keeps its session when it is moved, so it can be moved only between workspaces on the same machine.
+
+The host is an OpenSSH destination: `host`, `user@host`, an alias from `~/.ssh/config`, or `ssh://user@host:port`. Neptune runs the system `ssh` client (which must be on your `PATH`) once per terminal, so your SSH configuration, keys and agent apply, and password, passphrase and host-key prompts appear in the terminal. Neptune stores the destination and each terminal's last reported remote directory, never a credential. Each terminal is its own connection; enable `ControlMaster` in your SSH configuration to share one. The remote host needs a POSIX `sh` to launch its login shell; the `shell` setting applies to local terminals only. A terminal whose connection ends offers **Reconnect**.
+
+The first terminal starts in the host's login directory; splitting inherits the source terminal's current remote directory. Reconnecting or reopening the app with workspace restoration enabled opens a fresh SSH shell in each terminal's last reported remote directory. Neptune adds temporary OSC 7 directory reporting to Zsh after loading your normal login configuration, without editing your dotfiles. Other shells need their own OSC 7 integration; until a shell reports a directory, splits and reconnects start in the login directory. If a remembered remote directory no longer exists, the terminal shows the failure instead of silently opening elsewhere. Disconnecting or changing hosts clears the remembered remote directories.
+
+## Closing terminals safely
+
+Preferences has two independent switches, both enabled by default:
+**Confirm before closing terminals** always asks before closing; **Warn about
+running processes** asks when a terminal has an active job, even if the first
+switch is off. They apply to terminals, whole workspaces, SSH disconnects and
+quitting Neptune, including terminals in hidden workspaces. One confirmation
+covers the whole action; Cancel preserves the sessions. Process checks do not
+show a dialog or dim the window until confirmation is needed; Escape can cancel
+a pending check.
+
+The process check runs on session workers only when closing is requested. It
+uses OS metadata rather than terminal titles or output, detects foreground,
+background and stopped child jobs, and recognizes programs that replace the
+shell with `exec`. An idle recognized shell can close immediately with the first
+switch off. Starting sessions, failed checks and checks taking longer than two
+seconds ask before closing. SSH connections always count as active: Neptune
+cannot inspect jobs on the remote host. Shell helper processes and unrecognized
+shell executables may also trigger a warning. Shell builtins with no child
+process and fully detached/reparented jobs cannot reliably be distinguished
+from an idle shell; use the always-confirm switch if you need that protection.
+Closing hangs up the terminal; detached or signal-ignoring jobs may survive.
+
+## Coding agent sessions
+
+Local Unix terminals can reopen Claude Code and Codex in their original panes
+when Neptune restarts, using each CLI's own saved session ID. Start `claude` or
+`codex` normally. Codex asks you to review Neptune's SessionStart hook before it
+can report IDs. Exiting the CLI or restarting its terminal clears the resume
+reference; closing Neptune retains it. See [agent sessions](agent-sessions.md)
+for setup, exact-session requirements and platform limitations.
+
+## Notifications
+
+Processes can request attention through OSC 9, OSC 99 and OSC 777. Pane rings, sidebar unread badges and the toolbar notification popover keep track of alerts, with optional native desktop banners. See [notifications and agent setup](notifications.md) for Claude Code, Codex, OpenCode, pi and shell examples.
+
+## Command-line options
+
+The examples below assume `neptune` is on your `PATH`. Run the configuration
+example from the repository root.
+
+When no saved workspace can be restored, Neptune opens a terminal in your home directory (`~`). Use `--cwd` to choose another starting directory, or `--ssh` to open a workspace on a host. `--command` cannot be combined with `--ssh`, and a startup command is never typed into a terminal that is connecting over SSH.
+
+```sh
+neptune --cwd /path/to/project
+neptune --ssh user@host
+neptune --config config.example.toml
+neptune --data-root /path/to/isolated-neptune-data
+neptune --command 'printf "hello\n"'
+neptune --no-restore
+neptune --help
+```
+
+## Preferences and themes
+
+[config.example.toml](../config.example.toml) documents the supported settings: 715 themes shared by the window and terminal, custom themes, window zoom, font size and line height, scrollback limit, shell executable and arguments, cursor style/blink, sidebar width, workspace restoration, and the two independent close warnings. Window zoom is available in Preferences under Appearance; changes there or through zoom shortcuts are saved and restored on the next launch, including with workspace restoration disabled. Settings are validated; unknown keys are rejected. Workspace restoration restores directories, split positions, and focused panes, and launches fresh shell processes; a remote workspace opens new SSH connections to its host. Recognized coding agents can resume their provider-owned conversations through saved session references; arbitrary commands and process memory are never serialized.
+
+Preferences → Shell lists the shells found on this computer, as Windows Terminal lists profiles. On Windows it offers Command Prompt, Windows PowerShell, PowerShell 7, WSL distributions, Git Bash, Visual Studio developer prompts and Windows Terminal profiles that have their own command line (such as the Anaconda prompts). On macOS and Linux it offers the shells in `/etc/shells` and common shells on `PATH` or in Homebrew. **System default** keeps the platform's own startup, including a login shell on macOS and Linux; **Custom…** takes any program. A new choice applies to new terminals.
+
+### Themes
+
+Open **Preferences** and choose the theme row under Appearance (or **Browse
+themes** in the command palette) to pick one theme for the whole app. Neptune's
+Graphite, Dusk and Light themes sit alongside all 712 palettes from the
+[iTerm2 collection](https://iterm2colorschemes.com/). Search by name or filter
+Dark, Light, Custom and Favorites; each card previews the window and terminal,
+and the catalog opens at the theme in use. Choosing a card updates existing and
+new terminals, the sidebar, toolbar and dialogs at once.
+Star a theme (the star beside its name, or **Add to favorites** in its menu) to
+keep it: favorites lead the catalog in the order you starred them, and the
+**Favorites** filter shows them alone. Starring does not change the theme in
+use. Favorites are saved as `favorite_themes` in `config.toml`.
+The collection works offline; [its pinned source and author
+credits](../assets/themes/README.md) ship with Neptune. Window surfaces and readable
+interface colors are derived from each imported palette.
+
+**New theme** copies the colors in use into an editor, and **Duplicate…** in a
+card's menu (the "more" button on a card, or a secondary click) starts from any
+other theme. Name it and use the color wells or hex fields for the background,
+text, bold text, cursor, selection and 16 ANSI colors; the preview updates as
+you edit. **Save theme** saves and applies it. Leaving the editor with unsaved
+changes asks before discarding them. A custom theme's menu also offers
+**Edit…** and **Delete…**; deletion asks for confirmation, and deleting the
+theme in use returns to Graphite. Up to 128 custom themes are saved in
+`config.toml`, with names up to 64 characters. Reset to defaults retains your
+saved custom themes and favorites; deleting a custom theme removes its star.
+Terminal programs can still override terminal colors through escape sequences.
+Older settings with a separate `terminal_theme` migrate that selection to the
+single `theme` setting on load; the next settings save writes the unified format.
+
+## Storage and restoration
+
+Default storage is `~/.config/neptune` on Linux (or `$XDG_CONFIG_HOME/neptune`),
+`~/Library/Application Support/rs.Neptune.neptune` on macOS, and
+`%APPDATA%\Neptune\neptune\config` on Windows. On the first normal launch,
+Neptune moves the previous product's entire settings directory to this location
+if Neptune storage does not already exist. Saved files and recovery copies retain
+their original bytes; damaged or unsupported state still receives the usual write
+protection. A migration failure stops startup and preserves the original files.
+Existing Neptune storage takes precedence. Explicit `--data-root` and screenshot
+launches bypass migration.
+
+Neptune also remembers the window's size and maximized state when closed. Window state is saved as `window.json` in the data directory, independently of workspace restoration; `--no-restore` and `restore_workspaces = false` only affect workspaces. Use `--size WIDTHxHEIGHT` to override the saved geometry and start with a non-maximized window. Screenshot launches use the default or explicit size and do not save window state.
+
+## Keyboard shortcuts
+
+Ctrl-click a web link in a terminal to open it in your default browser; on macOS, use Command-click. Hold the modifier over a link to see its underline and hand cursor. This works with printed HTTP/HTTPS URLs and OSC 8 hyperlinks, including soft-wrapped links and visible scrollback. Ordinary clicks and drags still select text; Shift keeps selecting when a TUI owns the mouse.
+
+Use Ctrl+Shift on Linux/Windows and Command on macOS: T opens a tab beside the focused terminal, N opens a workspace, PageDown/PageUp step through the tabs of the focused place, D splits right, E splits below, W closes the focused pane, F searches, P opens commands, B toggles the sidebar, Enter zooms the focused pane to full size and back, and 1–9 select a workspace by its sidebar position. Ctrl+Tab switches workspaces. Ctrl+Shift+Left/Right/Up/Down focuses the adjacent pane on every platform, including while zoomed; at an outer edge, focus stays put. These moves are also available in the command palette. Escape cancels a terminal drag, or leaves a sheet or a focused search field; otherwise it goes to the shell, as do Tab and unmodified arrow keys. Ctrl+comma opens preferences. Ctrl+plus/minus (Command on macOS) zooms the whole app; Ctrl+equals also zooms in, and Ctrl+0 resets app zoom (Command on macOS). On keyboards where Plus requires Shift, use Ctrl+equals (Command on macOS) for app zoom. Change terminal font size in Preferences or with Ctrl+Shift+plus/minus on Linux/Windows and Command+Shift+plus/minus on macOS; Ctrl+Shift+0 (Command+Shift+0 on macOS) resets it to the default (14 pt). On macOS these font shortcuts follow the active keyboard layout's labeled +, -, and 0 keys, even when Shift produces *, _, or =, as on Latin American keyboards. Use Ctrl+Shift+C/V to copy/paste on Linux/Windows, Command+C/V on macOS. Plain Ctrl+C interrupts the shell; Shift+PageUp/PageDown scrolls history. Hold Shift to select text when a TUI owns the mouse.
+
+## Updates
+
+Preferences → Updates controls automatic checks and Stable/Beta channels.
+Checks/downloads run off the UI thread; updates require signature/hash verification
+and explicit download/install actions. Running shells are never silently closed
+or replaced. Beta can advance to a newer stable; neither channel downgrades.
+
+See [installation](installation.md) for downloads and the
+[release guide](releases.md#desktop-update-behavior) for update verification
+and channel behavior.
