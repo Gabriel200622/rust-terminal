@@ -133,7 +133,8 @@ Do not tag an unrelated feature branch.
 2. Require that the commit is on main and a successful main-push CI run exists
    for that exact SHA. Reuse that evidence instead of repeating the whole CI suite.
 3. Build optimized native binaries on Ubuntu 22.04 x64, macOS 15 ARM64,
-   macOS 15 Intel, and Windows 2025 x64. Intel app tests cover that extra target.
+   macOS 15 Intel, and Windows 2025 x64. A parallel Intel job tests the app
+   library on that extra target. Builds start clean and use every runner core.
 4. Package all installers with fonts/dependency/license notices. macOS signing,
    notarization and Gatekeeper assessment are mandatory. Windows is unsigned.
 5. Only after **all** platform jobs succeed, aggregate and require exactly five
