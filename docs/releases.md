@@ -166,7 +166,7 @@ that exact file, then launch it. Opening it with Gear Lever presents a managemen
 screen; trusting and launching/integrating the file is a separate action.
 Record downloaded-file permissions and test both the direct launch and any
 integration tool used. A `--version` check alone does not verify a native window.
-See the [download instructions](../README.md#ci-and-artifacts).
+See the [download instructions](installation.md#linux-appimage).
 
 Once the workflow is green, download draft artifacts as an authenticated operator,
 verify all eight asset names, signatures/checksums/attestations, test installers
