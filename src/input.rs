@@ -81,6 +81,59 @@ pub fn drop_redundant_preedits(events: &mut Vec<egui::Event>, composing: &mut bo
     });
 }
 
+/// Finds paste chords whose key press the toolkit kept to itself.
+///
+/// The toolkit answers Ctrl+V, Ctrl+Shift+V and Command+V by reading the
+/// clipboard, and reports a paste only when that holds text. With a picture or
+/// nothing on the clipboard the press yields no event at all, so neither the
+/// terminal nor a program reading the clipboard itself would see the chord.
+/// The release is still reported: one without a press or paste before it marks
+/// the swallowed chord.
+#[derive(Default)]
+pub struct PasteChord {
+    /// The modifiers last seen with the paste modifier held.
+    held: Option<egui::Modifiers>,
+    /// The press of V, or the paste it stood for, was reported.
+    delivered: bool,
+}
+
+impl PasteChord {
+    /// The modifiers of a swallowed chord, on the frame its key is released.
+    pub fn swallowed(&mut self, events: &[egui::Event]) -> Option<egui::Modifiers> {
+        let mut swallowed = None;
+        for event in events {
+            match event {
+                egui::Event::ModifiersChanged(modifiers) if modifiers.command => {
+                    self.held = Some(*modifiers);
+                }
+                egui::Event::Paste(_) => self.delivered = true,
+                egui::Event::Key {
+                    key: egui::Key::V,
+                    pressed: true,
+                    ..
+                } => self.delivered = true,
+                egui::Event::Key {
+                    key: egui::Key::V,
+                    pressed: false,
+                    modifiers,
+                    ..
+                } => {
+                    // The modifier may be released before the key.
+                    let chord = Some(*modifiers)
+                        .filter(|modifiers| modifiers.command)
+                        .or(self.held.take());
+                    if !std::mem::take(&mut self.delivered) {
+                        swallowed = chord;
+                    }
+                    self.held = None;
+                }
+                _ => {}
+            }
+        }
+        swallowed
+    }
+}
+
 /// Normalizes a frame without interpreting shortcuts or touching a session.
 pub fn normalize_events(
     events: &[egui::Event],
@@ -315,6 +368,51 @@ pub fn encode_mouse_motion(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_paste_chord_without_a_reported_press_is_found_on_release() {
+        let ctrl = egui::Modifiers::CTRL | egui::Modifiers::COMMAND;
+        let v = |pressed, modifiers| egui::Event::Key {
+            key: egui::Key::V,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers,
+        };
+        let frame = |modifiers, mut events: Vec<egui::Event>| {
+            events.insert(0, egui::Event::ModifiersChanged(modifiers));
+            events
+        };
+        let mut chord = PasteChord::default();
+
+        // A picture on the clipboard: only the release is reported.
+        assert_eq!(chord.swallowed(&frame(ctrl, vec![])), None);
+        assert_eq!(
+            chord.swallowed(&frame(ctrl, vec![v(false, ctrl)])),
+            Some(ctrl)
+        );
+
+        // The modifier let go first still names the chord.
+        let shifted = ctrl | egui::Modifiers::SHIFT;
+        assert_eq!(chord.swallowed(&frame(shifted, vec![])), None);
+        let none = egui::Modifiers::NONE;
+        assert_eq!(chord.swallowed(&frame(none, vec![])), None);
+        assert_eq!(
+            chord.swallowed(&frame(none, vec![v(false, none)])),
+            Some(shifted)
+        );
+
+        // Text on the clipboard arrives as a paste, which is not repeated.
+        let paste = egui::Event::Paste("text".into());
+        assert_eq!(chord.swallowed(&frame(ctrl, vec![paste])), None);
+        assert_eq!(chord.swallowed(&frame(ctrl, vec![v(false, ctrl)])), None);
+
+        // Typing the letter, even after a modifier was held, is no chord.
+        assert_eq!(chord.swallowed(&frame(ctrl, vec![])), None);
+        assert_eq!(chord.swallowed(&frame(none, vec![v(true, none)])), None);
+        assert_eq!(chord.swallowed(&frame(none, vec![v(false, none)])), None);
+        assert_eq!(chord.swallowed(&frame(none, vec![v(false, none)])), None);
+    }
 
     #[test]
     fn repeated_empty_preedits_are_dropped_but_composition_changes_are_kept() {

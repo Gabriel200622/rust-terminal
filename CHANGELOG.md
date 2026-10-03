@@ -13,6 +13,12 @@ their preparation records remain in Git history.
 
 - Read release notes in a redesigned update sheet, with wrapped lists, a status
   that stays in view while the notes scroll and actions at the trailing edge.
+- Paste a screenshot or another clipboard image into a terminal: Neptune saves
+  it and pastes its path, which Claude Code and Codex attach as an image.
+- Drag files onto a terminal to paste their paths. The terminal that will take
+  them is highlighted while the files are held over the window.
+- Ctrl+V reaches the program in the terminal when the clipboard holds no text,
+  so CLI agents can read a copied image themselves.
 
 ## [0.1.0-rc.2] - 2026-10-03
 

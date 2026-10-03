@@ -2038,9 +2038,12 @@ dependencies = [
  "terminal-core",
  "toml",
  "ureq",
+ "wayland-backend",
+ "wayland-client",
  "winit",
  "winreg",
  "winresource",
+ "x11rb",
 ]
 
 [[package]]

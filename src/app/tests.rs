@@ -49,6 +49,10 @@ pub(super) fn fixture(root: &std::path::Path) -> (App, mpsc::SyncSender<Startup>
         notifications: Default::default(),
         desktop_notifier: Default::default(),
         updates: Default::default(),
+        attachments: attachments::Attachments::new(root.join("pasted-images")),
+        file_drag: Default::default(),
+        paste_chord: Default::default(),
+        swallowed_paste: None,
     };
     (app, sender)
 }
@@ -2702,6 +2706,115 @@ fn capture_update_native() {
                 overlay,
                 applied: false,
                 size,
+            }))
+        }),
+    )
+    .unwrap();
+}
+
+/// A real Neptune window with files held over it, as another application's
+/// drag would leave them. Ignored in headless CI.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "Manual native visual QA; needs a desktop and NEPTUNE_DROP_CAPTURE"]
+fn capture_file_drop_native() {
+    use winit::platform::x11::EventLoopBuilderExtX11;
+    let output = PathBuf::from(
+        std::env::var("NEPTUNE_DROP_CAPTURE").expect("Set a task-owned capture path"),
+    );
+    let split = std::env::var_os("NEPTUNE_DROP_SPLIT").is_some();
+    let agent = std::env::var_os("NEPTUNE_DROP_AGENT").is_some();
+    let size = if std::env::var_os("NEPTUNE_DROP_NARROW").is_some() {
+        [640.0, 400.0]
+    } else {
+        [900.0, 640.0]
+    };
+    let data = tempfile::tempdir().unwrap();
+    let data_path = data.path().to_path_buf();
+    std::fs::write(data_path.join("config.toml"), "shell = \"/bin/sh\"\n").unwrap();
+    let options = eframe::NativeOptions {
+        renderer: eframe::Renderer::Wgpu,
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size(size)
+            .with_decorations(false),
+        event_loop_builder: Some(Box::new(|builder| {
+            builder.with_any_thread(true);
+        })),
+        ..Default::default()
+    };
+    struct NativeCapture {
+        app: App,
+        split: bool,
+        agent: bool,
+        applied: bool,
+    }
+    impl eframe::App for NativeCapture {
+        fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+            eframe::App::logic(&mut self.app, ctx, frame);
+            let Some(pane) = self.app.controller.model().active_pane() else {
+                return;
+            };
+            if self.applied || self.app.sessions.get(pane).is_none() {
+                return;
+            }
+            self.applied = true;
+            if self.split {
+                self.app
+                    .action(ctx, Action::Split(pane, neptune_model::Axis::Vertical));
+            }
+            if self.agent {
+                let generation = self.app.sessions.generation(pane).unwrap();
+                self.app.dispatch(
+                    ctx,
+                    Command::PaneAgentChanged {
+                        pane,
+                        generation,
+                        agent: Some(neptune_model::AgentSession {
+                            kind: neptune_model::AgentKind::Claude,
+                            session_id: None,
+                            cwd: std::env::temp_dir(),
+                        }),
+                    },
+                );
+                self.app.action(ctx, Action::Focus(pane));
+            }
+        }
+        fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+            eframe::App::ui(&mut self.app, ui, frame);
+        }
+        fn raw_input_hook(&mut self, _ctx: &egui::Context, input: &mut egui::RawInput) {
+            if self.applied {
+                input.hovered_files.push(egui::HoveredFile {
+                    path: Some("/tmp/Screenshot.png".into()),
+                    ..Default::default()
+                });
+            }
+        }
+        fn on_exit(&mut self) {
+            eframe::App::on_exit(&mut self.app);
+        }
+    }
+    eframe::run_native(
+        "Neptune file drop visual QA",
+        options,
+        Box::new(move |cc| {
+            let mut app = App::new(
+                cc,
+                Launch {
+                    data_root: Some(data_path),
+                    screenshot: Some(output),
+                    ..Default::default()
+                },
+                window_state::LoadReport::default(),
+            );
+            // The capture shows the focused terminal, not wherever the
+            // desktop's pointer happens to be.
+            app.file_drag = crate::platform::file_drag::FileDragSource::detached();
+            Ok(Box::new(NativeCapture {
+                app,
+                split,
+                agent,
+                applied: false,
             }))
         }),
     )

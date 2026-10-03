@@ -1,6 +1,7 @@
 //! Terminal panes: rounded content surfaces arranged by the workspace layout.
 use super::helpers::{self, animate, capsule, elided, galley_at, menu_item, shortcut};
 use super::{Action, PaneRender};
+use crate::platform::file_drag::FileDrag;
 use crate::{
     config::Config,
     icons::{self, Icon},
@@ -10,11 +11,13 @@ use eframe::egui::{
     self, Align, Align2, CursorIcon, Id, LayerId, Layout, Order, Pos2, Rect, Sense, Stroke,
     StrokeKind, Ui, UiBuilder, Vec2, WidgetInfo, WidgetType, vec2,
 };
-use neptune_model::{Axis, Destination, Edge, PaneId};
+use neptune_model::{AgentKind, Axis, Destination, Edge, PaneId};
 use std::collections::BTreeMap;
 use terminal_core::{Mode as TermMode, SessionMetadata, SessionStatus, ViewportSnapshot};
 
 pub struct PanePresentation {
+    /// The CLI agent the terminal is running, which takes dropped files.
+    pub agent: Option<AgentKind>,
     pub unread: usize,
     pub metadata: SessionMetadata,
     /// The terminal's content; absent for a tab that is not in view.
@@ -74,6 +77,9 @@ pub struct StageOutput {
     pub dragging: Option<PaneId>,
     /// Where a carried terminal would land, and the area it would take.
     pub drop: Option<(Destination, Rect)>,
+    /// The terminals in view, and whether each has a shell to take files
+    /// dragged in from another application.
+    pub cards: Vec<(PaneId, Rect, bool)>,
 }
 
 /// Where a terminal dropped at `pointer` lands on the place it is over:
@@ -779,6 +785,12 @@ fn draw_pane(
         output.drop = drop_destination(card, pointer, id, tabs.contains(&dragged));
     }
 
+    output.cards.push((
+        id,
+        card,
+        !presentation.starting && matches!(metadata.status, SessionStatus::Running),
+    ));
+
     if presentation.starting {
         let center = card.center();
         egui::Spinner::new().size(14.0).color(p.muted).paint_at(
@@ -1108,6 +1120,91 @@ pub fn pane_drag(ui: &mut Ui, stage: &Stage, output: &StageOutput, actions: &mut
     );
 }
 
+/// Feedback for files dragged in from another application: the terminal that
+/// would take them is tinted and says what a drop does. Files go to the
+/// terminal they are held over, or to the focused one when they are over the
+/// chrome or the platform does not say where they are. A drop pastes their
+/// paths there.
+pub fn file_drop(
+    ui: &mut Ui,
+    stage: &Stage,
+    output: &StageOutput,
+    drag: FileDrag,
+    actions: &mut Vec<Action>,
+) {
+    let ctx = ui.ctx().clone();
+    let p = stage.p;
+    // A sheet or the palette owns the window; files dropped on it go nowhere.
+    let held_over = drag
+        .pointer
+        .and_then(|pointer| output.cards.iter().find(|card| card.1.contains(pointer)));
+    let target = held_over
+        .or_else(|| output.cards.iter().find(|card| card.0 == stage.active))
+        .filter(|(_, _, running)| *running && stage.keyboard)
+        .map(|(pane, card, _)| (*pane, *card));
+    if !drag.dropped.is_empty()
+        && let Some((pane, _)) = target
+    {
+        actions.push(Action::DropFiles(pane, drag.dropped));
+    }
+
+    // The highlight glides between terminals and fades once the files leave.
+    let preview = Id::new("file-drop-preview");
+    let target = target.filter(|_| drag.hovering);
+    let opacity = animate(&ctx, preview, target.is_some(), 0.12);
+    let shown = ctx.data(|data| data.get_temp::<(PaneId, Rect)>(preview));
+    let shown = match (target, shown) {
+        (Some((pane, area)), Some((_, shown))) if opacity > 0.0 => {
+            Some((pane, glide(&ctx, shown, area)))
+        }
+        (Some(target), _) => Some(target),
+        (None, shown) => shown.filter(|_| opacity > 0.0),
+    };
+    ctx.data_mut(|data| match shown {
+        Some(shown) => {
+            data.insert_temp(preview, shown);
+        }
+        None => data.remove::<(PaneId, Rect)>(preview),
+    });
+    let Some((pane, area)) = shown else {
+        return;
+    };
+    let mut painter = ui.painter().clone();
+    painter.set_opacity(opacity);
+    painter.rect_filled(area, metrics::PANE_RADIUS, theme::tint(p.accent, 0.16));
+    painter.rect_stroke(
+        area,
+        metrics::PANE_RADIUS,
+        Stroke::new(1.5, theme::tint(p.accent, 0.9)),
+        StrokeKind::Inside,
+    );
+    let text = match stage.presentations.get(&pane).and_then(|pane| pane.agent) {
+        Some(AgentKind::Claude) => "Drop to attach to Claude",
+        Some(AgentKind::Codex) => "Drop to attach to Codex",
+        None => "Drop to insert path",
+    };
+    let label = elided(&painter, text, theme::medium(12.0), p.fg, 220.0);
+    let chip = Rect::from_center_size(area.center(), vec2(label.size().x + 44.0, 30.0));
+    if !area.shrink(8.0).contains_rect(chip) {
+        return;
+    }
+    capsule(&painter, chip, p);
+    icons::paint(
+        &painter,
+        Rect::from_center_size(
+            Pos2::new(chip.left() + 18.0, chip.center().y),
+            Vec2::splat(14.0),
+        ),
+        Icon::Image,
+        p.accent,
+    );
+    galley_at(
+        &painter,
+        Pos2::new(chip.left() + 31.0, chip.center().y),
+        label,
+    );
+}
+
 /// A calm placeholder for a window without a workspace.
 pub fn empty_state(
     ui: &mut Ui,
@@ -1197,6 +1294,8 @@ mod tests {
         presentations: BTreeMap<PaneId, PanePresentation>,
         layout: neptune_model::Layout,
         drag: Option<PaneId>,
+        /// Files from another application, for the next frame only.
+        files: FileDrag,
     }
 
     impl Bench {
@@ -1215,6 +1314,7 @@ mod tests {
                         (
                             id,
                             PanePresentation {
+                                agent: None,
                                 unread: 0,
                                 metadata: metadata(""),
                                 snapshot: Some(ViewportSnapshot::blank(80, 24)),
@@ -1232,6 +1332,7 @@ mod tests {
                     second: Box::new(neptune_model::Layout::pane(ids[1])),
                 },
                 drag: None,
+                files: FileDrag::default(),
             };
             bench.frame(vec![]);
             bench
@@ -1274,6 +1375,8 @@ mod tests {
                         &mut output,
                     );
                     pane_drag(ui, &stage, &output, &mut actions);
+                    let files = std::mem::take(&mut self.files);
+                    file_drop(ui, &stage, &output, files, &mut actions);
                 },
             );
             frame.textures_delta.clear();
@@ -1361,6 +1464,7 @@ mod tests {
         let mut bench = Bench::new();
         // The first place holds two tabs, with the first in view.
         let presentation = PanePresentation {
+            agent: None,
             unread: 1,
             metadata: metadata(""),
             snapshot: None,
@@ -1417,6 +1521,65 @@ mod tests {
         // Its own place has no centre to drop on.
         bench.carry_to(Pos2::new(200.0, 200.0));
         assert!(moves(&bench.button(Pos2::new(200.0, 200.0), false)).is_empty());
+    }
+
+    #[test]
+    fn dropped_files_go_to_the_terminal_under_them_or_the_focused_one() {
+        let mut bench = Bench::new();
+        let files = vec![std::path::PathBuf::from("/tmp/shot.png")];
+        let mut drop_at = |pointer: Option<Pos2>| {
+            bench.files = FileDrag {
+                hovering: false,
+                pointer,
+                dropped: files.clone(),
+            };
+            bench
+                .frame(vec![])
+                .into_iter()
+                .filter_map(|action| match action {
+                    Action::DropFiles(pane, paths) => Some((pane, paths)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        // The bench focuses the second terminal, on the right.
+        assert_eq!(drop_at(None), [(PaneId::new(2), files.clone())]);
+        assert_eq!(
+            drop_at(Some(Pos2::new(100.0, 200.0))),
+            [(PaneId::new(1), files.clone())]
+        );
+        assert_eq!(
+            drop_at(Some(Pos2::new(700.0, 200.0))),
+            [(PaneId::new(2), files.clone())]
+        );
+        // Between the terminals, the focused one takes them.
+        assert_eq!(
+            drop_at(Some(Pos2::new(400.0, 200.0))),
+            [(PaneId::new(2), files.clone())]
+        );
+
+        // A terminal whose shell has exited takes no input.
+        bench
+            .presentations
+            .get_mut(&PaneId::new(1))
+            .unwrap()
+            .metadata
+            .status = SessionStatus::Exited {
+            code: 0,
+            signal: None,
+        };
+        let mut drop_at = |pointer: Option<Pos2>| {
+            bench.files = FileDrag {
+                hovering: false,
+                pointer,
+                dropped: files.clone(),
+            };
+            bench
+                .frame(vec![])
+                .into_iter()
+                .any(|action| matches!(action, Action::DropFiles(..)))
+        };
+        assert!(!drop_at(Some(Pos2::new(100.0, 200.0))));
     }
 
     #[test]
@@ -1501,6 +1664,7 @@ mod tests {
         let presentations: BTreeMap<_, _> = [left, right]
             .map(|id| {
                 let presentation = PanePresentation {
+                    agent: None,
                     unread: 0,
                     metadata: metadata("zsh"),
                     snapshot: Some(ViewportSnapshot::blank(80, 24)),

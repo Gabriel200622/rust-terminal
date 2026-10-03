@@ -1,5 +1,6 @@
 //! Thin eframe composition: widgets emit actions, the controller owns transitions,
 //! workers own processes/storage, and caches consume immutable terminal snapshots.
+mod attachments;
 mod closing;
 mod coordinator;
 mod diagnostics;
@@ -96,6 +97,11 @@ pub struct App {
     notifications: crate::notifications::Notifications,
     desktop_notifier: crate::platform::notifications::DesktopNotifier,
     updates: crate::runtime::updates::Updates,
+    attachments: attachments::Attachments,
+    file_drag: crate::platform::file_drag::FileDragSource,
+    paste_chord: crate::input::PasteChord,
+    /// A paste chord pressed this frame that the toolkit did not deliver.
+    swallowed_paste: Option<egui::Modifiers>,
 }
 impl App {
     pub fn new(
@@ -200,6 +206,10 @@ impl App {
             notifications: Default::default(),
             desktop_notifier: Default::default(),
             updates: Default::default(),
+            attachments: attachments::Attachments::new(data.join("pasted-images")),
+            file_drag: Default::default(),
+            paste_chord: Default::default(),
+            swallowed_paste: None,
         }
     }
     fn poll(&mut self, ctx: &egui::Context) {
@@ -360,6 +370,7 @@ impl App {
                 }
             }
         }
+        self.poll_attachments();
         self.poll_saves(ctx);
         self.poll_search(ctx);
         if self.diagnostics.enabled() {
@@ -490,6 +501,7 @@ impl App {
                         session.acknowledge_repaint();
                     }
                     PanePresentation {
+                        agent: pane.agent().map(|agent| agent.kind),
                         unread: self.notifications.unread(Some(pane.id())),
                         metadata: session.metadata(),
                         snapshot: shown.then(|| session.viewport()),
@@ -502,6 +514,7 @@ impl App {
                         _ => "Starting shell…".into(),
                     };
                     PanePresentation {
+                        agent: None,
                         unread: self.notifications.unread(Some(pane.id())),
                         metadata: SessionMetadata {
                             title,
@@ -663,12 +676,14 @@ impl eframe::App for App {
     }
     fn raw_input_hook(&mut self, _: &egui::Context, raw_input: &mut egui::RawInput) {
         crate::input::drop_redundant_preedits(&mut raw_input.events, &mut self.ime_composing);
+        self.swallowed_paste = self.paste_chord.swallowed(&raw_input.events);
     }
     /// Runs before every `ui`, and alone while the window is minimized or
     /// covered: eframe shows no UI then, but terminals keep working.
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         use crate::platform::window::{self, WindowOperation};
         self.frame_started = Instant::now();
+        self.file_drag.attach(frame, ctx);
         window::sync_minimized(
             ctx,
             frame
@@ -831,6 +846,8 @@ impl eframe::App for App {
             }
         }
         let overlay = self.ui.overlay != OverlayState::None;
+        // Polled every frame, so a drop over a sheet is not delivered later.
+        let file_drag = self.file_drag.poll(&ctx);
         let mut output = ui::workspace::StageOutput::default();
         if let Some(workspace) = active.and_then(|id| self.controller.model().workspace(id)) {
             // A zoomed terminal keeps the tabs it shares its place with.
@@ -867,6 +884,7 @@ impl eframe::App for App {
                 &mut output,
             );
             ui::workspace::pane_drag(ui, &stage_view, &output, &mut actions);
+            ui::workspace::file_drop(ui, &stage_view, &output, file_drag, &mut actions);
         } else {
             ui::workspace::empty_state(ui, stage.drawn, p, self.startup.is_some(), &mut actions);
         }
@@ -893,8 +911,9 @@ impl eframe::App for App {
         } else {
             crate::input::RoutingContext::Overlay
         };
+        let swallowed_paste = self.swallowed_paste.take();
         if let Some(rect) = output.active_body {
-            self.terminal_input(&ctx, rect, context);
+            self.terminal_input(&ctx, rect, context, swallowed_paste);
         }
         self.terminal_focus = output.active_terminal;
         // Sheets dim the whole window, following its rounded shape. A close
