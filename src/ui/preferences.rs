@@ -9,6 +9,7 @@ use super::theme_browser::{self, search_field};
 use crate::{
     config::{Config, Cursor},
     icons::{self, Icon},
+    platform::fonts::{DEFAULT_FAMILY, Fonts},
     platform::shells::{Detection, Shell},
     runtime::updates::Updates,
     theme::{self, Palette, metrics},
@@ -79,6 +80,7 @@ impl Pane {
 pub struct View {
     pub pane: Pane,
     query: String,
+    font: FontPicker,
     /// The search field takes the keyboard when the sheet appears.
     focus_search: bool,
 }
@@ -88,6 +90,7 @@ impl View {
     pub fn opened(&mut self) {
         self.query.clear();
         self.focus_search = true;
+        self.font.cancel();
     }
 
     /// The sheet with a search under way.
@@ -107,6 +110,42 @@ impl View {
     }
 }
 
+/// Typing is a draft until Enter, so partial names never reload terminal fonts.
+#[derive(Default)]
+struct FontPicker {
+    custom: bool,
+    saved: String,
+    draft: String,
+    error: Option<&'static str>,
+}
+
+impl FontPicker {
+    fn sync(&mut self, family: &str) {
+        if self.saved != family {
+            self.saved = family.to_owned();
+            self.custom = false;
+            self.cancel();
+        }
+    }
+
+    fn cancel(&mut self) {
+        self.draft.clone_from(&self.saved);
+        self.error = None;
+    }
+
+    fn commit(&mut self, config: &mut Config) {
+        if !crate::config::valid_font_family(&self.draft) {
+            self.error = Some(
+                "Enter a font family name of at most 128 characters, without control characters.",
+            );
+            return;
+        }
+        config.font_family = self.draft.trim().to_owned();
+        self.saved.clone_from(&config.font_family);
+        self.cancel();
+    }
+}
+
 /// One thing a search can find: a row, or the rows that belong together.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Setting {
@@ -116,6 +155,7 @@ enum Setting {
     Reset,
     Theme,
     WindowZoom,
+    FontFamily,
     FontSize,
     LineSpacing,
     CursorStyle,
@@ -130,7 +170,7 @@ enum Setting {
 
 /// Each setting with its pane, its label and the other words people use for
 /// it. A search reads the pane's name and the label as well as these.
-const INDEX: [(Setting, Pane, &str, &str); 16] = [
+const INDEX: [(Setting, Pane, &str, &str); 17] = [
     (
         Setting::RestoreWorkspaces,
         Pane::General,
@@ -166,6 +206,12 @@ const INDEX: [(Setting, Pane, &str, &str); 16] = [
         Pane::Appearance,
         "Window zoom",
         "scale scaling size bigger smaller larger magnify interface ui dpi hidpi percent display",
+    ),
+    (
+        Setting::FontFamily,
+        Pane::Text,
+        "Font family",
+        "fonts typeface typography monospace monospaced installed custom name jetbrains nerd ligatures text letters characters",
     ),
     (
         Setting::FontSize,
@@ -348,10 +394,13 @@ fn card(
     group(ui, p, add_rows);
 }
 
+// Keep runtime services and each overlay's view state borrowed independently.
+#[allow(clippy::too_many_arguments)]
 pub fn show(
     ctx: &egui::Context,
     current: &Config,
     updates: &Updates,
+    fonts: &Fonts,
     state: &mut theme_browser::State,
     view: &mut View,
     shells: &mut ShellPicker,
@@ -503,7 +552,7 @@ pub fn show(
                                     appearance(ui, p, &shown, &mut config, state);
                                 }
                                 if listed(Pane::Text) {
-                                    text(ui, p, &shown, &mut config);
+                                    text(ui, p, &shown, &mut config, fonts, &mut view.font);
                                 }
                                 if listed(Pane::Shell) {
                                     shell(ui, p, &shown, &mut config, shells);
@@ -767,8 +816,15 @@ fn appearance(
     );
 }
 
-fn text(ui: &mut Ui, p: Palette, shown: &Shown, config: &mut Config) {
-    use Setting::{CursorBlink, CursorStyle, FontSize, LineSpacing};
+fn text(
+    ui: &mut Ui,
+    p: Palette,
+    shown: &Shown,
+    config: &mut Config,
+    fonts: &Fonts,
+    picker: &mut FontPicker,
+) {
+    use Setting::{CursorBlink, CursorStyle, FontFamily, FontSize, LineSpacing};
     let pane = Pane::Text;
     card(
         ui,
@@ -776,8 +832,11 @@ fn text(ui: &mut Ui, p: Palette, shown: &Shown, config: &mut Config) {
         shown,
         pane,
         "Font",
-        &[FontSize, LineSpacing],
+        &[FontFamily, FontSize, LineSpacing],
         |ui, rows| {
+            if shown.has(FontFamily) {
+                font_picker(ui, p, rows, config, fonts, picker);
+            }
             if shown.has(FontSize) {
                 rows.row(ui, "Font size", |ui| {
                     let text = format!("{} pt", config.font_size.round() as i32);
@@ -857,6 +916,144 @@ fn text(ui: &mut Ui, p: Palette, shown: &Shown, config: &mut Config) {
             }
         },
     );
+}
+
+fn font_picker(
+    ui: &mut Ui,
+    p: Palette,
+    rows: &mut Group,
+    config: &mut Config,
+    fonts: &Fonts,
+    picker: &mut FontPicker,
+) {
+    picker.sync(&config.font_family);
+    let width = (ui.available_width() - 128.0).clamp(120.0, 240.0);
+    let unlisted = !config.font_family.eq_ignore_ascii_case(DEFAULT_FAMILY)
+        && fonts.families().is_some_and(|families| {
+            !families
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case(&config.font_family))
+        });
+    let custom = picker.custom || unlisted;
+    let resolved = fonts
+        .resolved_family(&config.font_family)
+        .map(|name| format!("Using {name}."));
+    let note = if let Some(error) = picker.error {
+        Some(error)
+    } else if fonts.unavailable(&config.font_family) {
+        Some(
+            "This font is unavailable. Using JetBrains Mono; choose or type an installed monospace font.",
+        )
+    } else if fonts.loading(&config.font_family) {
+        Some("Loading fonts…")
+    } else {
+        resolved.as_deref()
+    };
+    let mut reveal = false;
+    rows.row(ui, "Font family", |ui| {
+        let response = select(
+            ui,
+            p,
+            Id::new("preferences-font-family"),
+            &config.font_family,
+            "Font family",
+            width,
+        )
+        .on_hover_text(&config.font_family);
+        ui.ctx().accesskit_node_builder(response.id, |node| {
+            node.set_value(config.font_family.as_str());
+            if let Some(note) = note {
+                node.set_description(note);
+            }
+        });
+        let menu = egui::Popup::menu(&response).show(|ui| {
+            menu_layout(ui, width.max(260.0));
+            egui::ScrollArea::vertical()
+                .max_height(260.0)
+                .min_scrolled_height(260.0)
+                .show(ui, |ui| {
+                    let mut choose = |ui: &mut Ui, name: &str, label: &str| {
+                        let selected = !custom && config.font_family.eq_ignore_ascii_case(name);
+                        if menu_item(
+                            ui,
+                            p,
+                            if selected {
+                                Icon::Check
+                            } else {
+                                Icon::TextSize
+                            },
+                            label,
+                            "",
+                            false,
+                        ) {
+                            config.font_family = name.to_owned();
+                            picker.custom = false;
+                            picker.sync(name);
+                            picker.cancel();
+                        }
+                    };
+                    choose(ui, DEFAULT_FAMILY, "JetBrains Mono (Default)");
+                    if let Some(families) = fonts.families() {
+                        for family in families {
+                            choose(ui, family, family);
+                        }
+                    } else {
+                        ui.label(
+                            egui::RichText::new("Finding installed fonts…")
+                                .font(theme::regular(12.5))
+                                .color(p.muted),
+                        );
+                    }
+                });
+            menu_separator(ui, p);
+            if menu_item(
+                ui,
+                p,
+                if custom { Icon::Check } else { Icon::Pencil },
+                "Custom…",
+                "",
+                false,
+            ) {
+                picker.custom = true;
+                reveal = true;
+            }
+        });
+        if let Some(menu) = menu {
+            ui.ctx().move_to_top(menu.response.layer_id);
+        }
+    });
+    if picker.custom || unlisted || reveal {
+        rows.row(ui, "Custom name", |ui| {
+            let response = text_field(
+                ui,
+                p,
+                Id::new("preferences-custom-font"),
+                &mut picker.draft,
+                "Font family name",
+                "Custom font family",
+                width,
+            );
+            ui.ctx().accesskit_node_builder(response.id, |node| {
+                node.set_description("Press Enter to apply the font family name.")
+            });
+            if reveal {
+                response.request_focus();
+            }
+            if reveal || response.gained_focus() {
+                ui.scroll_to_rect(response.rect.expand(14.0), None);
+            }
+            if response.changed() {
+                picker.error = None;
+            }
+            if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+                picker.commit(config);
+                ui.ctx().request_repaint();
+            }
+        });
+    }
+    if let Some(note) = note {
+        rows.note(ui, note);
+    }
 }
 
 fn shell(ui: &mut Ui, p: Palette, shown: &Shown, config: &mut Config, shells: &mut ShellPicker) {
@@ -1131,6 +1328,55 @@ mod tests {
     }
 
     #[test]
+    fn custom_font_drafts_only_apply_when_committed() {
+        let mut config = Config::default();
+        let mut picker = FontPicker::default();
+        picker.sync(&config.font_family);
+        picker.custom = true;
+        picker.draft = "  Installed Mono  ".into();
+        assert_eq!(config.font_family, DEFAULT_FAMILY);
+        picker.commit(&mut config);
+        assert_eq!(config.font_family, "Installed Mono");
+        assert_eq!(picker.draft, config.font_family);
+        assert!(picker.custom);
+    }
+
+    #[test]
+    fn invalid_custom_font_drafts_keep_the_applied_font() {
+        let mut config = Config::default();
+        let mut picker = FontPicker::default();
+        picker.sync(&config.font_family);
+        for draft in [
+            "".to_owned(),
+            " ".into(),
+            "bad\nfont".into(),
+            "x".repeat(129),
+        ] {
+            picker.draft = draft;
+            picker.commit(&mut config);
+            assert!(picker.error.is_some());
+            assert_eq!(config.font_family, DEFAULT_FAMILY);
+        }
+        picker.cancel();
+        assert_eq!(picker.draft, DEFAULT_FAMILY);
+        assert!(picker.error.is_none());
+    }
+
+    #[test]
+    fn selecting_a_font_replaces_a_custom_draft_and_reopening_cancels_it() {
+        let mut view = View::default();
+        view.font.sync(DEFAULT_FAMILY);
+        view.font.custom = true;
+        view.font.draft = "unsaved".into();
+        view.opened();
+        assert_eq!(view.font.draft, DEFAULT_FAMILY);
+        view.font.draft = "another draft".into();
+        view.font.sync("Selected Mono");
+        assert_eq!(view.font.draft, "Selected Mono");
+        assert!(!view.font.custom);
+    }
+
+    #[test]
     fn a_blank_query_is_not_a_search() {
         assert_eq!(search(""), None);
         assert_eq!(search("  , "), None);
@@ -1148,6 +1394,9 @@ mod tests {
 
     #[test]
     fn other_words_for_a_setting_find_it() {
+        assert_eq!(finds("monospace"), [Setting::FontFamily]);
+        assert_eq!(finds("font family"), [Setting::FontFamily]);
+        assert_eq!(finds("custom font"), [Setting::FontFamily]);
         assert_eq!(finds("dark mode"), [Setting::Theme]);
         assert_eq!(finds("caret"), [Setting::CursorStyle, Setting::CursorBlink]);
         assert_eq!(finds("history"), [Setting::Scrollback]);

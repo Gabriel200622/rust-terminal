@@ -13,6 +13,7 @@ pub(super) fn fixture(root: &std::path::Path) -> (App, mpsc::SyncSender<Startup>
         renders: BTreeMap::new(),
         config,
         config_path: root.join("config.toml"),
+        fonts: crate::platform::fonts::Fonts::bundled(),
         state_path: root.join("workspaces.json"),
         window_path: root.join("window.json"),
         window_state: window_state::WindowState::default(),
@@ -895,6 +896,7 @@ fn window_zoom_preferences_and_reset_survive_shutdown_and_startup() {
         Action::Preferences(Config {
             window_zoom: 1.3,
             font_size: 19.0,
+            font_family: "Installed Mono".into(),
             restore_workspaces: false,
             ..app.config.clone()
         }),
@@ -912,6 +914,7 @@ fn window_zoom_preferences_and_reset_survive_shutdown_and_startup() {
         .clear();
     assert_eq!(reopened_ctx.zoom_factor(), 1.3);
     assert_eq!(reopened.config.font_size, 19.0);
+    assert_eq!(reopened.config.font_family, "Installed Mono");
     assert!(!reopened.config.restore_workspaces);
 
     reopened.action(&reopened_ctx, Action::ResetUiZoom);
@@ -919,6 +922,7 @@ fn window_zoom_preferences_and_reset_survive_shutdown_and_startup() {
     let saved = Config::load(&reopened.config_path).unwrap();
     assert_eq!(saved.window_zoom, 1.0);
     assert_eq!(saved.font_size, 19.0);
+    assert_eq!(saved.font_family, "Installed Mono");
 
     let (mut reset, _sender) = fixture(root.path());
     let reset_ctx = egui::Context::default();
