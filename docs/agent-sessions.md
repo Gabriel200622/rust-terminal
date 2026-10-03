@@ -44,8 +44,9 @@ saved reference is kept.
 `--command` takes precedence in its target pane and starts a shell there.
 `--no-restore` and `restore_workspaces = false` retain their existing meaning.
 Neptune restores new processes, not unfinished tool execution or process memory.
-Only provider, session ID and directory are saved in workspace schema 8, which
-reads versions 1–7. Invalid references receive the same recovery-copy protection
+Only provider, session ID, directory and the addresses of
+[linked pull requests](#linked-pull-requests) are saved in workspace schema 8,
+which reads versions 1–7. Invalid references receive the same recovery-copy protection
 as other damaged workspace state. Prompts, transcripts, arbitrary commands,
 credentials and permission-bypass flags are not saved or replayed. Transcripts
 remain owned by the CLI. Launch-only options and temporary environment changes
@@ -57,6 +58,40 @@ cannot discover agents launched before its adapters were installed. macOS uses
 the Unix adapter but still needs native verification; Linux/X11 is the verified
 host for this change.
 
+## Linked pull requests
+
+An agent started through the adapters is also given one Neptune tool,
+`link_pull_request`, with a pull request's address
+(`https://host/owner/repo/pull/N`). Its instructions ask the agent to call it
+after it creates a pull request and when it starts work on an existing one,
+including every pull request of a stack. The terminal's tab then shows the pull
+request's number beside its close control; clicking the number opens the pull
+request in the default browser. A terminal alone in view has no tab, so the
+toolbar shows its numbers after the title. One or two pull requests are shown
+side by side, the newest nearest the close control. With more, or where two do
+not fit beside the title, the newest number carries a chevron and opens a list
+of them all. A terminal keeps its eight most recent links, and linking the same
+pull request again changes nothing.
+
+The link depends on the agent following those instructions: a pull request
+created through `gh` or an API is not discovered on its own, and Neptune does
+not look up branches or pull request status. Ask the agent to link a pull
+request if its number is missing.
+
+Links belong to the agent's run in that terminal. They return with the agent
+when workspaces are restored, and leave when the agent exits, the terminal is
+restarted or closed, or the workspace changes SSH hosts. Only an address that
+names a pull request over HTTPS is accepted; it is saved without credentials,
+query or fragment, and nothing else about the pull request is read or stored.
+
+Claude Code receives the tool as an invocation-scoped server through
+`--mcp-config`, and permission for that one tool through `--settings`; its other
+servers and permissions are unchanged. Codex receives it through
+`-c mcp_servers.neptune…` overrides, on versions that expose `--no-daemon`, and
+may ask before the first call according to its approval settings. The server is
+the Neptune executable followed by `--agent-mcp`. A server of your own named
+`neptune` is replaced for that launch.
+
 ## Implementation and source review
 
 The pure model validates resume references and accepts generation-tagged
@@ -65,7 +100,9 @@ desktop startup workers install private adapters, and a single blocking loopback
 listener receives bounded metadata messages. Each pane generation has a random
 callback credential, and each CLI invocation has its own identity. Closed or
 replaced panes and late hooks from exited invocations cannot overwrite a newer
-session. Pending updates coalesce per pane; hooks wake the application on change,
+session. A linked pull request is accepted only from the invocation that is open
+in its pane, and reaches the model as a generation-tagged
+`PanePullRequestLinked` command. Pending updates coalesce per pane; hooks wake the application on change,
 so idle integrations do not poll or repaint. Socket reads have byte and total-time
 limits. Startup-file creation and cleanup stay on workers.
 
@@ -108,6 +145,18 @@ The deterministic native regression additionally verifies normal agent exit and
 Ctrl+C. These checks establish Linux behavior, not macOS/Windows readiness or
 performance. Focused model, persistence, runtime and application tests, desktop
 library Clippy and the architecture boundary check passed.
+
+Pull request linking was checked on 2026-10-03 in the Linux/X11 development
+build with `inspection`, at 1100×700 and 640×440. The deterministic native
+regression starts the tool server as each provider is configured to, and covers
+links per terminal, repeats and non-addresses, the toolbar and tab numbers,
+the list of a terminal with several, their handoff to the browser launcher,
+reopen, and agent exit. With the
+installed **Claude Code 2.1.288**, the tool's instructions alone led it to link
+a pull request it was told it had created; **Codex CLI 0.160.0** linked one when
+asked to call the tool. A prompt given as a launch argument reached Claude Code
+before the tool server had connected, and that pull request was not linked.
+macOS and Windows are unverified.
 
 The Powerlevel10k warning was separately reproduced on 2026-10-02 in the native
 Linux/X11 app using the user's unmodified Zsh configuration and Claude Code

@@ -320,6 +320,9 @@ impl SessionManager {
     pub fn agent_changes(&self) -> Vec<(PaneId, u64, Option<neptune_model::AgentSession>)> {
         self.agents.drain()
     }
+    pub fn pull_request_links(&self) -> Vec<(PaneId, u64, neptune_model::PullRequest)> {
+        self.agents.drain_links()
+    }
     pub fn close(&mut self, pane: PaneId) {
         self.agents.close(pane);
         self.desired.remove(&pane);

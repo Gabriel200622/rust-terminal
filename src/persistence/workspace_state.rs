@@ -9,7 +9,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Version 8 adds workspace group default directories. Versions 1–7 remain readable.
+/// Version 8 adds workspace group default directories and the pull requests an
+/// agent linked to its pane. Versions 1–7 remain readable.
 pub const SCHEMA_VERSION: u32 = 8;
 const MAX_STATE_BYTES: u64 = 8 * 1024 * 1024;
 
@@ -97,6 +98,9 @@ pub struct SavedPane {
     pub remote_cwd: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<neptune_model::AgentSession>,
+    /// Addresses of the pull requests the agent linked, from schema version 8.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pull_requests: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,6 +153,11 @@ impl StateSnapshot {
                             cwd: pane.cwd().into(),
                             remote_cwd: pane.remote_cwd().map(Path::to_path_buf),
                             agent: pane.agent().cloned(),
+                            pull_requests: pane
+                                .pull_requests()
+                                .iter()
+                                .map(|link| link.url().to_owned())
+                                .collect(),
                         })
                         .collect(),
                     layout: SavedLayout::from_layout(workspace.layout()),
@@ -214,6 +223,11 @@ impl SavedWorkspace {
                     id: pane.id,
                     cwd: pane.cwd,
                     remote_cwd: pane.remote_cwd,
+                    pull_requests: pane
+                        .pull_requests
+                        .iter()
+                        .filter_map(|url| neptune_model::PullRequest::parse(url))
+                        .collect(),
                     agent: pane.agent,
                 })
                 .collect(),
@@ -476,6 +490,20 @@ fn restore_versioned(snapshot: StateSnapshot, limits: Limits, report: &mut LoadR
                 ));
                 pane.agent = None;
             }
+            let links = pane.pull_requests.len();
+            pane.pull_requests
+                .retain(|url| neptune_model::PullRequest::parse(url).is_some());
+            pane.pull_requests
+                .truncate(neptune_model::PullRequest::MAX_PER_PANE);
+            if pane.agent.is_none() {
+                pane.pull_requests.clear();
+            }
+            if pane.pull_requests.len() != links {
+                report.diagnostics.push(format!(
+                    "Pane {}: left out pull request links that could not be restored",
+                    pane.id
+                ));
+            }
             if !pane.cwd.is_dir() {
                 report.diagnostics.push(format!(
                     "Pane {} in {:?}: missing directory {}; using {}",
@@ -623,6 +651,7 @@ fn restore_legacy(legacy: LegacyState, limits: Limits, report: &mut LoadReport) 
                 cwd,
                 remote_cwd: None,
                 agent: None,
+                pull_requests: Vec::new(),
             });
         }
         if panes.is_empty() {
@@ -638,6 +667,7 @@ fn restore_legacy(legacy: LegacyState, limits: Limits, report: &mut LoadReport) 
                 cwd: workspace.cwd.clone(),
                 remote_cwd: None,
                 agent: None,
+                pull_requests: Vec::new(),
             });
             next_pane += 1;
         }
@@ -803,13 +833,32 @@ mod tests {
             cwd: root.path().into(),
         };
         snapshot.workspaces[0].panes[0].agent = Some(reference.clone());
+        snapshot.workspaces[0].panes[0].pull_requests =
+            vec!["https://github.com/zevem/neptune/pull/83".into()];
         std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
         let report = load_state(&path, Limits::default());
         assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+        let model = report.model.unwrap();
+        let panes = model.workspaces()[0].panes();
+        assert_eq!(panes[0].agent(), Some(&reference));
         assert_eq!(
-            report.model.unwrap().workspaces()[0].panes()[0].agent(),
-            Some(&reference)
+            StateSnapshot::from_model(&model).workspaces[0].panes[0].pull_requests,
+            ["https://github.com/zevem/neptune/pull/83"]
         );
+        // Unreadable links, and links without their agent, are left out.
+        snapshot.workspaces[0].panes[0]
+            .pull_requests
+            .push("javascript:alert(1)".into());
+        snapshot.workspaces[0].panes[1].pull_requests =
+            vec!["https://github.com/zevem/neptune/pull/84".into()];
+        std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+        let report = load_state(&path, Limits::default());
+        // One note for each pane, and one for the recovery copy.
+        assert_eq!(report.diagnostics.len(), 3, "{:?}", report.diagnostics);
+        let model = report.model.unwrap();
+        let panes = model.workspaces()[0].panes();
+        assert_eq!(panes[0].pull_requests().len(), 1);
+        assert!(panes[1].pull_requests().is_empty());
         snapshot.workspaces[0].panes[0]
             .agent
             .as_mut()
@@ -991,7 +1040,7 @@ mod tests {
     fn earlier_schema_versions_are_read_without_loss_and_saved_as_the_current_version() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("workspaces.json");
-        for version in [1, 2, 3, 4, 5, 6] {
+        for version in [1, 2, 3, 4, 5, 6, 7] {
             let mut saved = serde_json::to_value(sample(directory.path())).unwrap();
             saved["version"] = version.into();
             saved.as_object_mut().unwrap().remove("groups");
@@ -1146,6 +1195,7 @@ mod tests {
             cwd: directory.path().into(),
             remote_cwd: None,
             agent: None,
+            pull_requests: Vec::new(),
         }];
         second.layout = SavedLayout::Pane {
             pane: PaneId::new(3),

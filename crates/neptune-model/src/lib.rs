@@ -9,7 +9,7 @@ mod layout;
 mod remote;
 mod workspace;
 
-pub use agent::{AgentKind, AgentSession};
+pub use agent::{AgentKind, AgentSession, PullRequest};
 pub use controller::{Command, Completion, Controller, Destination, Effect};
 pub use ids::{PaneId, SessionGeneration, SplitId, WorkspaceGroupId, WorkspaceId};
 pub use layout::{Axis, Edge, FocusDirection, Layout};

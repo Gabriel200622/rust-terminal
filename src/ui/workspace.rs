@@ -18,6 +18,8 @@ use terminal_core::{Mode as TermMode, SessionMetadata, SessionStatus, ViewportSn
 pub struct PanePresentation {
     /// The CLI agent the terminal is running, which takes dropped files.
     pub agent: Option<AgentKind>,
+    /// Pull requests the agent linked to the terminal, oldest first.
+    pub pull_requests: Vec<neptune_model::PullRequest>,
     pub unread: usize,
     pub metadata: SessionMetadata,
     /// The terminal's content; absent for a tab that is not in view.
@@ -358,12 +360,26 @@ fn tab(
         response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "Close terminal"));
         response
     });
+    let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+    // Linked pull requests sit beside the close control, the newest nearest
+    // to it, for as long as the tab keeps room for its title.
+    let chips = helpers::PullRequestChips::layout(
+        ui,
+        ui.id().with(("tab-pull-request", id)),
+        if closable {
+            &presentation.pull_requests
+        } else {
+            &[]
+        },
+        (rect.left() + 72.0, close.left() - 2.0, rect.center().y),
+        p.accent,
+    );
     let hovered = response.hovered()
         || close_response
             .as_ref()
-            .is_some_and(|response| response.hovered());
+            .is_some_and(|response| response.hovered())
+        || chips.hovered();
 
-    let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
     // A place with one terminal reads as a plain title, as it always has.
     let fill = if shown && !alone {
         0.08
@@ -387,7 +403,9 @@ fn tab(
     } else {
         0.0
     };
-    let right = if closable && close_alpha > 0.0 {
+    let right = if !chips.is_empty() {
+        chips.left - 5.0
+    } else if closable && close_alpha > 0.0 {
         close.left() - 3.0
     } else {
         rect.right() - 7.0
@@ -422,6 +440,7 @@ fn tab(
             elided(&painter, &folder, theme::regular(11.5), p.muted, remaining),
         );
     }
+    chips.paint(&painter, p, actions);
     if let Some(close_response) = close_response {
         if close_alpha > 0.0 {
             if close_response.hovered() {
@@ -1321,6 +1340,7 @@ mod tests {
                             id,
                             PanePresentation {
                                 agent: None,
+                                pull_requests: Vec::new(),
                                 unread: 0,
                                 metadata: metadata(""),
                                 snapshot: Some(ViewportSnapshot::blank(80, 24)),
@@ -1471,6 +1491,7 @@ mod tests {
         // The first place holds two tabs, with the first in view.
         let presentation = PanePresentation {
             agent: None,
+            pull_requests: Vec::new(),
             unread: 1,
             metadata: metadata(""),
             snapshot: None,
@@ -1671,6 +1692,7 @@ mod tests {
             .map(|id| {
                 let presentation = PanePresentation {
                     agent: None,
+                    pull_requests: Vec::new(),
                     unread: 0,
                     metadata: metadata("zsh"),
                     snapshot: Some(ViewportSnapshot::blank(80, 24)),

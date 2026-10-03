@@ -135,6 +135,12 @@ pub enum Command {
         generation: u64,
         agent: Option<crate::AgentSession>,
     },
+    /// An agent named a pull request it made or works on in this terminal.
+    PanePullRequestLinked {
+        pane: PaneId,
+        generation: u64,
+        pull_request: crate::PullRequest,
+    },
     PaneCwdChanged {
         pane: PaneId,
         generation: u64,
@@ -318,6 +324,7 @@ impl Controller {
                         cwd: cwd.clone(),
                         remote_cwd: None,
                         agent: None,
+                        pull_requests: Vec::new(),
                         generation: 1,
                         lifecycle: Lifecycle::Starting,
                     }],
@@ -575,6 +582,7 @@ impl Controller {
                         pane.lifecycle = Lifecycle::Starting;
                         pane.remote_cwd = None;
                         pane.agent = None;
+                        pane.pull_requests.clear();
                         effects.push(Effect::StopSession {
                             pane: pane.id,
                             generation: previous,
@@ -619,6 +627,7 @@ impl Controller {
                     .ok_or(Error::IdentityExhausted)?;
                 item.lifecycle = Lifecycle::Starting;
                 dirty |= item.agent.take().is_some();
+                item.pull_requests.clear();
                 effects.push(Effect::StopSession {
                     pane,
                     generation: previous,
@@ -661,6 +670,7 @@ impl Controller {
                     && item.generation == generation
                 {
                     dirty |= item.agent.take().is_some();
+                    item.pull_requests.clear();
                 }
             }
             Command::PaneAgentChanged {
@@ -680,7 +690,32 @@ impl Controller {
                     && matches!(item.lifecycle, Lifecycle::Starting | Lifecycle::Running)
                     && item.agent != agent
                 {
+                    // Links belong to the agent's run; they leave with it.
+                    if agent.is_none() {
+                        item.pull_requests.clear();
+                    }
                     item.agent = agent;
+                    dirty = true;
+                }
+            }
+            Command::PanePullRequestLinked {
+                pane,
+                generation,
+                pull_request,
+            } => {
+                if let Ok(item) = self.model.pane_mut(pane)
+                    && item.generation == generation
+                    && matches!(item.lifecycle, Lifecycle::Starting | Lifecycle::Running)
+                    && item.agent.is_some()
+                    && !item
+                        .pull_requests
+                        .iter()
+                        .any(|link| link.same(&pull_request))
+                {
+                    if item.pull_requests.len() >= crate::PullRequest::MAX_PER_PANE {
+                        item.pull_requests.remove(0);
+                    }
+                    item.pull_requests.push(pull_request);
                     dirty = true;
                 }
             }
@@ -802,6 +837,7 @@ impl Controller {
             cwd: cwd.clone(),
             remote_cwd: remote_cwd.clone(),
             agent: None,
+            pull_requests: Vec::new(),
             generation: 1,
             lifecycle: Lifecycle::Starting,
         });
@@ -2391,12 +2427,14 @@ mod tests {
                     cwd: PathBuf::new(),
                     remote_cwd: None,
                     agent: None,
+                    pull_requests: Vec::new(),
                 },
                 PaneSpec {
                     id: PaneId::new(2),
                     cwd: PathBuf::new(),
                     remote_cwd: None,
                     agent: None,
+                    pull_requests: Vec::new(),
                 },
             ],
             layout: Layout::pane(PaneId::new(1)),

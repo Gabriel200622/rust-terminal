@@ -1,6 +1,6 @@
 //! Scoped CLI adapters and a bounded, metadata-only local hook bridge.
 //! All setup and socket/file I/O runs on startup workers or the bridge worker.
-use neptune_model::{AgentKind, AgentSession, PaneId};
+use neptune_model::{AgentKind, AgentSession, PaneId, PullRequest};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -18,6 +18,8 @@ use terminal_core::SessionOptions;
 
 type Wake = Arc<dyn Fn() + Send + Sync>;
 const MAX_MESSAGE: u64 = 40 * 1024;
+/// Links waiting for the next frame; the model keeps the most recent per pane.
+const MAX_LINKS: usize = 64;
 const ENDPOINT: &str = "NEPTUNE_AGENT_ENDPOINT";
 const TOKEN: &str = "NEPTUNE_AGENT_TOKEN";
 const SHIMS: &str = "NEPTUNE_AGENT_SHIMS";
@@ -29,6 +31,7 @@ enum Event {
     Open { agent: AgentSession },
     Session { agent: AgentSession },
     Close,
+    PullRequest { url: String },
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -48,6 +51,7 @@ struct Slot {
 struct Shared {
     slots: BTreeMap<PaneId, Slot>,
     changes: BTreeMap<PaneId, (u64, Option<AgentSession>)>,
+    links: Vec<(PaneId, u64, PullRequest)>,
     retired: Vec<tempfile::TempDir>,
 }
 struct Listener {
@@ -128,10 +132,9 @@ impl AgentBridge {
                             if read_message(&mut stream, &mut bytes).is_err() {
                                 continue;
                             }
-                            if let Ok(message) = serde_json::from_slice::<Message>(&bytes) {
-                                apply_message(&shared, message);
-                            }
-                            let _ = stream.write_all(b"ok");
+                            let taken = serde_json::from_slice::<Message>(&bytes)
+                                .is_ok_and(|message| apply_message(&shared, message));
+                            let _ = stream.write_all(if taken { b"ok" } else { b"no" });
                         }
                     })?;
                 *state = Some(Listener {
@@ -172,6 +175,7 @@ impl AgentBridge {
                     .lock()
                     .map_err(|_| std::io::Error::other("Agent bridge unavailable"))?;
                 shared.changes.remove(&pane);
+                shared.links.retain(|link| link.0 != pane);
                 let old = shared.slots.insert(
                     pane,
                     Slot {
@@ -196,6 +200,7 @@ impl AgentBridge {
                 shared.retired.push(startup);
             }
             shared.changes.remove(&pane);
+            shared.links.retain(|link| link.0 != pane);
         }
     }
     pub fn close_generation(&self, pane: PaneId, generation: u64) {
@@ -211,6 +216,7 @@ impl AgentBridge {
                 shared.retired.push(startup);
             }
             shared.changes.remove(&pane);
+            shared.links.retain(|link| link.0 != pane);
         }
     }
     pub fn drain(&self) -> Vec<(PaneId, u64, Option<AgentSession>)> {
@@ -222,6 +228,13 @@ impl AgentBridge {
                     .map(|(pane, (generation, agent))| (pane, generation, agent))
                     .collect()
             })
+            .unwrap_or_default()
+    }
+    /// Pull requests agents linked since the last call, in arrival order.
+    pub fn drain_links(&self) -> Vec<(PaneId, u64, PullRequest)> {
+        self.shared
+            .lock()
+            .map(|mut shared| std::mem::take(&mut shared.links))
             .unwrap_or_default()
     }
 }
@@ -376,17 +389,30 @@ fn option_env(options: &SessionOptions, key: &str) -> Option<String> {
         .map(|(_, value)| value.clone())
         .or_else(|| std::env::var(key).ok())
 }
-fn apply_message(shared: &Mutex<Shared>, message: Message) {
+/// Reports whether the event was taken for its pane.
+fn apply_message(shared: &Mutex<Shared>, message: Message) -> bool {
     let Ok(mut shared) = shared.lock() else {
-        return;
+        return false;
     };
     let Some((&pane, slot)) = shared
         .slots
         .iter_mut()
         .find(|(_, slot)| slot.token == message.token)
     else {
-        return;
+        return false;
     };
+    if let Event::PullRequest { url } = &message.event {
+        // Only the invocation that opened in this pane may link to it.
+        let link = PullRequest::parse(url).filter(|_| slot.run.as_ref() == Some(&message.run));
+        let (generation, wake) = (slot.generation, slot.wake.clone());
+        let Some(link) = link.filter(|_| shared.links.len() < MAX_LINKS) else {
+            return false;
+        };
+        shared.links.push((pane, generation, link));
+        drop(shared);
+        wake();
+        return true;
+    }
     let agent = match message.event {
         Event::Open { agent } if agent.is_valid() => {
             slot.run = Some(message.run);
@@ -399,13 +425,14 @@ fn apply_message(shared: &Mutex<Shared>, message: Message) {
             slot.run = None;
             None
         }
-        _ => return,
+        _ => return false,
     };
     let generation = slot.generation;
     let wake = slot.wake.clone();
     shared.changes.insert(pane, (generation, agent));
     drop(shared);
     wake();
+    true
 }
 fn quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
@@ -417,7 +444,8 @@ fn kind(value: &str) -> anyhow::Result<AgentKind> {
         _ => anyhow::bail!("Unknown agent"),
     }
 }
-fn send(event: Event, run: &str) -> anyhow::Result<()> {
+/// Delivers one event and reports whether the bridge took it for this pane.
+fn send(event: Event, run: &str) -> anyhow::Result<bool> {
     let endpoint: std::net::SocketAddr = std::env::var(ENDPOINT)?.parse()?;
     anyhow::ensure!(endpoint.ip().is_loopback(), "Invalid agent bridge address");
     let message = Message {
@@ -432,7 +460,7 @@ fn send(event: Event, run: &str) -> anyhow::Result<()> {
     stream.shutdown(std::net::Shutdown::Write)?;
     let mut ack = [0; 2];
     stream.read_exact(&mut ack)?;
-    Ok(())
+    Ok(&ack == b"ok")
 }
 /// Private CLI entry points, handled before desktop initialization. Never logs hook input.
 pub fn cli(args: &[String]) -> anyhow::Result<Option<i32>> {
@@ -476,6 +504,15 @@ pub fn cli(args: &[String]) -> anyhow::Result<Option<i32>> {
             } else {
                 let _ = send(Event::Close, &std::env::var(RUN).unwrap_or_default());
             }
+            Ok(Some(0))
+        }
+        Some("--agent-mcp") => {
+            let run = std::env::var(RUN).unwrap_or_default();
+            super::agent_mcp::serve(
+                std::io::stdin().lock(),
+                std::io::stdout().lock(),
+                &mut |url| send(Event::PullRequest { url: url.into() }, &run).unwrap_or(false),
+            )?;
             Ok(Some(0))
         }
         Some("--agent-run") => {
@@ -636,9 +673,17 @@ fn run_agent(
         quote(&std::env::current_exe()?.to_string_lossy()),
         provider.executable()
     );
+    let helper = std::env::current_exe()?.to_string_lossy().into_owned();
     match provider {
         AgentKind::Claude => {
-            let settings = serde_json::json!({"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":hook}]}]}});
+            let settings = serde_json::json!({
+                "hooks":{"SessionStart":[{"hooks":[{"type":"command","command":hook}]}]},
+                "permissions":{"allow":["mcp__neptune__link_pull_request"]},
+            });
+            let servers = serde_json::json!({"mcpServers":{"neptune":{"command":helper,"args":["--agent-mcp"]}}});
+            // --mcp-config takes several values; --settings ends its list
+            // before the user's own arguments.
+            command.args(["--mcp-config", &servers.to_string()]);
             command.args(["--settings", &settings.to_string()]);
         }
         AgentKind::Codex => {
@@ -660,6 +705,15 @@ fn run_agent(
                         "hooks.SessionStart=[{{hooks=[{{type=\"command\",command={hook}}}]}}]"
                     ),
                 ]);
+                command.args([
+                    "-c",
+                    &format!(
+                        "mcp_servers.neptune.command={}",
+                        toml::Value::String(helper)
+                    ),
+                    "-c",
+                    "mcp_servers.neptune.args=[\"--agent-mcp\"]",
+                ]);
                 // Codex excludes *TOKEN* from the default tool/hook environment.
                 // Supply only this pane's bridge metadata as invocation-scoped overrides;
                 // leave the user's other environment filters and hook trust intact.
@@ -668,12 +722,12 @@ fn run_agent(
                     (ENDPOINT, std::env::var(ENDPOINT).unwrap_or_default()),
                     (RUN, run.clone()),
                 ] {
+                    let value = toml::Value::String(value);
                     command.args([
                         "-c",
-                        &format!(
-                            "shell_environment_policy.set.{name}={}",
-                            toml::Value::String(value)
-                        ),
+                        &format!("shell_environment_policy.set.{name}={value}"),
+                        "-c",
+                        &format!("mcp_servers.neptune.env.{name}={value}"),
                     ]);
                 }
             }
@@ -718,6 +772,54 @@ mod tests {
     }
     const FIRST: &str = "019a1234-5678-7000-8000-123456789abc";
     const SECOND: &str = "019a1234-5678-7000-8000-123456789def";
+    #[test]
+    fn pull_requests_link_only_to_the_pane_of_the_invocation_that_is_open() {
+        let bridge = AgentBridge::default();
+        bridge.shared.lock().unwrap().slots.insert(
+            PaneId::new(1),
+            Slot {
+                generation: 7,
+                token: "one".into(),
+                run: None,
+                wake: Arc::new(|| {}),
+                _startup: None,
+            },
+        );
+        let emit = |token: &str, run: &str, event| {
+            apply_message(
+                &bridge.shared,
+                Message {
+                    token: token.into(),
+                    run: run.into(),
+                    event,
+                },
+            )
+        };
+        let link = |url: &str| Event::PullRequest { url: url.into() };
+        let url = "https://github.com/zevem/neptune/pull/83";
+        // No agent is open yet; then a stranger, an exited run and a non-address.
+        assert!(!emit("one", "a", link(url)));
+        assert!(emit(
+            "one",
+            "a",
+            Event::Open {
+                agent: agent(FIRST)
+            }
+        ));
+        assert!(!emit("two", "a", link(url)));
+        assert!(!emit("one", "b", link(url)));
+        assert!(!emit("one", "a", link("https://github.com/zevem/neptune")));
+        assert!(emit("one", "a", link(url)));
+        let links = bridge.drain_links();
+        assert_eq!(links.len(), 1);
+        assert_eq!((links[0].0, links[0].1), (PaneId::new(1), 7));
+        assert_eq!(links[0].2.url(), url);
+        assert!(bridge.drain_links().is_empty());
+        // A link that has not reached a frame leaves with its pane.
+        assert!(emit("one", "a", link(url)));
+        bridge.close(PaneId::new(1));
+        assert!(bridge.drain_links().is_empty());
+    }
     #[test]
     fn hooks_are_bound_to_pane_generation_and_invocation_and_coalesced() {
         let bridge = AgentBridge::default();
