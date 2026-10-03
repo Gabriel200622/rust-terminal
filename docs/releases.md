@@ -391,13 +391,18 @@ Root Directory settings: the build reads the shared public trust key from
 No new service or binary mirror is needed.
 The landing page links to `/download` and keeps the source-build instructions.
 
-- `/download`: GitHub `/releases/latest`, published stable only.
+- `/download`: prefers the published stable release from GitHub `/releases/latest`.
+  Before the first stable release is published, it shows the newest Beta release,
+  labeled Beta and using Beta installer routes. The Stable/Beta choice appears
+  once a verified stable release is available. A failed Stable lookup retains
+  the retry state rather than establishing that Stable is empty.
 - `/download/beta`: newest **published prerelease by publication time**; no stable
   fallback that could mislabel a download as Beta.
 - `/download/file/{platform}` and `/download/beta/file/{platform}`: temporary
   redirects to the canonical asset. UI links bind `?tag=v...` to the displayed
   version so release rollover cannot mismatch displayed checksums and downloads.
   Without `tag`, these Neptune-owned links track the latest channel release.
+  Stable installer routes never fall back to prereleases.
 
 Server-side Next `use cache` plus fetch caching coalesces/caches metadata for five
 minutes; empty/error states are cached for one minute. Requests are bounded and

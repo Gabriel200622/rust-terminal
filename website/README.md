@@ -13,8 +13,10 @@ bun run build    # Next.js output in .next/
 bun run start    # production server
 ```
 
-`/download` resolves published stable releases; `/download/beta` resolves the
-newest published prerelease. Server-only discovery verifies signed metadata,
+`/download` prefers published stable releases and shows Beta until the first
+stable release is published. `/download/beta` resolves the newest published
+prerelease. The Stable/Beta choice appears once a verified stable release is
+available. Server-only discovery verifies signed metadata,
 caches success for five minutes and empty/failure states for one minute. Native
 binaries remain on GitHub. All five packages, architecture/format, version,
 notes, release/source and hashes stay visible. Ambiguous Mac architectures get

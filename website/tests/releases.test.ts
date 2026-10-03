@@ -1,7 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { Downloads, DownloadsLoading } from "../src/components/site/download";
 import { PACKAGES, assetUrl, downloadPath, isMacDesktop, parseVersion, recommendPackage, selectRelease } from "../src/lib/releases";
+import { getDownloadPage } from "../src/lib/download-page";
 import { downloadResponse } from "../src/lib/download-route";
 import { loadRelease } from "../src/lib/release-service";
 
@@ -110,4 +114,80 @@ test("download handlers redirect verified packages and fail closed for unavailab
   assert.equal(unavailable.headers.get("Cache-Control"), "no-store");
   const unknown = await downloadResponse(request, "unknown", "stable", async () => { throw new Error("Unknown package must not request metadata"); });
   assert.equal(unknown.status, 404);
+});
+
+test("before Stable is published, both pages show Beta without an empty channel choice", async () => {
+  const f = fixture("0.3.0-beta.1");
+  const beta = await loadRelease("beta", undefined, reader([f.record], f), trust);
+  for (const requested of ["stable", "beta"] as const) {
+    const page = await getDownloadPage(requested, async (channel) =>
+      channel === "stable" ? { release: null, unavailable: false } : beta,
+    );
+    assert.equal(page.channel, "beta");
+    assert.equal(page.release?.version, "0.3.0-beta.1");
+    const html = renderToStaticMarkup(createElement(Downloads, page));
+    assert.ok(html.includes("Try Neptune Beta."));
+    assert.ok(!html.includes('aria-label="Release channel"'));
+    assert.ok(!html.includes("Stable is recommended"));
+    for (const pkg of PACKAGES) {
+      assert.ok(html.includes(`href="${downloadPath("beta", pkg.id, f.tag)}"`));
+    }
+  }
+});
+
+test("publishing Stable restores the default stable downloads and both channel links", async () => {
+  const f = fixture("0.3.0");
+  const stable = await loadRelease("stable", undefined, reader(f.record, f), trust);
+  const page = await getDownloadPage("stable", async (channel) => {
+    assert.equal(channel, "stable", "Stable downloads must not depend on Beta discovery");
+    return stable;
+  });
+  assert.equal(page.channel, "stable");
+  assert.equal(page.release?.version, "0.3.0");
+  const html = renderToStaticMarkup(createElement(Downloads, page));
+  assert.ok(html.includes('aria-label="Release channel"'));
+  const stableLink = html.match(/<a[^>]*>Stable<\/a>/)?.[0] ?? "";
+  assert.ok(stableLink.includes('href="/download"'));
+  assert.ok(stableLink.includes('aria-current="page"'));
+  assert.ok(html.includes('href="/download/beta"'));
+
+  const beta = await getDownloadPage("beta", async (channel) =>
+    channel === "stable" ? stable : { release: null, unavailable: false },
+  );
+  const betaHtml = renderToStaticMarkup(createElement(Downloads, beta));
+  assert.ok(betaHtml.includes("Stable is recommended"));
+  assert.ok(betaHtml.includes("Get Stable"));
+});
+
+test("an empty Beta channel offers source builds when Stable is also empty", async () => {
+  const page = await getDownloadPage("stable", async () => ({ release: null, unavailable: false }));
+  const html = renderToStaticMarkup(createElement(Downloads, page));
+  assert.ok(html.includes("No beta release published yet"));
+  assert.ok(html.includes("Build from source"));
+  assert.ok(!html.includes("Get Stable"));
+  assert.ok(!html.includes("Stable is recommended"));
+});
+
+test("release-service failures retain an honest retry state", async () => {
+  const stable = await getDownloadPage("stable", async (channel) => {
+    assert.equal(channel, "stable");
+    return { release: null, unavailable: true };
+  });
+  assert.equal(stable.channel, "stable");
+  assert.ok(renderToStaticMarkup(createElement(Downloads, stable)).includes("Downloads are temporarily unavailable"));
+
+  const beta = await getDownloadPage("stable", async (channel) => ({ release: null, unavailable: channel === "beta" }));
+  assert.equal(beta.channel, "beta");
+  const html = renderToStaticMarkup(createElement(Downloads, beta));
+  assert.ok(html.includes("Downloads are temporarily unavailable"));
+  assert.ok(!html.includes('aria-label="Release channel"'));
+});
+
+test("loading either page never flashes a Stable choice before availability is known", () => {
+  for (const channel of ["stable", "beta"] as const) {
+    const html = renderToStaticMarkup(createElement(DownloadsLoading, { channel }));
+    assert.ok(html.includes("Loading downloads"));
+    assert.ok(!html.includes('aria-label="Release channel"'));
+    assert.ok(!html.includes("Stable is recommended"));
+  }
 });
