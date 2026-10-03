@@ -45,10 +45,14 @@ pub struct ChromeView<'a> {
 
 const SIDEBAR_WIDTH: std::ops::RangeInclusive<f32> = 170.0..=360.0;
 const DEFAULT_SIDEBAR_WIDTH: f32 = 216.0;
-const ROW_HEIGHT: f32 = 46.0;
+const ROW_HEIGHT: f32 = 40.0;
 /// The distance between the tops of neighbouring workspace rows.
 const ROW_STEP: f32 = ROW_HEIGHT + 2.0;
-const GROUP_HEIGHT: f32 = 34.0;
+const GROUP_HEIGHT: f32 = 28.0;
+/// The space around a folder: above its workspaces and before the next item.
+const GROUP_GAP: f32 = 4.0;
+/// The workspace list starts this far below the toolbar strip.
+const LIST_TOP: f32 = 4.0;
 /// Time constant of a displaced row easing into place; it lands within 160 ms.
 const ROW_SETTLE: f32 = 0.035;
 /// Holding a dragged row this close to the list's edge scrolls the list.
@@ -724,46 +728,14 @@ fn workspace_row(
         actions.push(Action::MovePane(pane, Destination::Workspace(workspace.id)));
     }
 
-    let identity = theme::identity_color(workspace.id.get(), p.dark);
-    let tile = Rect::from_center_size(
-        Pos2::new(row.left() + 23.0, row.center().y),
-        Vec2::splat(28.0),
-    );
-    let (tile_fill, tile_ink) = if selected {
-        (
-            identity,
-            if identity.r() as u32 + identity.g() as u32 > 420 {
-                theme::color(0x1d1d1f)
-            } else {
-                Color32::WHITE
-            },
-        )
+    let text_left = row.left() + 9.0;
+    // Every terminal here has stopped: a red dot leads the name.
+    let name_left = if workspace.running {
+        text_left
     } else {
-        (
-            theme::tint(identity, if p.dark { 0.2 } else { 0.16 }),
-            if p.dark {
-                identity
-            } else {
-                theme::mix(identity, Color32::BLACK, 0.18)
-            },
-        )
+        painter.circle_filled(Pos2::new(text_left + 3.0, row.center().y - 7.5), 3.0, p.red);
+        text_left + 11.0
     };
-    painter.rect_filled(tile, 8, tile_fill);
-    painter.text(
-        tile.center(),
-        Align2::CENTER_CENTER,
-        initial(&workspace.name),
-        theme::semibold(12.5),
-        tile_ink,
-    );
-    if !workspace.running {
-        // Every terminal here has stopped.
-        let badge = tile.right_top() + vec2(-1.0, 1.0);
-        painter.circle_filled(badge, 4.5, p.chrome);
-        painter.circle_filled(badge, 3.0, p.red);
-    }
-
-    let text_left = tile.right() + 10.0;
     let show_shortcut = position.0 < 9
         && ui.input(|input| {
             input.focused
@@ -782,7 +754,7 @@ fn workspace_row(
         };
         keycaps(
             &painter,
-            Pos2::new(row.right() - 7.0, row.top() + 15.0),
+            Pos2::new(row.right() - 7.0, row.top() + 13.0),
             &hint,
             p.secondary,
         )
@@ -798,7 +770,7 @@ fn workspace_row(
     let text_width = row.right() - text_left - trailing;
     galley_at(
         &painter,
-        Pos2::new(text_left, row.center().y - 8.0),
+        Pos2::new(name_left, row.center().y - 7.5),
         elided(
             &painter,
             &workspace.name,
@@ -808,10 +780,10 @@ fn workspace_row(
             } else {
                 theme::mix(p.secondary, p.fg, 0.45)
             },
-            row.right() - text_left - (hint_width + 14.0).max(trailing),
+            row.right() - name_left - (hint_width + 14.0).max(trailing),
         ),
     );
-    let detail = Pos2::new(text_left, row.center().y + 9.0);
+    let detail = Pos2::new(text_left, row.center().y + 8.5);
     if let Some(alert) = &workspace.alert {
         // What the workspace is asking for, until it is read.
         icons::paint(
@@ -1195,15 +1167,15 @@ fn group_row(
     icons::paint(
         painter,
         Rect::from_center_size(
-            Pos2::new(row.left() + 31.0, row.center().y),
-            Vec2::splat(17.0),
+            Pos2::new(row.left() + 30.0, row.center().y),
+            Vec2::splat(16.0),
         ),
         Icon::Folder,
         if selected { p.accent } else { p.secondary },
     );
     galley_at(
         painter,
-        Pos2::new(row.left() + 46.0, row.center().y),
+        Pos2::new(row.left() + 44.0, row.center().y),
         elided(
             painter,
             group.name(),
@@ -1213,7 +1185,7 @@ fn group_row(
             } else {
                 p.secondary
             },
-            plus.left() - row.left() - 50.0,
+            plus.left() - row.left() - 48.0,
         ),
     );
     let reveal = animate(
@@ -1223,11 +1195,13 @@ fn group_row(
         0.12,
     );
     if reveal > 0.0 {
+        // The target spans the row's height; its highlight sits inside the row.
+        let highlight = plus.shrink(3.0);
         if create.hovered() || create.is_pointer_button_down_on() {
-            painter.rect_filled(plus, 6, p.pressed);
+            painter.rect_filled(highlight, 6, p.pressed);
         }
         if create.has_focus() {
-            painter.rect_stroke(plus, 6, Stroke::new(1.5, p.accent), StrokeKind::Inside);
+            painter.rect_stroke(highlight, 6, Stroke::new(1.5, p.accent), StrokeKind::Inside);
         }
         icons::paint(
             painter,
@@ -1354,7 +1328,7 @@ fn workspace_group(
         // A folder's children keep the row's full height and a quiet indent.
         ui.scope_builder(
             UiBuilder::new().max_rect(Rect::from_min_max(
-                ui.cursor().min + vec2(16.0, 0.0),
+                ui.cursor().min + vec2(14.0, 0.0),
                 ui.max_rect().max,
             )),
             |ui| {
@@ -1487,7 +1461,8 @@ fn workspace_list(
         drag.lifted = None;
         drag.grip = None;
     }
-    let spacing = ui.spacing().item_spacing.y;
+    ui.spacing_mut().item_spacing.y = GROUP_GAP;
+    let spacing = GROUP_GAP;
     let trailing_gap = items.last().map_or(0.0, |item| match item {
         SidebarItem::Workspace(_) => ROW_STEP - ROW_HEIGHT,
         SidebarItem::Group(_) => spacing,
@@ -1818,17 +1793,9 @@ pub fn sidebar(
     );
     background.context_menu(|ui| creation_menu(ui, p, None, actions));
 
-    ui.painter().text(
-        Pos2::new(rect.left() + 18.0, strip.bottom() + 14.0),
-        Align2::LEFT_CENTER,
-        "Workspaces",
-        theme::medium(11.5),
-        p.muted,
-    );
-
-    let footer_top = rect.bottom() - 50.0;
+    let footer_top = rect.bottom() - 46.0;
     let viewport = Rect::from_min_max(
-        Pos2::new(rect.left() + 8.0, strip.bottom() + 30.0),
+        Pos2::new(rect.left() + 8.0, strip.bottom() + LIST_TOP),
         Pos2::new(rect.right() - 8.0, footer_top - 4.0),
     );
     ui.scope_builder(
@@ -1856,7 +1823,7 @@ pub fn sidebar(
     // Footer: the primary creation action, with preferences beside it.
     let create = Rect::from_min_max(
         Pos2::new(rect.left() + 8.0, footer_top + 8.0),
-        Pos2::new(rect.right() - 44.0, footer_top + 42.0),
+        Pos2::new(rect.right() - 44.0, footer_top + 38.0),
     );
     let response = ui.interact(create, ui.id().with("workspace-create"), Sense::click());
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "New workspace"));
@@ -2000,7 +1967,7 @@ mod tests {
     fn row(index: usize) -> Pos2 {
         Pos2::new(
             100.0,
-            metrics::TOOLBAR_HEIGHT + 30.0 + index as f32 * ROW_STEP + ROW_HEIGHT * 0.5,
+            metrics::TOOLBAR_HEIGHT + LIST_TOP + index as f32 * ROW_STEP + ROW_HEIGHT * 0.5,
         )
     }
 
@@ -2241,7 +2208,7 @@ mod tests {
                 .unwrap();
             Pos2::new(
                 100.0,
-                metrics::TOOLBAR_HEIGHT + 30.0 + top + GROUP_HEIGHT * 0.5,
+                metrics::TOOLBAR_HEIGHT + LIST_TOP + top + GROUP_HEIGHT * 0.5,
             )
         }
 
@@ -2394,7 +2361,7 @@ mod tests {
             .collect();
         sidebar.frame(vec![]);
         let before = sidebar.sidebar_order.clone();
-        let from = sidebar.folder(7) + vec2(0.0, GROUP_HEIGHT * 0.5 + 4.0 + ROW_HEIGHT * 0.5);
+        let from = sidebar.folder(7) + vec2(0.0, GROUP_HEIGHT * 0.5 + GROUP_GAP + ROW_HEIGHT * 0.5);
         let to = from + vec2(0.0, ROW_STEP);
         sidebar.carry(from, to);
         sidebar.frame(vec![button(to, false)]);
@@ -2602,12 +2569,12 @@ mod tests {
 
     #[test]
     fn holding_a_row_at_the_edge_scrolls_to_positions_out_of_view() {
-        // Three and a half of eight rows fit: the last position starts hidden.
+        // Just over four of eight rows fit: the last position starts hidden.
         let mut sidebar = Fixture::with_height(&[1, 2, 3, 4, 5, 6, 7, 8], 300.0);
         let edge = Pos2::new(100.0, 300.0 - 54.0);
         sidebar.carry(row(0), edge);
         let reachable = sidebar.top(1).unwrap();
-        assert!(reachable < 3.0 * ROW_STEP, "the row stays inside the view");
+        assert!(reachable < 4.0 * ROW_STEP, "the row stays inside the view");
         for _ in 0..120 {
             sidebar.frame(vec![]);
         }
@@ -2619,7 +2586,7 @@ mod tests {
         for _ in 0..20 {
             sidebar.frame(vec![]);
         }
-        let top = Pos2::new(100.0, metrics::TOOLBAR_HEIGHT + 30.0);
+        let top = Pos2::new(100.0, metrics::TOOLBAR_HEIGHT + LIST_TOP);
         sidebar.carry(edge - vec2(0.0, 20.0), top);
         for _ in 0..120 {
             sidebar.frame(vec![]);
@@ -2734,10 +2701,10 @@ mod tests {
             output.textures_delta.clear();
             actions
         };
-        // Rows are 46 points tall, two points apart, below the list heading.
-        let own = Pos2::new(100.0, metrics::TOOLBAR_HEIGHT + 30.0 + 23.0);
-        let other = own + vec2(0.0, 48.0);
-        let on_a_host = other + vec2(0.0, 48.0);
+        // Rows sit one step apart below the toolbar strip.
+        let own = Pos2::new(100.0, metrics::TOOLBAR_HEIGHT + LIST_TOP + ROW_HEIGHT * 0.5);
+        let other = own + vec2(0.0, ROW_STEP);
+        let on_a_host = other + vec2(0.0, ROW_STEP);
         let release = |pos| egui::Event::PointerButton {
             pos,
             button: egui::PointerButton::Primary,

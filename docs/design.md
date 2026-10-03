@@ -72,8 +72,8 @@ original themes it turns yellow when the accent itself is orange, so an alert
 never reads as focus; an imported or custom palette supplies its ANSI yellow,
 held to 3:1 against the main surfaces.
 
-Workspace tiles take a stable identity colour from their workspace id: tinted
-when idle, solid when selected. The identity colour is decoration only; state is
+Notification rows mark their workspace with a tile in a stable identity colour
+taken from the workspace id. The identity colour is decoration only; state is
 always also carried by text, a badge or position.
 
 ## Geometry
@@ -93,13 +93,14 @@ icon buttons keep a 28-point target around a 16-point glyph.
 - **Sidebar.** Full window height, like a native source list, and resizable from
   its trailing edge (saved on release; double-click restores the default). It
   hosts the window controls, the workspace list and a footer with "New
-  workspace" and Preferences. Each row shows an identity tile, the name, a
+  workspace" and Preferences. Each row shows the name (led by a red dot once
+  every terminal in it has stopped), a
   path that keeps its final directory, and either the pane count or, on hover,
   a "more" button with the same menu as a secondary click. A workspace
   connected over SSH shows a globe and its host in place of the path, and its
   menu offers "Disconnect from SSH" where a local one offers "Connect over
   SSH…". Double-click renames.
-  Secondary-click the heading or empty list space for "New workspace", "New SSH
+  Secondary-click empty list space for "New workspace", "New SSH
   workspace", and "New workspace group". Ungrouped workspaces and folder groups
   share an ordered list. A folder row shows a disclosure chevron, an outline
   folder and its name; its count yields to a plus control on hover or focus.
