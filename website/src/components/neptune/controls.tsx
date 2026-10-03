@@ -3,7 +3,7 @@
 // Shared controls, following `src/ui/controls.rs`: every one paints from the
 // palette tokens and keeps the app's sizes.
 
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { Icon, type IconName } from "../icons";
 
 /** The platform's primary command chord for a key: `Ctrl+Shift+D` or `⌘D`. */
@@ -85,7 +85,7 @@ export function IconButton({
 const BUTTON_KINDS = {
   primary: "bg-accent text-on-accent hover:brightness-110 active:brightness-90",
   secondary: "bg-control text-fg hover:bg-pressed",
-  destructive: "bg-danger text-white hover:brightness-110 active:brightness-90",
+  destructive: "bg-danger text-on-danger hover:brightness-110 active:brightness-90",
   quiet: "px-2.5 text-secondary hover:bg-hover active:bg-pressed",
 } as const;
 
@@ -94,17 +94,20 @@ export function Button({
   children,
   onClick,
   className = "",
+  disabled = false,
 }: {
   kind?: keyof typeof BUTTON_KINDS;
   children: React.ReactNode;
   onClick?: () => void;
   className?: string;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
+      disabled={disabled}
       onClick={onClick}
-      className={`inline-flex h-[30px] min-w-[72px] cursor-pointer items-center justify-center rounded-control px-4 text-[13px] font-medium transition-[background-color,filter] duration-100 ${BUTTON_KINDS[kind]} ${className}`}
+      className={`inline-flex h-[30px] min-w-[72px] shrink-0 cursor-pointer items-center justify-center rounded-control px-4 text-[13px] font-medium whitespace-nowrap transition-[background-color,filter] duration-100 disabled:pointer-events-none disabled:opacity-45 ${BUTTON_KINDS[kind]} ${className}`}
     >
       {children}
     </button>
@@ -152,7 +155,7 @@ export function Segmented<T extends string>({
   value: T;
   options: readonly (readonly [T, string])[];
   onChange: (value: T) => void;
-  width?: number;
+  width?: number | string;
 }) {
   const selected = Math.max(
     0,
@@ -298,6 +301,84 @@ export function Stepper({
         {text}
       </span>
       {cell(1, "plus", "Increase")}
+    </div>
+  );
+}
+
+/** An unread count in the attention colour, tinted to stay quiet in chrome. */
+export function Pill({ count, className = "" }: { count: number; className?: string }) {
+  return (
+    <span
+      className={`inline-grid h-[18px] shrink-0 place-items-center rounded-full bg-[color-mix(in_srgb,var(--attention)_var(--pill-alpha),transparent)] text-[10.5px] font-semibold text-[color-mix(in_srgb,black_var(--pill-ink-mix),var(--attention))] tabular-nums ${
+        count < 10 ? "w-[18px]" : count < 100 ? "w-6" : "w-[31px]"
+      } ${className}`}
+    >
+      {count > 99 ? "99+" : count}
+    </span>
+  );
+}
+
+/** The surface of an editable field: filled, with an accent ring in focus. */
+export const FIELD =
+  "rounded-control bg-control shadow-[inset_0_0_0_1px_var(--separator)] focus-within:shadow-[inset_0_0_0_1px_var(--accent),0_0_0_3px_color-mix(in_srgb,var(--accent)_28%,transparent)]";
+/** The same surface while a scripted tour types in it. */
+export const FIELD_FOCUSED =
+  "rounded-control bg-control shadow-[inset_0_0_0_1px_var(--accent),0_0_0_3px_color-mix(in_srgb,var(--accent)_28%,transparent)]";
+
+/** A search field: a magnifier leads the text and a clear control trails it. */
+export function SearchInput({
+  value,
+  onChange,
+  placeholder,
+  label,
+  autoFocus = false,
+  className = "",
+  onKeyDown,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  label: string;
+  /** Takes the keyboard when it appears, without scrolling the page to it. */
+  autoFocus?: boolean;
+  className?: string;
+  onKeyDown?: (event: React.KeyboardEvent<HTMLInputElement>) => void;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (autoFocus) input.current?.focus({ preventScroll: true });
+  }, [autoFocus]);
+  return (
+    <div className={`flex h-[30px] min-w-0 items-center pl-[10px] ${FIELD} ${className}`}>
+      <Icon name="search" size={13} className="text-muted" />
+      <input
+        ref={input}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        onKeyDown={onKeyDown}
+        aria-label={label}
+        placeholder={placeholder}
+        spellCheck={false}
+        autoComplete="off"
+        maxLength={256}
+        className="ml-[7px] h-full min-w-0 flex-1 bg-transparent text-[13px] text-fg caret-accent outline-none select-text placeholder:text-muted"
+      />
+      {value ? (
+        <button
+          type="button"
+          aria-label="Clear search"
+          title="Clear search"
+          onClick={() => {
+            onChange("");
+            input.current?.focus({ preventScroll: true });
+          }}
+          className="mr-[5px] grid size-[22px] shrink-0 cursor-pointer place-items-center rounded-[6px] text-secondary hover:bg-hover hover:text-fg"
+        >
+          <Icon name="close" size={9} />
+        </button>
+      ) : (
+        <span className="w-[10px] shrink-0" />
+      )}
     </div>
   );
 }

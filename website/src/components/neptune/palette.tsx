@@ -5,16 +5,19 @@
 
 import { useEffect, useRef } from "react";
 import { Icon, type IconName } from "../icons";
-import type { Prefs, Theme } from "../prefs";
+import { WINDOW_ZOOM, type Prefs } from "../prefs";
 import { Keycaps, editShortcut, shortcut } from "./controls";
 import {
   activeWorkspace,
   adjacent,
-  panesOf,
+  nextTab,
+  ordered,
   type Action,
+  type Close,
   type Direction,
   type State,
 } from "./model";
+import { BUILTINS } from "./themes";
 
 export interface Command {
   group: string;
@@ -31,29 +34,25 @@ export function commands(
   mac: boolean,
   dispatch: (action: Action) => void,
   setPrefs: (patch: Partial<Prefs>) => void,
+  /** Closes a target, asking first when Preferences says to. */
+  close: (target: Close) => void,
 ): Command[] {
   const list: Command[] = [];
+  const push = (group: string, icon: IconName, title: string, chord: string, run: () => void) =>
+    list.push({ group, icon, title, chord, key: `${group}:${title}:${list.length}`, run });
   const add = (
     group: string,
     icon: IconName,
     title: string,
     chord: string,
     ...actions: Action[]
-  ) =>
-    list.push({
-      group,
-      icon,
-      title,
-      chord,
-      key: `${group}:${title}:${list.length}`,
-      run: () => actions.forEach(dispatch),
-    });
+  ) => push(group, icon, title, chord, () => actions.forEach(dispatch));
   const workspace = activeWorkspace(state);
   const pane = workspace?.active;
 
   // Terminal commands exist only with a focused terminal.
   if (workspace && pane !== undefined) {
-    const several = panesOf(workspace.layout).length > 1;
+    add("Terminal", "plus", "New tab", shortcut(mac, "T"), { type: "newTab", pane });
     add("Terminal", "splitVertical", "Split right", shortcut(mac, "D"), {
       type: "split",
       pane,
@@ -64,15 +63,13 @@ export function commands(
       pane,
       axis: "horizontal",
     });
-    if (several) {
-      add(
-        "Terminal",
-        state.zoomed ? "minimize" : "maximize",
-        state.zoomed ? "Show all terminals" : "Zoom terminal",
-        shortcut(mac, "Enter"),
-        { type: "zoom" },
-      );
-    }
+    add(
+      "Terminal",
+      state.zoomed ? "minimize" : "maximize",
+      state.zoomed ? "Show all terminals" : "Zoom terminal",
+      shortcut(mac, "Enter"),
+      { type: "zoom" },
+    );
     add("Terminal", "search", "Find in terminal", shortcut(mac, "F"), {
       type: "search",
       open: true,
@@ -80,10 +77,18 @@ export function commands(
     });
     add("Terminal", "eraser", "Clear scrollback", "", { type: "clear", pane });
     add("Terminal", "refresh", "Restart terminal", "", { type: "restart", pane });
-    add("Terminal", "close", "Close terminal", shortcut(mac, "W"), {
-      type: "closePane",
-      pane,
-    });
+    push("Terminal", "close", "Close terminal", shortcut(mac, "W"), () =>
+      close({ kind: "pane", pane }),
+    );
+    for (const [forward, title, key] of [
+      [true, "Next tab", "PgDn"],
+      [false, "Previous tab", "PgUp"],
+    ] as const) {
+      const target = nextTab(workspace.layout, pane, forward);
+      if (target !== null) {
+        add("Terminal", "terminal", title, shortcut(mac, key), { type: "focus", pane: target });
+      }
+    }
     const moves: [Direction, string, string][] = [
       ["left", "Focus pane to the left", "←"],
       ["right", "Focus pane to the right", "→"],
@@ -100,44 +105,93 @@ export function commands(
     }
   }
 
-  add("Workspace", "plus", "New workspace", shortcut(mac, "T"), { type: "newWorkspace" });
+  add("Workspace", "plus", "New workspace", shortcut(mac, "N"), { type: "newWorkspace" });
   add("Workspace", "globe", "New SSH workspace", "", {
     type: "overlay",
     overlay: { kind: "ssh", workspace: null, host: "", typed: true },
   });
-  if (workspace) {
-    if (workspace.remote) {
-      add("Workspace", "globe", "Disconnect workspace from SSH", "", {
-        type: "disconnect",
+  add("Workspace", "folder", "New workspace group", "", {
+    type: "overlay",
+    overlay: { kind: "name", naming: { kind: "newGroup" }, text: "" },
+  });
+  for (const group of state.groups) {
+    add("Groups", "folder", `New workspace in ${group.name}`, "", {
+      type: "newWorkspace",
+      group: group.id,
+    });
+    add("Groups", "folder", `New SSH workspace in ${group.name}`, "", {
+      type: "overlay",
+      overlay: { kind: "ssh", workspace: null, group: group.id, host: "", typed: true },
+    });
+    add("Groups", "folder", `Rename group ${group.name}`, "", {
+      type: "overlay",
+      overlay: { kind: "name", naming: { kind: "group", group: group.id }, text: group.name },
+    });
+    add("Groups", "folder", `${group.collapsed ? "Expand" : "Collapse"} group ${group.name}`, "", {
+      type: "collapseGroup",
+      group: group.id,
+      collapsed: !group.collapsed,
+    });
+    add("Groups", "folder", `Remove group ${group.name} (keep workspaces)`, "", {
+      type: "removeGroup",
+      group: group.id,
+    });
+    if (workspace && workspace.group !== group.id) {
+      add("Groups", "folder", `Move workspace to ${group.name}`, "", {
+        type: "moveToGroup",
         workspace: workspace.id,
+        group: group.id,
       });
+    }
+  }
+  if (workspace?.group !== undefined) {
+    add("Groups", "grid", "Move workspace out of group", "", {
+      type: "moveToGroup",
+      workspace: workspace.id,
+      group: null,
+    });
+  }
+  if (workspace) {
+    add("Workspace", "pencil", "Rename workspace", "", {
+      type: "overlay",
+      overlay: {
+        kind: "name",
+        naming: { kind: "workspace", workspace: workspace.id },
+        text: workspace.name,
+      },
+    });
+    if (workspace.remote) {
+      push("Workspace", "globe", "Disconnect workspace from SSH", "", () =>
+        close({ kind: "connection", workspace: workspace.id }),
+      );
     } else {
       add("Workspace", "globe", "Connect workspace over SSH", "", {
         type: "overlay",
         overlay: { kind: "ssh", workspace: workspace.id, host: "", typed: true },
       });
     }
-    add("Workspace", "close", "Close workspace", "", {
-      type: "closeWorkspace",
-      workspace: workspace.id,
-    });
-    const index = state.workspaces.indexOf(workspace);
+    push("Workspace", "close", "Close workspace", "", () =>
+      close({ kind: "workspace", workspace: workspace.id }),
+    );
+    // Reordering by keyboard, among the workspaces it shares a folder with.
+    const row = state.workspaces.filter((other) => other.group === workspace.group);
+    const index = row.indexOf(workspace);
     if (index > 0) {
       add("Workspace", "arrowUp", "Move workspace up", "", {
         type: "moveWorkspace",
         workspace: workspace.id,
-        index: index - 1,
+        by: -1,
       });
     }
-    if (index + 1 < state.workspaces.length) {
+    if (index + 1 < row.length) {
       add("Workspace", "arrowDown", "Move workspace down", "", {
         type: "moveWorkspace",
         workspace: workspace.id,
-        index: index + 1,
+        by: 1,
       });
     }
   }
-  state.workspaces.forEach((other, index) => {
+  ordered(state).forEach((other, index) => {
     if (other.id === state.active) return;
     add(
       "Go to",
@@ -149,7 +203,7 @@ export function commands(
   });
   if (workspace && pane !== undefined) {
     // A terminal keeps its session, so it moves only within its machine.
-    for (const other of state.workspaces) {
+    for (const other of ordered(state)) {
       if (other.id === workspace.id || other.remote !== workspace.remote) continue;
       add("Move to", "arrowUpRight", `Move terminal to ${other.name}`, "", {
         type: "movePane",
@@ -159,25 +213,32 @@ export function commands(
     }
   }
   add("View", "sidebar", "Toggle sidebar", shortcut(mac, "B"), { type: "toggleSidebar" });
+  add("View", "bell", "Notifications", "", {
+    type: "overlay",
+    overlay: { kind: "notifications" },
+  });
   add("View", "settings", "Preferences", editShortcut(mac, ","), {
     type: "overlay",
     overlay: { kind: "settings" },
   });
-  const themes: [Theme, string, IconName][] = [
-    ["graphite", "Graphite", "moon"],
-    ["dusk", "Dusk", "moon"],
-    ["light", "Light", "sun"],
-  ];
-  for (const [theme, name, icon] of themes) {
-    if (theme === prefs.theme) continue;
-    list.push({
-      group: "Appearance",
-      icon,
-      title: `Use ${name} theme`,
-      chord: "",
-      key: `Appearance:${theme}`,
-      run: () => setPrefs({ theme }),
-    });
+  const zoom = (by: number) =>
+    Math.min(WINDOW_ZOOM.max, Math.max(WINDOW_ZOOM.min, Math.round((prefs.windowZoom + by) * 100) / 100));
+  for (const [title, key, value] of [
+    ["Zoom app in", "+", zoom(0.1)],
+    ["Zoom app out", "-", zoom(-0.1)],
+    ["Reset app zoom", "0", 1],
+  ] as const) {
+    push("View", "textSize", title, editShortcut(mac, key), () => setPrefs({ windowZoom: value }));
+  }
+  add("Appearance", "settings", "Browse themes", "", {
+    type: "overlay",
+    overlay: { kind: "settings", themes: true },
+  });
+  for (const theme of BUILTINS) {
+    if (theme.id === prefs.theme.id) continue;
+    push("Appearance", theme.id === "light" ? "sun" : "moon", `Use ${theme.name} theme`, "", () =>
+      setPrefs({ theme }),
+    );
   }
   return list;
 }

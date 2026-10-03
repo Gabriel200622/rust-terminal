@@ -11,56 +11,56 @@ import {
   useSyncExternalStore,
 } from "react";
 
-// The settings of `config.example.toml` that change how Neptune looks.
-export const THEMES = ["graphite", "dusk", "light"] as const;
-export type Theme = (typeof THEMES)[number];
+import { ACCENTS, BUILTINS, isDark, themeVariables, type Accent, type Theme } from "./neptune/themes";
 
-export const ACCENTS = [
-  "blue",
-  "indigo",
-  "purple",
-  "pink",
-  "red",
-  "orange",
-  "yellow",
-  "green",
-  "graphite",
-] as const;
-export type Accent = (typeof ACCENTS)[number];
-
-/** The CSS variable carrying each accent, resolved per theme. */
-export const ACCENT_VAR: Record<Accent, string> = {
-  blue: "--blue",
-  indigo: "--indigo",
-  purple: "--purple",
-  pink: "--pink",
-  red: "--crimson",
-  orange: "--orange",
-  yellow: "--amber",
-  green: "--emerald",
-  graphite: "--slate",
-};
+export { ACCENTS, type Accent, type Theme };
 
 export const CURSORS = ["block", "beam", "underline"] as const;
 export type Cursor = (typeof CURSORS)[number];
 
+/** The settings of `config.example.toml` that Preferences changes. */
 export interface Prefs {
   theme: Theme;
+  /** Theme ids starred in the catalog, in the order they were starred. */
+  favorites: Theme[];
+  /** For Graphite, Dusk and Light only; a palette brings its own accent. */
   accent: Accent;
+  windowZoom: number;
   fontSize: number;
   lineHeight: number;
+  scrollback: number;
+  /** A shell program; absent for the platform default. */
+  shell: string | null;
   cursor: Cursor;
   blink: boolean;
+  restoreWorkspaces: boolean;
+  confirmClose: boolean;
+  warnProcesses: boolean;
+  checkUpdates: boolean;
+  releaseChannel: "stable" | "beta";
+  desktopNotifications: boolean;
 }
 
 export const DEFAULT_PREFS: Prefs = {
-  theme: "graphite",
+  theme: BUILTINS[0],
+  favorites: [],
   accent: "blue",
+  windowZoom: 1,
   fontSize: 14,
   lineHeight: 1.4,
+  scrollback: 10000,
+  shell: null,
   cursor: "block",
   blink: false,
+  restoreWorkspaces: true,
+  confirmClose: true,
+  warnProcesses: true,
+  checkUpdates: true,
+  releaseChannel: "stable",
+  desktopNotifications: true,
 };
+
+export const WINDOW_ZOOM = { min: 0.2, max: 5 };
 
 interface PrefsContext {
   prefs: Prefs;
@@ -79,6 +79,7 @@ export function usePrefs(): PrefsContext {
 export function PrefsProvider({ children }: { children: React.ReactNode }) {
   const [prefs, setPrefs] = useState(DEFAULT_PREFS);
   const applied = useRef(DEFAULT_PREFS);
+  const painted = useRef<string[]>([]);
 
   // Preferences apply as they change, as in the app. The document carries
   // them, so terminals restyle without re-rendering.
@@ -86,14 +87,23 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
     const root = document.documentElement;
     const previous = applied.current;
     applied.current = prefs;
-    if (previous.theme !== prefs.theme || previous.accent !== prefs.accent) {
+    if (previous.theme.id !== prefs.theme.id || previous.accent !== prefs.accent) {
       root.classList.add("theme-shift");
       const timer = window.setTimeout(
         () => root.classList.remove("theme-shift"),
         260,
       );
-      root.dataset.theme = prefs.theme;
+      // An imported palette lays its colours over the base theme it resembles.
+      const variables = themeVariables(prefs.theme);
+      root.dataset.theme = prefs.theme.colors
+        ? isDark(prefs.theme.colors)
+          ? "graphite"
+          : "light"
+        : prefs.theme.id;
       root.dataset.accent = prefs.accent;
+      for (const name of painted.current) root.style.removeProperty(name);
+      painted.current = Object.keys(variables);
+      for (const [name, value] of Object.entries(variables)) root.style.setProperty(name, value);
       const meta = document.querySelector('meta[name="theme-color"]');
       meta?.setAttribute(
         "content",
@@ -118,7 +128,11 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
     (patch: Partial<Prefs>) => setPrefs((current) => ({ ...current, ...patch })),
     [],
   );
-  const reset = useCallback(() => setPrefs(DEFAULT_PREFS), []);
+  // Favorites are kept, as the app keeps them and the custom themes.
+  const reset = useCallback(
+    () => setPrefs((current) => ({ ...DEFAULT_PREFS, favorites: current.favorites })),
+    [],
+  );
   const value = useMemo(() => ({ prefs, set, reset }), [prefs, set, reset]);
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
