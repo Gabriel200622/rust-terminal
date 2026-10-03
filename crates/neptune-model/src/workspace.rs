@@ -96,12 +96,17 @@ pub struct Pane {
     pub(crate) cwd: PathBuf,
     pub(crate) remote_cwd: Option<PathBuf>,
     pub(crate) agent: Option<crate::AgentSession>,
+    pub(crate) pull_requests: Vec<crate::PullRequest>,
     pub(crate) generation: u64,
     pub(crate) lifecycle: Lifecycle,
 }
 impl Pane {
     pub fn agent(&self) -> Option<&crate::AgentSession> {
         self.agent.as_ref()
+    }
+    /// Pull requests the agent linked to this terminal, oldest first.
+    pub fn pull_requests(&self) -> &[crate::PullRequest] {
+        &self.pull_requests
     }
     pub fn id(&self) -> PaneId {
         self.id
@@ -128,6 +133,7 @@ pub struct PaneSpec {
     pub cwd: PathBuf,
     pub remote_cwd: Option<PathBuf>,
     pub agent: Option<crate::AgentSession>,
+    pub pull_requests: Vec<crate::PullRequest>,
 }
 #[derive(Debug, Clone)]
 pub struct WorkspaceSpec {
@@ -404,6 +410,11 @@ impl Model {
                 {
                     return Err(Error::InvalidLayout("invalid agent resume reference"));
                 }
+                if pane.pull_requests.len() > crate::PullRequest::MAX_PER_PANE
+                    || (pane.agent.is_none() && !pane.pull_requests.is_empty())
+                {
+                    return Err(Error::InvalidLayout("invalid pull request links"));
+                }
                 if remote.is_none() && pane.remote_cwd.is_some() {
                     return Err(Error::InvalidLayout("local pane has a remote directory"));
                 }
@@ -451,6 +462,7 @@ impl Model {
                         cwd: pane.cwd,
                         remote_cwd: pane.remote_cwd,
                         agent: pane.agent,
+                        pull_requests: pane.pull_requests,
                         generation: 1,
                         lifecycle: Lifecycle::Starting,
                     })
@@ -493,6 +505,7 @@ impl Model {
                         cwd: pane.cwd.clone(),
                         remote_cwd: pane.remote_cwd.clone(),
                         agent: pane.agent.clone(),
+                        pull_requests: pane.pull_requests.clone(),
                     })
                     .collect(),
                 layout: workspace.layout.clone(),

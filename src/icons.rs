@@ -44,6 +44,7 @@ pub enum Icon {
     Globe,
     Star,
     Image,
+    PullRequest,
 }
 
 /// Paint an icon into its visual bounds. The caller controls the hit area.
@@ -333,6 +334,13 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             circle(8.5, 9.5, 1.7);
             line(&[[4.5, 18.0], [10.0, 12.5], [13.5, 16.0]]);
             line(&[[13.5, 16.0], [16.0, 13.5], [20.0, 17.5]]);
+        }
+        Icon::PullRequest => {
+            // The base branch, and the change that turns into it.
+            circle(6.0, 6.0, 3.0);
+            line(&[[6.0, 9.0], [6.0, 21.0]]);
+            circle(18.0, 18.0, 3.0);
+            line(&[[13.0, 6.0], [16.0, 6.0], [18.0, 8.0], [18.0, 15.0]]);
         }
         Icon::Star => {
             // Closed, so all five points are mitred alike.

@@ -15,7 +15,8 @@ shell sessions, GPU rendering, and a quiet workspace interface, with no webview.
 - 715 built-in themes and custom themes shared by the window and terminal.
 - Terminal notifications with optional native desktop banners.
 - Saved workspace layouts and directories, plus optional Claude Code/Codex
-  session resumption on local Unix terminals.
+  session resumption on local Unix terminals, where an agent's pull requests
+  appear on its tab.
 
 ## Download
 

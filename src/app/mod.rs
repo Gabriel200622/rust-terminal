@@ -324,6 +324,16 @@ impl App {
                 },
             );
         }
+        for (pane, generation, pull_request) in self.sessions.pull_request_links() {
+            self.dispatch(
+                ctx,
+                Command::PanePullRequestLinked {
+                    pane,
+                    generation,
+                    pull_request,
+                },
+            );
+        }
         let metadata: Vec<_> = self
             .sessions
             .iter()
@@ -534,6 +544,7 @@ impl App {
                     }
                     PanePresentation {
                         agent: pane.agent().map(|agent| agent.kind),
+                        pull_requests: pane.pull_requests().to_vec(),
                         unread: self.notifications.unread(Some(pane.id())),
                         metadata: session.metadata(),
                         snapshot: shown.then(|| session.viewport()),
@@ -547,6 +558,7 @@ impl App {
                     };
                     PanePresentation {
                         agent: None,
+                        pull_requests: Vec::new(),
                         unread: self.notifications.unread(Some(pane.id())),
                         metadata: SessionMetadata {
                             title,
@@ -788,6 +800,19 @@ impl eframe::App for App {
                 )
             })
             .unwrap_or_default();
+        // A terminal alone in view has no tab, so the toolbar carries its links.
+        let tabs = active
+            .and_then(|id| self.controller.model().workspace(id))
+            .map_or(0, |workspace| {
+                match workspace.layout().tabs(workspace.active()) {
+                    Some((tabs, _)) if self.ui.zoomed => tabs.len(),
+                    _ => workspace.layout().panes().len(),
+                }
+            });
+        let pull_requests = active_pane
+            .and_then(|pane| presentations.get(&pane))
+            .filter(|_| tabs <= 1)
+            .map_or(&[][..], |presentation| &presentation.pull_requests);
         let sidebar_available = bounds.width() >= metrics::SIDEBAR_MIN_WINDOW;
         let sidebar_open = self.controller.model().sidebar() && sidebar_available;
         // Only a toggle slides. A window too narrow for the sidebar, like
@@ -827,6 +852,7 @@ impl eframe::App for App {
             active,
             pane: active_pane,
             subtitle: &subtitle,
+            pull_requests,
             zoomed: self.ui.zoomed,
             window: bounds,
             sidebar: reveal,
@@ -1121,6 +1147,16 @@ impl eframe::App for App {
                     pane,
                     generation,
                     agent,
+                },
+            );
+        }
+        for (pane, generation, pull_request) in self.sessions.pull_request_links() {
+            self.dispatch(
+                &ctx,
+                Command::PanePullRequestLinked {
+                    pane,
+                    generation,
+                    pull_request,
                 },
             );
         }

@@ -149,6 +149,172 @@ pub fn path_label(path: &std::path::Path, max: usize) -> String {
     format!("…/{tail}")
 }
 
+/// Pull request numbers that open their pull request, laid out leading from
+/// a trailing edge. Interaction is claimed first so the surface beneath can
+/// follow their hover; `paint` then draws them over it.
+pub struct PullRequestChips<'a> {
+    /// A number for each link, or the newest number standing for all of them.
+    chips: Vec<(Rect, std::sync::Arc<egui::Galley>, egui::Response)>,
+    links: &'a [neptune_model::PullRequest],
+    menu: bool,
+    /// Leading edge of the chips; the trailing edge given when there are none.
+    pub left: f32,
+}
+impl<'a> PullRequestChips<'a> {
+    /// The most links shown side by side; more are listed in a menu.
+    const SIDE_BY_SIDE: usize = 2;
+
+    /// The newest link sits at `right` with the older one before it. More
+    /// links, or links without room to stay clear of `limit`, share one chip
+    /// that lists them.
+    pub fn layout(
+        ui: &egui::Ui,
+        id: egui::Id,
+        links: &'a [neptune_model::PullRequest],
+        (limit, right, middle): (f32, f32, f32),
+        accent: egui::Color32,
+    ) -> Self {
+        let number = |link: &neptune_model::PullRequest| {
+            ui.painter().layout_no_wrap(
+                link.number().to_string(),
+                crate::theme::medium(11.5),
+                accent,
+            )
+        };
+        let place = |left: f32, width: f32| {
+            Rect::from_min_max(
+                egui::pos2(left - width, middle - 9.0),
+                egui::pos2(left, middle + 9.0),
+            )
+        };
+        let mut chips = Vec::new();
+        let mut left = right;
+        let numbers: Vec<_> = links.iter().rev().map(number).collect();
+        let side_by_side: f32 = numbers.iter().map(|n| n.size().x + 29.0).sum();
+        let menu = links.len() > Self::SIDE_BY_SIDE || right - side_by_side < limit;
+        if !menu {
+            for (link, number) in links.iter().rev().zip(numbers) {
+                let chip = place(left, number.size().x + 28.0);
+                left = chip.left() - 1.0;
+                let response = ui.interact(chip, id.with(link.url()), Sense::click());
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Link,
+                        true,
+                        format!("Open pull request {}", link.label()),
+                    )
+                });
+                chips.push((chip, number, response));
+            }
+        } else if let Some(number) = numbers.into_iter().next()
+            && links.len() > 1
+            && right - (number.size().x + 41.0) >= limit
+        {
+            let chip = place(left, number.size().x + 41.0);
+            left = chip.left() - 1.0;
+            let response = ui.interact(chip, id.with("menu"), Sense::click());
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Pull requests")
+            });
+            chips.push((chip, number, response));
+        }
+        Self {
+            chips,
+            links,
+            menu,
+            left,
+        }
+    }
+    pub fn is_empty(&self) -> bool {
+        self.chips.is_empty()
+    }
+    pub fn hovered(&self) -> bool {
+        self.chips.iter().any(|chip| chip.2.hovered())
+    }
+    pub fn paint(
+        self,
+        painter: &egui::Painter,
+        p: crate::theme::Palette,
+        actions: &mut Vec<super::Action>,
+    ) {
+        use crate::icons::{self, Icon};
+        let open = |link: &neptune_model::PullRequest, actions: &mut Vec<super::Action>| {
+            if let Some(link) = crate::platform::links::WebLink::new(link.url()) {
+                actions.push(super::Action::OpenLink(link));
+            }
+        };
+        // Chips run newest first, as the links do from their end.
+        for ((chip, number, response), link) in self.chips.into_iter().zip(self.links.iter().rev())
+        {
+            let listing = self.menu
+                && egui::Popup::is_id_open(
+                    &response.ctx,
+                    egui::Popup::default_response_id(&response),
+                );
+            if response.hovered() || listing {
+                painter.rect_filled(chip, 5, crate::theme::tint(p.accent, 0.14));
+            }
+            icons::paint(
+                painter,
+                Rect::from_center_size(
+                    egui::pos2(chip.left() + 11.5, chip.center().y),
+                    Vec2::splat(13.0),
+                ),
+                Icon::PullRequest,
+                p.accent,
+            );
+            galley_at(
+                painter,
+                egui::pos2(chip.left() + 22.0, chip.center().y + 1.0),
+                number,
+            );
+            let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+            if !self.menu {
+                if response
+                    .on_hover_text(format!("Open pull request {}", link.label()))
+                    .clicked()
+                {
+                    open(link, actions);
+                }
+                continue;
+            }
+            icons::paint(
+                painter,
+                Rect::from_center_size(
+                    egui::pos2(chip.right() - 10.0, chip.center().y + 0.5),
+                    Vec2::splat(10.0),
+                ),
+                Icon::ChevronDown,
+                p.accent,
+            );
+            egui::Popup::menu(&response).show(|ui| {
+                // As wide as its longest entry, like the other menus' rows.
+                let widest = self
+                    .links
+                    .iter()
+                    .map(|link| {
+                        let text = crate::theme::regular(13.0);
+                        ui.painter()
+                            .layout_no_wrap(link.label(), text, p.fg)
+                            .size()
+                            .x
+                    })
+                    .fold(0.0, f32::max);
+                menu_layout(ui, (widest + 46.0).clamp(120.0, 320.0));
+                for link in self.links.iter().rev() {
+                    if menu_item(ui, p, Icon::PullRequest, &link.label(), "", false) {
+                        open(link, actions);
+                        ui.close();
+                    }
+                }
+            });
+            if !listing {
+                response.on_hover_text(format!("{} pull requests", self.links.len()));
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

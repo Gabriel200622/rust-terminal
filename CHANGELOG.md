@@ -23,6 +23,11 @@ their preparation records remain in Git history.
   the path, such as a screenshot or chart a CLI agent reports having written.
   Click the preview to see the picture as large as the window allows, and
   scroll to zoom in.
+- See the pull requests a CLI agent made on its terminal's tab. Claude Code and
+  Codex started in a local Unix terminal can link a pull request to it; click
+  its number beside the tab's close control to open it in the browser.
+- Saved workspaces now use schema version 8. Older workspace files still load,
+  but earlier builds cannot save over layouts written by this one.
 
 ## [0.1.0-rc.2] - 2026-10-03
 

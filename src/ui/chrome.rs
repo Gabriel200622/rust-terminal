@@ -27,6 +27,9 @@ pub struct ChromeView<'a> {
     pub pane: Option<PaneId>,
     /// The focused terminal's label and directory.
     pub subtitle: &'a str,
+    /// The focused terminal's linked pull requests, while it has no tab to
+    /// carry them.
+    pub pull_requests: &'a [neptune_model::PullRequest],
     pub zoomed: bool,
     /// The whole window. The window controls keep their place in it.
     pub window: Rect,
@@ -496,6 +499,17 @@ pub fn toolbar(
     let Some(workspace) = view.workspaces.iter().find(|w| Some(w.id) == view.active) else {
         return;
     };
+    let chips = helpers::PullRequestChips::layout(
+        ui,
+        ui.id().with("toolbar-pull-request"),
+        view.pull_requests,
+        (left + 96.0, right - 2.0, middle),
+        p.accent,
+    );
+    if !chips.is_empty() {
+        right = chips.left - 6.0;
+    }
+    chips.paint(ui.painter(), p, actions);
     let budget = right - left - 6.0;
     if budget < 36.0 {
         return;
@@ -2047,6 +2061,7 @@ mod tests {
                 active: views.first().map(|workspace| workspace.id),
                 pane: None,
                 subtitle: "",
+                pull_requests: &[],
                 zoomed: false,
                 window: Rect::from_min_size(Pos2::ZERO, vec2(900.0, self.height)),
                 sidebar: 1.0,
@@ -2127,6 +2142,7 @@ mod tests {
                         cwd: "/srv/app".into(),
                         remote_cwd: None,
                         agent: None,
+                        pull_requests: Vec::new(),
                     }],
                     layout: neptune_model::Layout::pane(PaneId::new(*id)),
                     active: PaneId::new(*id),
@@ -2697,6 +2713,7 @@ mod tests {
                             active: Some(WorkspaceId::new(1)),
                             pane: Some(pane),
                             subtitle: "",
+                            pull_requests: &[],
                             zoomed: false,
                             window: Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 600.0)),
                             sidebar: 1.0,
