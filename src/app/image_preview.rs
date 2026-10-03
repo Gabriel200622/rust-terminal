@@ -356,7 +356,14 @@ fn locations(text: &str, directories: &[PathBuf], home: Option<&Path>) -> Vec<Pa
         let Some(path) = text[7..].find('/').map(|slash| &text[7 + slash..]) else {
             return Vec::new();
         };
-        percent_decoded(path)
+        let path = percent_decoded(path);
+        // `file:///C:/shot.png` names `C:/shot.png`, not a path under a root.
+        match path.as_bytes() {
+            [b'/', drive, b':', ..] if cfg!(windows) && drive.is_ascii_alphabetic() => {
+                path[1..].to_owned()
+            }
+            _ => path,
+        }
     } else if cfg!(windows) {
         text.to_owned()
     } else {
@@ -433,6 +440,20 @@ mod tests {
             .unwrap();
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn file_urls_and_drive_paths_name_files_on_their_drive() {
+        let directories = [PathBuf::from(r"C:\agent")];
+        let at = |text| locations(text, &directories, None);
+        assert_eq!(
+            at("file:///C:/shots/a%20b.png"),
+            [PathBuf::from("C:/shots/a b.png")]
+        );
+        assert_eq!(at(r"C:\shots\a.png"), [PathBuf::from(r"C:\shots\a.png")]);
+        assert_eq!(at(r"out\a.png"), [PathBuf::from(r"C:\agent\out\a.png")]);
+    }
+
+    #[cfg(not(windows))]
     #[test]
     fn spellings_resolve_against_home_file_urls_and_each_directory() {
         let home = Path::new("/home/me");
@@ -450,7 +471,6 @@ mod tests {
         assert_eq!(at("file:///tmp/a%20b.png"), [PathBuf::from("/tmp/a b.png")]);
         assert_eq!(at("FILE://host/tmp/a.png"), [PathBuf::from("/tmp/a.png")]);
         assert!(at("file://host").is_empty());
-        #[cfg(not(windows))]
         assert_eq!(at("/tmp/a\\ b.png"), [PathBuf::from("/tmp/a b.png")]);
         assert!(locations("~/a.png", &directories, None).is_empty());
     }
