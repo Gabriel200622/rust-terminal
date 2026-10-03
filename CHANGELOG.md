@@ -4,125 +4,57 @@ User-facing release history. Add meaningful changes under **Unreleased** as work
 lands. `scripts/release.py prepare` moves them into a dated version section.
 The release workflow copies that section verbatim into GitHub's What's New and
 the signed desktop update manifest; do not maintain a second release-notes file.
+Earlier private drafts were withdrawn before Neptune's first public preview;
+their preparation records remain in Git history.
 
 ## [Unreleased]
 
 ### What's New
 
-- Pick your shell from a list in Preferences, as in Windows Terminal. Neptune
-  finds Command Prompt, PowerShell, WSL distributions, Git Bash, Visual Studio
-  developer prompts and Windows Terminal profiles on Windows, and the installed
-  shells on macOS and Linux. Custom… still takes any program.
-- Keep working after minimizing on macOS. A window minimized with the yellow
-  button no longer comes back from the Dock frozen.
-- Receive terminal alerts while Neptune is minimized or covered, and confirm
-  before a hidden window closes running terminals.
-- See clean window corners on Windows 11. The window follows the system's own
-  rounded corners and border instead of leaving gaps inside them.
-- Keep zsh command history between Neptune sessions on macOS. Commands are
-  saved to your usual `~/.zsh_history` again, so history search and
-  autosuggestions remember them in new terminals and SSH sessions.
-
-## [0.1.3-rc.1] - 2026-10-02
+## [0.1.0-rc.1] - 2026-10-02
 
 ### What's New
 
-- Keep the macOS Dock icon at the same size while Neptune is running and closed.
-- Follow the Linux AppImage launch instructions to enable execution after a
-  browser download, including when using Gear Lever.
-- See which terminal needs you. Programs that send OSC 9, 99 or 777 alerts ring
-  their pane, show the latest alert and an unread count on their workspace, and
-  collect in a notification popover that opens the right terminal. Desktop
-  banners are optional.
-- Use native installers for macOS Apple Silicon and Intel, Windows x64, and
-  Linux x64, with checksums and build provenance.
-- Choose Stable or Beta updates in Preferences. Neptune checks in the background
-  and offers verified downloads without interrupting your running shells.
-- Organize independent terminals into workspaces and groups, restore directories
-  and layouts with fresh shells, and connect remote workspaces using OpenSSH.
-- Resume supported coding-agent sessions when reopening a workspace.
+- Meet Neptune's first public preview: a native Rust terminal with GPU rendering
+  and independent shell sessions, without a browser or webview.
+- Organize terminals into workspaces and groups, split and rearrange panes,
+  search scrollback, and find actions in the command palette.
+- Reopen saved layouts and directories with fresh shells. Close confirmations
+  help protect running work, including terminals in hidden workspaces.
+- Connect entire workspaces through your system's OpenSSH client. New splits
+  and restored connections use each terminal's reported remote directory.
+- Choose from 715 bundled themes, save favorites, and create custom palettes.
+  Adjust terminal typography and save your preferred window zoom and size.
+- Pick installed shells in Preferences, including PowerShell, WSL, Git Bash and
+  Windows Terminal profiles on Windows, or use a custom program.
+- Receive terminal alerts through OSC 9, 99 and 777, with pane highlights,
+  workspace badges, a notification popover and optional desktop banners.
+- Reopen supported Claude Code and Codex conversations in their original local
+  Unix panes using the providers' saved session IDs.
+- Choose Stable or Beta updates and download verified installers while your
+  shells keep running. Native packages include checksums, signed update metadata
+  and GitHub build attestations.
+- Include fixes for macOS Dock icon sizing, recovery after minimizing and zsh
+  history persistence, plus Windows 11 window corners and terminal directories
+  when splitting or restoring workspaces.
 
 ### Known limitations
 
-- This release candidate is for acceptance testing. Native platform acceptance
-  remains pending before a stable release can be prepared.
-- Browser downloads of Linux AppImages require execute permission before launch.
-- The Windows installer is unsigned while SignPath OSS setup is pending; Windows
-  may show an unverified-publisher or SmartScreen warning.
-- Workspace restoration starts fresh shells and SSH connections. Running commands
-  and process memory are not restored.
+- This is a public release candidate. Full native acceptance on every platform
+  remains pending; it is not a production-stable release.
+- Windows installers are unsigned. Windows may show an unverified-publisher or
+  SmartScreen warning.
+- Linux x64 packages target glibc 2.35 or newer and need working host graphics
+  drivers. Browser-downloaded AppImages need execute permission before launch;
+  enable it in file Properties or run `chmod u+x` on the downloaded file.
+- Workspace restoration starts fresh shells and SSH connections. Arbitrary
+  running commands and process memory are not restored. Coding-agent resumption
+  is limited to supported provider sessions on local Unix terminals.
+- SSH requires an installed OpenSSH client and a POSIX remote shell. Remote
+  directory tracking is integrated for zsh; other shells need OSC 7 integration.
 - Kitty graphics and comprehensive complex-script shaping are not supported.
-  Keypad identity and some keyboard-layout information depend on the window backend.
-
-## [0.1.2] - 2026-10-02
-
-### What's New
-
-- See which terminal needs you. Programs that send OSC 9, 99 or 777 alerts ring
-  their pane, show the latest alert and an unread count on their workspace, and
-  collect in a notification popover that opens the right terminal. Desktop
-  banners are optional.
-
-- Download native installers for macOS Apple Silicon and Intel, Windows x64,
-  and Linux x64 from neptune.rs, with checksums and build provenance.
-- Choose Stable or Beta updates in Preferences. Neptune checks in the background
-  and offers verified downloads without interrupting your running shells.
-- Organize independent terminals into workspaces and groups, restore directories
-  and layouts with fresh shells, and connect remote workspaces using OpenSSH.
-- Resume supported coding-agent sessions when reopening a workspace.
-- Include bundled library license notices in Linux portable packages when Ubuntu
-  exposes system libraries through `/lib` aliases.
-
-- Verify complete private release drafts without requiring publication.
-
-### Known limitations
-
-- The Windows installer is unsigned while SignPath OSS setup is pending; Windows
-  may show an unverified-publisher or SmartScreen warning.
-- Workspace restoration starts fresh shells and SSH connections. Running commands
-  and process memory are not restored.
-- Kitty graphics and comprehensive complex-script shaping are not supported.
-  Keypad identity and some keyboard-layout information depend on the window backend.
-
-## [0.1.1] - 2026-10-02
-
-### What's New
-
-- Download native installers for macOS Apple Silicon and Intel, Windows x64,
-  and Linux x64 from neptune.rs, with checksums and build provenance.
-- Choose Stable or Beta updates in Preferences. Neptune checks in the background
-  and offers verified downloads without interrupting your running shells.
-- Organize independent terminals into workspaces and groups, restore directories
-  and layouts with fresh shells, and connect remote workspaces using OpenSSH.
-- Resume supported coding-agent sessions when reopening a workspace.
-- Include bundled library license notices in Linux portable packages when Ubuntu
-  exposes system libraries through `/lib` aliases.
-
-### Known limitations
-
-- The Windows installer is unsigned while SignPath OSS setup is pending; Windows
-  may show an unverified-publisher or SmartScreen warning.
-- Workspace restoration starts fresh shells and SSH connections. Running commands
-  and process memory are not restored.
-- Kitty graphics and comprehensive complex-script shaping are not supported.
-  Keypad identity and some keyboard-layout information depend on the window backend.
-
-## [0.1.0] - 2026-10-02
-
-### What's New
-
-- Download native installers for macOS Apple Silicon and Intel, Windows x64,
-  and Linux x64 from neptune.rs, with checksums and build provenance.
-- Choose Stable or Beta updates in Preferences. Neptune checks in the background
-  and offers verified downloads without interrupting your running shells.
-- Organize independent terminals into workspaces and groups, restore directories
-  and layouts with fresh shells, and connect remote workspaces using OpenSSH.
-
-### Known limitations
-
-- The Windows installer is unsigned while SignPath OSS setup is pending; Windows
-  may show an unverified-publisher or SmartScreen warning.
-- Workspace restoration starts fresh shells and SSH connections. Running commands
-  and process memory are not restored.
-- Kitty graphics and comprehensive complex-script shaping are not supported.
-  Keypad identity and some keyboard-layout information depend on the window backend.
+  Keypad identity and some keyboard-layout information depend on the window
+  toolkit. IME, accessibility and mixed-DPI behavior still need native acceptance.
+- Release candidates are offered through the Beta channel; Stable waits for an
+  accepted stable release. If you installed a withdrawn higher-version private
+  draft, install this RC manually: automatic updates never downgrade.
