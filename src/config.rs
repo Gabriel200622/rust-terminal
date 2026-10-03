@@ -12,6 +12,8 @@ pub struct Config {
     pub accent: Accent,
     /// Scale of terminal content and window chrome, independent of font size.
     pub window_zoom: f32,
+    /// Installed monospace family; unavailable fonts use bundled JetBrains Mono.
+    pub font_family: String,
     pub font_size: f32,
     pub line_height: f32,
     pub scrollback: usize,
@@ -125,6 +127,7 @@ impl Default for Config {
             favorite_themes: Vec::new(),
             accent: Accent::Blue,
             window_zoom: 1.0,
+            font_family: "JetBrains Mono".into(),
             font_size: 14.0,
             line_height: 1.4,
             scrollback: 10_000,
@@ -199,6 +202,11 @@ impl Config {
             "window_zoom must be between 0.2 and 5"
         );
         anyhow::ensure!(
+            valid_font_family(&self.font_family),
+            "font_family must be a nonempty name of at most 128 characters without control characters"
+        );
+        self.font_family = self.font_family.trim().to_owned();
+        anyhow::ensure!(
             self.font_size.is_finite() && (9.0..=32.0).contains(&self.font_size),
             "font_size must be between 9 and 32"
         );
@@ -265,6 +273,10 @@ impl Config {
     pub fn save(&self, path: &Path) -> Result<()> {
         atomic_write(path, toml::to_string_pretty(self)?.as_bytes())
     }
+}
+
+pub(crate) fn valid_font_family(name: &str) -> bool {
+    !name.trim().is_empty() && name.chars().count() <= 128 && !name.chars().any(char::is_control)
 }
 
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
@@ -386,6 +398,37 @@ fn migrate_data_dir(legacy: &Path, destination: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn font_family_defaults_for_old_settings_and_roundtrips_unavailable_choices() {
+        let legacy: Config = toml::from_str("font_size = 15.0").unwrap();
+        assert_eq!(legacy.font_family, "JetBrains Mono");
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("config.toml");
+        let config = Config {
+            font_family: "A font from another computer".into(),
+            ..Config::default()
+        };
+        config.save(&path).unwrap();
+        assert_eq!(Config::load(&path).unwrap().font_family, config.font_family);
+    }
+
+    #[test]
+    fn font_family_names_are_bounded_and_trimmed() {
+        for family in ["".into(), " ".into(), "bad\nfont".into(), "x".repeat(129)] {
+            let mut config = Config {
+                font_family: family,
+                ..Config::default()
+            };
+            assert!(config.validate().is_err());
+        }
+        let mut config = Config {
+            font_family: "  MesloLGS NF  ".into(),
+            ..Config::default()
+        };
+        config.validate().unwrap();
+        assert_eq!(config.font_family, "MesloLGS NF");
+    }
 
     #[test]
     fn terminal_themes_round_trip_and_legacy_appearance_stays_compatible() {

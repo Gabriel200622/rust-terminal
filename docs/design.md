@@ -231,8 +231,12 @@ icon buttons keep a 28-point target around a 16-point glyph.
   search, and Escape clears the search before it closes the sheet.
   Appearance leads with the theme in use: a miniature drawn in its own colours,
   its name and where it comes from. The whole row opens the theme catalog.
-  Below it is a window zoom percentage stepper. Text has a font size stepper
-  with its Ctrl+Shift+Plus/Minus and Ctrl+Shift+0 shortcuts (Command+Shift on
+  Below it is a window zoom percentage stepper. Text has an installed monospace
+  font family selector with a pinned "Custom…" choice that opens a focused name
+  field. Enter applies the name; partial names leave the terminal font in place.
+  When an abbreviation or PostScript name resolves to a different installed
+  family name, the font card identifies the family being used.
+  A font size stepper has its Ctrl+Shift+Plus/Minus and Ctrl+Shift+0 shortcuts (Command+Shift on
   macOS), a slider for line spacing, a segmented cursor style and the blink
   switch. Boolean settings are switches.
 - **Themes.** The catalog and the editor are screens of the Preferences sheet.
@@ -284,7 +288,8 @@ Interface text is Geist in three weights: regular for body and values, medium
 for names, labels and buttons, semibold for sheet titles and tiles. Sizes are
 13 for body and names, 12–12.5 for secondary and control text, 11–11.5 for
 section labels and paths, and 15 for sheet titles and the palette field.
-Terminal text is JetBrains Mono. Preferences or Ctrl+Shift+Plus/Minus
+Terminal text defaults to bundled JetBrains Mono; Preferences → Text selects an
+installed monospace family for every terminal. Preferences or Ctrl+Shift+Plus/Minus
 (Command+Shift on macOS) changes its size; Ctrl+Shift+0 (Command+Shift+0 on
 macOS) resets it to the default. App zoom
 uses Ctrl+Plus/Minus (Command on macOS), with Ctrl+Equals as an unshifted Plus

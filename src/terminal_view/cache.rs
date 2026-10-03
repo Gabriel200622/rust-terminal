@@ -1,7 +1,7 @@
 //! Renderer-owned row hashes, galleys and preparation.
 
 use crate::{config::Config, theme::Palette};
-use eframe::egui::{self, Color32, FontId, Rect, Stroke, Vec2};
+use eframe::egui::{self, Color32, Rect, Stroke, Vec2};
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
@@ -185,7 +185,7 @@ impl Cache {
         rect: Rect,
         config: &Config,
     ) -> Option<super::geometry::ResizeRequest> {
-        let font = FontId::monospace(config.font_size);
+        let font = crate::platform::fonts::terminal_font(config.font_size, false);
         self.cell = Vec2::new(
             ui.fonts_mut(|fonts| fonts.glyph_width(&font, 'M')),
             (config.font_size * config.line_height).round(),
@@ -217,7 +217,7 @@ impl Cache {
         config: &Config,
         p: Palette,
     ) {
-        let font = FontId::monospace(config.font_size);
+        let font = crate::platform::fonts::terminal_font(config.font_size, false);
         self.columns = snapshot.columns as u16;
         self.lines = snapshot.screen_lines as u16;
         self.display_offset = snapshot.display_offset;
@@ -349,10 +349,7 @@ impl Cache {
                 }
                 let format = egui::text::TextFormat {
                     font_id: if c.flags.contains(Flags::BOLD) {
-                        FontId::new(
-                            config.font_size,
-                            egui::FontFamily::Name("TerminalBold".into()),
-                        )
+                        crate::platform::fonts::terminal_font(config.font_size, true)
                     } else {
                         font.clone()
                     },
@@ -495,6 +492,34 @@ mod synthetic_tests {
             output.textures_delta.clear();
             output.shapes
         }
+    }
+
+    #[test]
+    fn font_reload_reshapes_quiet_rows_and_remeasures_the_grid() {
+        let mut fixture = Fixture::new();
+        let revision = fixture.snapshot.revision;
+        let original = fixture.cache.rows[0].runs[0].galley.clone();
+        let cell = fixture.cache.cell;
+        let mut definitions = crate::platform::fonts::bundled_definitions();
+        definitions.families.insert(
+            egui::FontFamily::Name("Terminal".into()),
+            egui::FontDefinitions::default().families[&egui::FontFamily::Monospace].clone(),
+        );
+        fixture.context.set_fonts(definitions);
+        fixture.cache.retry_resize();
+        fixture.frame("");
+        assert_eq!(fixture.snapshot.revision, revision);
+        assert_ne!(fixture.cache.cell.x, cell.x);
+        assert!(!Arc::ptr_eq(
+            &original,
+            &fixture.cache.rows[0].runs[0].galley
+        ));
+        let refreshed = fixture.cache.rows[0].runs[0].galley.clone();
+        fixture.frame("");
+        assert!(Arc::ptr_eq(
+            &refreshed,
+            &fixture.cache.rows[0].runs[0].galley
+        ));
     }
 
     #[test]

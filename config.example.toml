@@ -25,6 +25,13 @@ accent = "blue"
 # Ctrl+0 resets zoom to 100% (Command on macOS). Zoom is restored on launch.
 window_zoom = 1.0
 
+# Terminal monospace family. Preferences → Text lists installed fonts.
+# Choose Custom… to type a family name or PostScript name; Enter applies it.
+# NF/NFM abbreviations resolve to installed Nerd Font/Nerd Font Mono families.
+# Missing or unreadable families use bundled JetBrains Mono and keep this choice.
+# Restart Neptune after installing a font. Only terminal text uses this family.
+font_family = "JetBrains Mono"
+
 # Saved terminal text size: 9–32; adjust in Preferences or with Ctrl+Shift+Plus/Minus.
 # Ctrl+Shift+0 resets terminal text size to the default (14).
 # App zoom uses Ctrl+Plus/Minus (Command on macOS) without changing this value.

@@ -5,7 +5,7 @@ use crate::{
     config::{Config, Cursor},
     theme::Palette,
 };
-use eframe::egui::{self, FontId, Pos2, Rect, Stroke, Vec2};
+use eframe::egui::{self, Pos2, Rect, Stroke, Vec2};
 use terminal_core::{CursorShape, Mode as TermMode, Point, SelectionType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,7 +48,7 @@ impl Cache {
             egui::CursorIcon::Text
         });
         let selection = self.selection;
-        let font = FontId::monospace(config.font_size);
+        let font = crate::platform::fonts::terminal_font(config.font_size, false);
         let painter = ui.painter().with_clip_rect(rect);
         painter.rect_filled(rect, 0, self.background);
         for (y, row) in self.rows.iter().enumerate() {

@@ -56,6 +56,7 @@ pub struct App {
     renders: BTreeMap<PaneId, PaneRender>,
     config: Config,
     config_path: PathBuf,
+    fonts: crate::platform::fonts::Fonts,
     state_path: PathBuf,
     window_path: PathBuf,
     window_state: window_state::WindowState,
@@ -175,6 +176,7 @@ impl App {
             renders: BTreeMap::new(),
             config: Config::default(),
             config_path,
+            fonts: Default::default(),
             state_path,
             window_path: data.join("window.json"),
             window_state: window.state,
@@ -262,6 +264,11 @@ impl App {
             });
         if let Some(startup) = startup {
             self.complete_startup(ctx, startup);
+        }
+        if self.fonts.poll(ctx, &self.config.font_family) {
+            for render in self.renders.values_mut() {
+                render.cache.retry_resize();
+            }
         }
         for event in self.sessions.poll() {
             match event {
@@ -1006,6 +1013,7 @@ impl eframe::App for App {
                 &ctx,
                 &self.config,
                 &self.updates,
+                &self.fonts,
                 &mut self.ui.preferences,
                 &mut self.ui.preference_view,
                 &mut self.ui.shells,
