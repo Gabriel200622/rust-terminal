@@ -38,8 +38,11 @@ line_height = 1.4
 scrollback = 10000
 
 # Omit shell to use the platform default. This is an executable, not a shell
-# command with arguments. Examples: /bin/zsh, /bin/bash, pwsh.exe.
+# command line; put its arguments in shell_args. Preferences lists the shells
+# found on this computer and fills in both. Examples: /bin/zsh, pwsh.exe.
 # shell = "/bin/zsh"
+# shell = 'C:\Windows\System32\wsl.exe'
+# shell_args = ["-d", "Ubuntu"]
 
 # block, beam, or underline
 cursor = "block"

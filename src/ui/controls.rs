@@ -480,6 +480,48 @@ pub fn text_field(
     response
 }
 
+/// A field showing the current choice that opens a list of the others. The
+/// caller shows the list with `egui::Popup::menu` on the returned response.
+pub fn select(ui: &mut Ui, p: Palette, id: Id, value: &str, label: &str, width: f32) -> Response {
+    let (_, rect) = ui.allocate_space(vec2(width, metrics::CONTROL_HEIGHT));
+    let response = ui.interact(rect, id, Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::ComboBox, ui.is_enabled(), label));
+    let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&response));
+    let radius = metrics::CONTROL_RADIUS;
+    let painter = ui.painter();
+    if response.hovered() || open {
+        painter.rect_filled(rect, radius, p.pressed);
+    }
+    painter.rect_stroke(rect, radius, p.hairline(), StrokeKind::Inside);
+    if response.has_focus() {
+        focus_ring(painter, rect, radius, p);
+    }
+    icons::paint(
+        painter,
+        Rect::from_center_size(
+            Pos2::new(rect.right() - 16.0, rect.center().y),
+            Vec2::splat(12.0),
+        ),
+        Icon::ChevronDown,
+        p.secondary,
+    );
+    galley_at(
+        painter,
+        Pos2::new(rect.left() + 10.0, rect.center().y),
+        elided(
+            painter,
+            value,
+            theme::regular(13.0),
+            p.fg,
+            rect.width() - 38.0,
+        ),
+    );
+    if response.gained_focus() {
+        response.scroll_to_me(None);
+    }
+    response.on_hover_cursor(CursorIcon::PointingHand)
+}
+
 /// A frameless single-line editor for surfaces that draw their own field.
 pub fn bare_text_edit(
     ui: &mut Ui,

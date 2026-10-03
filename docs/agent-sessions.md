@@ -18,7 +18,8 @@ still open normally, but automatic exact-session capture is unavailable.
 Claude Code receives an additional invocation-scoped SessionStart hook through
 `--settings`. Neither integration rewrites shell dotfiles or the providers'
 global settings. Bash and Zsh startup adapters load the user's configuration
-before adding the command adapters; other Unix shells use the inherited PATH.
+before adding the command adapters; other Unix shells, and a shell configured
+with its own arguments, use the inherited PATH.
 Aliases, functions, absolute executable paths, another shell that replaces PATH,
 and user-supplied hook/settings overrides can bypass capture.
 

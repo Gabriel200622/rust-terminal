@@ -1676,6 +1676,18 @@ fn a_remote_terminal_runs_the_ssh_client_with_a_pty_and_a_quoted_bootstrap() {
     let local = coordinator::session_options(&config, "ssh", "/srv/app".into(), None, None);
     assert_eq!(local.shell.as_deref(), Some("/bin/zsh"));
     assert!(local.args.is_empty());
+
+    // Shell arguments apply to local terminals, never to the SSH client.
+    let config = Config {
+        shell: Some("/bin/zsh".into()),
+        shell_args: vec!["-l".into()],
+        ..Config::default()
+    };
+    let local = coordinator::session_options(&config, "ssh", "/srv/app".into(), None, None);
+    assert_eq!(local.args, ["-l"]);
+    let options =
+        coordinator::session_options(&config, "ssh", "/srv/app".into(), Some(&remote), None);
+    assert_eq!(options.args[..3], ["-t", "--", "me@devbox"]);
 }
 
 #[test]

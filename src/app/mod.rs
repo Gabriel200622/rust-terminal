@@ -965,6 +965,7 @@ impl eframe::App for App {
                 &self.config,
                 &self.updates,
                 &mut self.ui.preferences,
+                &mut self.ui.shells,
                 &mut actions,
             ),
             OverlayState::Update => ui::updates::show(&ctx, p, &self.updates, &mut actions),

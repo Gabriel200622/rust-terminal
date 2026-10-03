@@ -1,12 +1,15 @@
 //! Preferences: grouped settings that apply as they change.
 use super::Action;
 use super::helpers::{
-    ButtonKind, SheetPlacement, animate, button, caption, group, padded, place, section_label,
-    segmented, sheet, sheet_footer, sheet_header, slider, stepper, text_field, toggle,
+    ButtonKind, Group, SheetPlacement, animate, button, caption, group, menu_item, menu_layout,
+    menu_separator, padded, place, section_label, segmented, select, sheet, sheet_footer,
+    sheet_header, slider, stepper, text_field, toggle,
 };
 use super::theme_browser;
 use crate::{
     config::{Config, Cursor},
+    icons::Icon,
+    platform::shells::{Detection, Shell},
     theme::{self, Palette},
 };
 use eframe::egui::{self, Align, Align2, Id, Layout, WidgetInfo, WidgetType, vec2};
@@ -16,6 +19,7 @@ pub fn show(
     current: &Config,
     updates: &crate::runtime::updates::Updates,
     state: &mut theme_browser::State,
+    shells: &mut ShellPicker,
     actions: &mut Vec<Action>,
 ) {
     let mut config = current.clone();
@@ -144,23 +148,7 @@ pub fn show(
                     ui.add_space(14.0);
                     section_label(ui, p, "Shell");
                     group(ui, p, |ui, rows| {
-                        rows.row(ui, "Program", |ui| {
-                            let mut shell = config.shell.clone().unwrap_or_default();
-                            let width = (ui.available_width() - 110.0).clamp(120.0, 250.0);
-                            if text_field(
-                                ui,
-                                p,
-                                Id::new("preferences-shell"),
-                                &mut shell,
-                                "System default",
-                                "Shell program",
-                                width,
-                            )
-                            .changed()
-                            {
-                                config.shell = (!shell.trim().is_empty()).then_some(shell);
-                            }
-                        });
+                        shell_rows(ui, p, &mut config, shells, rows);
                         rows.row(ui, "Scrollback", |ui| {
                             ui.add(
                                 egui::DragValue::new(&mut config.scrollback)
@@ -277,5 +265,144 @@ pub fn show(
     }
     if &config != current {
         actions.push(Action::Preferences(config));
+    }
+}
+
+/// The shells found on this computer, and whether the user chose to enter a
+/// program. Reset each time Preferences opens, so new installs appear.
+#[derive(Default)]
+pub struct ShellPicker {
+    detection: Detection,
+    custom: bool,
+}
+
+/// A menu of detected shells, as Windows Terminal offers profiles, with a
+/// program field for anything else. Only the program and its arguments are
+/// saved, so a shell that is later uninstalled shows as a custom program.
+fn shell_rows(
+    ui: &mut egui::Ui,
+    p: Palette,
+    config: &mut Config,
+    picker: &mut ShellPicker,
+    rows: &mut Group,
+) {
+    let width = (ui.available_width() - 110.0).clamp(120.0, 250.0);
+    let detected = picker.detection.poll(ui.ctx());
+    let shells = detected.unwrap_or_default();
+    let default = match shells.iter().find(|shell| shell.default) {
+        Some(shell) => format!("System default ({})", shell.name),
+        None => "System default".into(),
+    };
+    let chosen: Option<&Shell> = config.shell.as_ref().and_then(|program| {
+        shells
+            .iter()
+            .find(|shell| shell.runs(program, &config.shell_args))
+    });
+    let custom =
+        picker.custom || (detected.is_some() && config.shell.is_some() && chosen.is_none());
+    let value = match (&config.shell, chosen) {
+        _ if custom => "Custom".to_owned(),
+        (None, _) => default.clone(),
+        (Some(_), Some(shell)) => shell.name.clone(),
+        // Still detecting: name the program rather than guess its profile.
+        (Some(program), None) => std::path::Path::new(program).file_stem().map_or_else(
+            || program.clone(),
+            |name| name.to_string_lossy().into_owned(),
+        ),
+    };
+    // Choosing Custom… brings its field into view, ready for typing.
+    let mut reveal = false;
+    rows.row(ui, "Program", |ui| {
+        let response = select(
+            ui,
+            p,
+            Id::new("preferences-shell-menu"),
+            &value,
+            "Shell",
+            width,
+        );
+        let menu = egui::Popup::menu(&response).show(|ui| {
+            menu_layout(ui, 300.0);
+            egui::ScrollArea::vertical()
+                .max_height(360.0)
+                .show(ui, |ui| {
+                    let mark = |selected: bool| {
+                        if selected {
+                            Icon::Check
+                        } else {
+                            Icon::Terminal
+                        }
+                    };
+                    if menu_item(
+                        ui,
+                        p,
+                        mark(!custom && config.shell.is_none()),
+                        &default,
+                        "",
+                        false,
+                    ) {
+                        config.shell = None;
+                        config.shell_args.clear();
+                        picker.custom = false;
+                    }
+                    for shell in shells.iter().filter(|shell| !shell.default) {
+                        let selected = !custom && chosen == Some(shell);
+                        if menu_item(ui, p, mark(selected), &shell.name, "", false) {
+                            config.shell = Some(shell.program.clone());
+                            config.shell_args = shell.args.clone();
+                            picker.custom = false;
+                        }
+                    }
+                    if detected.is_none() {
+                        ui.add_space(4.0);
+                        ui.label(
+                            egui::RichText::new("   Finding shells…")
+                                .font(theme::regular(12.5))
+                                .color(p.muted),
+                        );
+                        ui.add_space(4.0);
+                    }
+                    menu_separator(ui, p);
+                    let icon = if custom { Icon::Check } else { Icon::Pencil };
+                    if menu_item(ui, p, icon, "Custom…", "", false) {
+                        // The program stays for editing; a profile's arguments do not.
+                        config.shell_args.clear();
+                        picker.custom = true;
+                        reveal = true;
+                    }
+                });
+        });
+        // Both the sheet and the menu are foreground layers; a reopened sheet
+        // can otherwise stay above a menu that was shown before.
+        if let Some(menu) = menu {
+            ui.ctx().move_to_top(menu.response.layer_id);
+        }
+    });
+    if custom || reveal {
+        rows.row(ui, "Path", |ui| {
+            let mut shell = config.shell.clone().unwrap_or_default();
+            let response = text_field(
+                ui,
+                p,
+                Id::new("preferences-shell"),
+                &mut shell,
+                "Program path",
+                "Shell program",
+                width,
+            );
+            if reveal {
+                response.request_focus();
+            }
+            if reveal || response.gained_focus() {
+                // Leave room for the focus ring and the row below the field.
+                ui.scroll_to_rect(response.rect.expand(14.0), None);
+            }
+            if response.changed() {
+                config.shell = (!shell.trim().is_empty()).then_some(shell);
+                if config.shell.is_none() {
+                    config.shell_args.clear();
+                }
+            }
+        });
     }
 }

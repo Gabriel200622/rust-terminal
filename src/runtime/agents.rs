@@ -232,6 +232,9 @@ fn configure_shell(
     resume: Option<&AgentSession>,
 ) -> std::io::Result<()> {
     let default_shell = options.shell.is_none();
+    // Configured arguments are the user's: start the shell as given instead
+    // of replacing them with Neptune's zsh/bash startup.
+    let configured_args = !options.args.is_empty();
     let shell = options
         .shell
         .clone()
@@ -256,7 +259,7 @@ fn configure_shell(
         ));
     }
     match name {
-        "zsh" => {
+        "zsh" if !configured_args => {
             let dotdir = tempfile::Builder::new()
                 .prefix("zsh-")
                 .tempdir_in(directory)?
@@ -303,7 +306,7 @@ fn configure_shell(
             options.shell = Some(shell);
             options.args = vec![if default_shell { "-il" } else { "-i" }.into()];
         }
-        "bash" => {
+        "bash" if !configured_args => {
             let mut file = tempfile::Builder::new()
                 .prefix("bash-")
                 .tempfile_in(directory)?;
@@ -324,14 +327,16 @@ fn configure_shell(
         _ => {
             if let Some(resume) = resume_json {
                 options.shell = Some("/bin/sh".into());
+                let args = std::mem::take(&mut options.args);
                 options.args = vec![
                     "-c".into(),
-                    "\"$1\" --agent-restore \"$2\"; exec \"$3\"".into(),
+                    "\"$1\" --agent-restore \"$2\"; shift 2; exec \"$@\"".into(),
                     "neptune".into(),
                     helper.to_string_lossy().into_owned(),
                     resume,
                     shell,
                 ];
+                options.args.extend(args);
             }
         }
     }
@@ -907,5 +912,39 @@ mod tests {
             format!("{}\n", home.join(".zsh_history").display())
         );
         session.shutdown();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn configured_shell_arguments_are_kept_and_follow_a_resume() {
+        use std::sync::Arc;
+        let bridge = AgentBridge::default();
+        let mut options = SessionOptions {
+            shell: Some("/bin/bash".into()),
+            args: vec!["--norc".into(), "-i".into()],
+            ..Default::default()
+        };
+        bridge
+            .prepare(PaneId::new(1), 1, &mut options, None, Arc::new(|| {}))
+            .unwrap();
+        assert_eq!(options.shell.as_deref(), Some("/bin/bash"));
+        assert_eq!(options.args, ["--norc", "-i"]);
+
+        let mut options = SessionOptions {
+            shell: Some("/bin/zsh".into()),
+            args: vec!["-l".into()],
+            ..Default::default()
+        };
+        bridge
+            .prepare(
+                PaneId::new(2),
+                1,
+                &mut options,
+                Some(&agent(FIRST)),
+                Arc::new(|| {}),
+            )
+            .unwrap();
+        assert_eq!(options.shell.as_deref(), Some("/bin/sh"));
+        // `shift 2` leaves the shell and its own arguments for `exec "$@"`.
+        assert_eq!(options.args[5..], ["/bin/zsh", "-l"]);
     }
 }

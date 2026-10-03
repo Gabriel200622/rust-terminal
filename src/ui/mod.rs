@@ -58,6 +58,7 @@ pub struct UiState {
     pub overlay: OverlayState,
     pub close_status: CloseStatus,
     pub preferences: theme_browser::State,
+    pub shells: preferences::ShellPicker,
     pub palette_query: String,
     /// Highlighted command; reset whenever the query changes.
     pub palette_selected: usize,
