@@ -39,8 +39,10 @@ to a PR.
    open.
 
 If GitHub requires sign-in, ask the user to sign in in that browser and continue
-there. If the browser tools cannot upload local files, report the missing
-capability and provide the exact file paths for the user to attach.
+there. If the initial browser upload fails or its tools cannot upload local
+files, retry the attachment workflow in the user's personal Chrome browser when
+available. If neither browser can complete the upload, report the blocker and
+provide the exact file paths for the user to attach.
 
 ## Pull requests as a triage surface
 
