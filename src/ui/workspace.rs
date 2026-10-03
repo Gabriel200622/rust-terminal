@@ -80,6 +80,8 @@ pub struct StageOutput {
     /// The terminals in view, and whether each has a shell to take files
     /// dragged in from another application.
     pub cards: Vec<(PaneId, Rect, bool)>,
+    /// Readings of a picture path the pointer rests on in a local terminal.
+    pub image_paths: Option<(PaneId, Vec<crate::terminal_view::ImagePath>)>,
 }
 
 /// Where a terminal dropped at `pointer` lands on the place it is over:
@@ -667,6 +669,10 @@ fn draw_pane(
         }
         if let Some(link) = painted.open_link {
             actions.push(Action::OpenLink(link));
+        }
+        // A remote terminal names files on another machine.
+        if !painted.image_paths.is_empty() && !remote {
+            output.image_paths = Some((id, painted.image_paths));
         }
         // A focused widget also reports Enter and Space as clicks; only the
         // pointer changes which pane is focused.

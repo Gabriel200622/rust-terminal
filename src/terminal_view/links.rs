@@ -5,6 +5,21 @@ use crate::platform::links::{MAX_URL_BYTES, WebLink};
 use eframe::egui::{self, Rect};
 use terminal_core::{Cell, Flags, Point};
 
+/// Cells of one logical line read on each side of the pointer.
+const MAX_PATH_CELLS: usize = 1024;
+const MAX_PATH_BYTES: usize = 4096;
+const MAX_IMAGE_PATHS: usize = 8;
+const IMAGE_EXTENSIONS: [&str; 6] = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"];
+
+/// Text under the pointer that may name a picture. Whether it does is for
+/// the reader of the file to say; the grid only knows how it is spelled.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImagePath {
+    pub text: String,
+    /// The cells it occupies, one rectangle for each row.
+    pub rows: Vec<Rect>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Link {
     pub url: WebLink,
@@ -21,22 +36,7 @@ impl Cache {
         rect: Rect,
     ) -> (Option<Link>, Option<WebLink>) {
         self.link_pointer_owned = self.pressed_link.is_some();
-        let hit = |cache: &Self, pos: egui::Pos2| {
-            if !rect.contains(pos)
-                || pos.x >= rect.left() + f32::from(cache.columns) * cache.cell.x
-                || pos.y >= rect.top() + f32::from(cache.lines) * cache.cell.y
-            {
-                return None;
-            }
-            cache.link_at(super::geometry::point_at(
-                rect,
-                cache.cell,
-                cache.columns,
-                cache.lines,
-                cache.display_offset,
-                pos,
-            ))
-        };
+        let hit = |cache: &Self, pos: egui::Pos2| cache.link_at(cache.grid_point(rect, pos)?);
         let mut open = None;
         let contains_pointer = response.contains_pointer();
         let clicked = response.clicked_by(egui::PointerButton::Primary);
@@ -78,20 +78,192 @@ impl Cache {
         (hovered, open)
     }
 
-    pub(super) fn link_at(&self, point: Point) -> Option<Link> {
+    /// The grid point under `pos`, when it is over a cell of the grid.
+    fn grid_point(&self, rect: Rect, pos: egui::Pos2) -> Option<Point> {
+        if !rect.contains(pos)
+            || pos.x >= rect.left() + f32::from(self.columns) * self.cell.x
+            || pos.y >= rect.top() + f32::from(self.lines) * self.cell.y
+        {
+            return None;
+        }
+        Some(super::geometry::point_at(
+            rect,
+            self.cell,
+            self.columns,
+            self.lines,
+            self.display_offset,
+            pos,
+        ))
+    }
+
+    /// Linear index of the visible cell at `point`; a wide character's
+    /// spacer stands for the character.
+    fn cell_index(&self, point: Point) -> Option<usize> {
         let row = usize::try_from(point.line + self.display_offset as i32).ok()?;
         let columns = usize::from(self.columns);
         if row >= self.sources.len() || point.column >= columns {
             return None;
         }
-        let mut index = row * columns + point.column;
+        let index = row * columns + point.column;
         if self
             .source_cell(index)?
             .flags
             .contains(Flags::WIDE_CHAR_SPACER)
         {
-            index = index.checked_sub(1)?;
+            return index.checked_sub(1);
         }
+        Some(index)
+    }
+
+    /// The spellings of a picture's path the resting pointer may be on,
+    /// likeliest first. A button held down is a selection, not a look.
+    pub(super) fn image_path_hover(
+        &self,
+        ui: &egui::Ui,
+        response: &egui::Response,
+        rect: Rect,
+    ) -> Vec<ImagePath> {
+        if !response.contains_pointer() || ui.input(|input| input.pointer.any_down()) {
+            return Vec::new();
+        }
+        let Some(point) = ui
+            .input(|input| input.pointer.hover_pos())
+            .and_then(|pos| self.grid_point(rect, pos))
+        else {
+            return Vec::new();
+        };
+        let columns = usize::from(self.columns);
+        self.image_paths_at(point)
+            .into_iter()
+            .map(|(text, start, end)| ImagePath {
+                text,
+                rows: (start / columns..=end / columns)
+                    .map(|row| {
+                        let from = if row == start / columns {
+                            start % columns
+                        } else {
+                            0
+                        };
+                        let to = if row == end / columns {
+                            end % columns + 1
+                        } else {
+                            columns
+                        };
+                        Rect::from_min_max(
+                            rect.min + egui::vec2(from as f32, row as f32) * self.cell,
+                            rect.min + egui::vec2(to as f32, (row + 1) as f32) * self.cell,
+                        )
+                    })
+                    .collect(),
+            })
+            .collect()
+    }
+
+    /// Candidate picture paths at `point` with their inclusive cell spans.
+    /// A path may hold spaces, so each candidate ends at the nearest picture
+    /// extension and starts at a word further back along the logical line.
+    pub(super) fn image_paths_at(&self, point: Point) -> Vec<(String, usize, usize)> {
+        let mut paths = Vec::new();
+        let Some(index) = self.cell_index(point) else {
+            return paths;
+        };
+        let Some(cell) = self.source_cell(index) else {
+            return paths;
+        };
+        if blank(cell) {
+            return paths;
+        }
+        if let Some(target) = &cell.hyperlink
+            && target
+                .get(..7)
+                .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file://"))
+            && target.len() <= MAX_PATH_BYTES
+            && image_end(target, target.len() - 1) == Some(target.len())
+        {
+            let same_link = |index| {
+                self.source_cell(index).is_some_and(|cell| {
+                    !cell.flags.contains(Flags::HIDDEN)
+                        && cell.hyperlink.as_deref() == Some(target.as_ref())
+                })
+            };
+            let (mut start, mut end) = (index, index);
+            while start > 0 && index - start < MAX_PATH_CELLS && same_link(start - 1) {
+                start -= 1;
+            }
+            while end - index < MAX_PATH_CELLS && same_link(end + 1) {
+                end += 1;
+            }
+            paths.push((target.to_string(), start, end));
+        }
+
+        let (mut start, mut end) = (index, index);
+        while start > 0 && index - start < MAX_PATH_CELLS && self.connected(start - 1, start) {
+            start -= 1;
+        }
+        while end - index < MAX_PATH_CELLS
+            && self.connected(end, end + 1)
+            && self.source_cell(end + 1).is_some()
+        {
+            end += 1;
+        }
+        let mut text = String::new();
+        let mut positions = Vec::new();
+        for index in start..=end {
+            let Some(cell) = self.source_cell(index) else {
+                return paths;
+            };
+            if cell
+                .flags
+                .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+            {
+                continue;
+            }
+            positions.push((text.len(), index));
+            if blank(cell) {
+                text.push(' ');
+            } else {
+                text.push(cell.c);
+                text.extend(&cell.extra);
+            }
+        }
+        let Some(&(at, _)) = positions.iter().find(|(_, cell)| *cell == index) else {
+            return paths;
+        };
+        let Some(limit) = image_end(&text, at) else {
+            return paths;
+        };
+        let Some(end) = positions
+            .iter()
+            .rev()
+            .find(|(byte, _)| *byte < limit)
+            .map(|&(_, cell)| {
+                let wide = self
+                    .source_cell(cell)
+                    .is_some_and(|cell| cell.flags.contains(Flags::WIDE_CHAR));
+                cell + usize::from(wide)
+            })
+        else {
+            return paths;
+        };
+        for &(offset, cell) in positions.iter().rev() {
+            if offset > at {
+                continue;
+            }
+            if limit - offset > MAX_PATH_BYTES || paths.len() == MAX_IMAGE_PATHS {
+                break;
+            }
+            let c = text[offset..].chars().next().unwrap_or(' ');
+            let opens = text[..offset].chars().next_back().is_none_or(path_boundary);
+            if opens && !path_boundary(c) {
+                paths.push((text[offset..limit].to_owned(), cell, end));
+            }
+        }
+        paths
+    }
+
+    pub(super) fn link_at(&self, point: Point) -> Option<Link> {
+        let columns = usize::from(self.columns);
+        let index = self.cell_index(point)?;
         let cell = self.source_cell(index)?;
         if cell
             .flags
@@ -239,6 +411,55 @@ fn delimiter(cell: &Cell) -> bool {
         || matches!(cell.c, '<' | '>' | '"' | '\'' | '`' | '|')
 }
 
+/// A cell that separates words: empty, concealed or a control character.
+fn blank(cell: &Cell) -> bool {
+    cell.flags.contains(Flags::HIDDEN) || cell.c.is_whitespace() || cell.c.is_control()
+}
+
+/// Characters a path is written after: spaces, quotes, brackets and the
+/// punctuation of `key=value`, `label: value` and lists.
+fn path_boundary(c: char) -> bool {
+    c.is_whitespace()
+        || matches!(
+            c,
+            '"' | '\''
+                | '`'
+                | '<'
+                | '>'
+                | '|'
+                | '('
+                | ')'
+                | '['
+                | ']'
+                | '{'
+                | '}'
+                | '='
+                | ','
+                | ':'
+                | ';'
+        )
+}
+
+/// Where the nearest picture file name covering byte `at` ends.
+fn image_end(text: &str, at: usize) -> Option<usize> {
+    let lower = text.to_ascii_lowercase();
+    IMAGE_EXTENSIONS
+        .iter()
+        .flat_map(|extension| {
+            lower
+                .match_indices(extension)
+                .map(|(offset, _)| offset + extension.len())
+        })
+        .filter(|&end| {
+            end > at
+                && !text[end..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_alphanumeric() || c == '_')
+        })
+        .min()
+}
+
 fn trim_url(mut url: &str) -> &str {
     let mut unmatched = [0_i32; 3];
     for c in url.chars() {
@@ -375,6 +596,94 @@ mod tests {
         assert!(long.link_at(Point::new(0, 20)).is_none());
         let cache = cache("https://example.com/path", 16);
         assert!(cache.link_at(Point::new(1, 2)).is_none());
+    }
+
+    fn image_paths(cache: &Cache, column: usize) -> Vec<String> {
+        cache
+            .image_paths_at(Point::new(0, column))
+            .into_iter()
+            .map(|(text, _, _)| text)
+            .collect()
+    }
+
+    #[test]
+    fn picture_paths_are_read_out_of_prose_markdown_and_assignments() {
+        let cache = cache(
+            "Saved ![shot](out/shot.PNG). See path=/tmp/a.png, b.pngx",
+            80,
+        );
+        assert_eq!(
+            image_paths(&cache, 16)[..2],
+            ["out/shot.PNG", "shot](out/shot.PNG"]
+        );
+        assert_eq!(
+            cache.image_paths_at(Point::new(0, 16))[0],
+            ("out/shot.PNG".into(), 14, 25)
+        );
+        assert_eq!(image_paths(&cache, 40)[0], "/tmp/a.png");
+        // Neither blank cells nor a longer extension name a picture.
+        assert!(image_paths(&cache, 5).is_empty());
+        assert!(image_paths(&cache, 50).is_empty());
+    }
+
+    #[test]
+    fn picture_paths_with_spaces_offer_longer_readings_and_stop_at_hard_lines() {
+        let cache = cache("at /tmp/My Shots/Screenshot from 1.png now", 80);
+        assert_eq!(
+            image_paths(&cache, 20),
+            [
+                "Shots/Screenshot from 1.png",
+                "/tmp/My Shots/Screenshot from 1.png",
+                "at /tmp/My Shots/Screenshot from 1.png"
+            ]
+        );
+        assert!(image_paths(&cache, 40).is_empty());
+        let mut wrapped = self::cache("/tmp/wrapped/shot.png", 12);
+        assert!(wrapped.image_paths_at(Point::new(0, 3)).is_empty());
+        Arc::make_mut(&mut wrapped.sources[0])[11]
+            .flags
+            .insert(Flags::WRAPLINE);
+        assert_eq!(
+            wrapped.image_paths_at(Point::new(1, 3)),
+            [("/tmp/wrapped/shot.png".into(), 0, 20)]
+        );
+    }
+
+    #[test]
+    fn file_hyperlinks_name_pictures_whatever_their_label() {
+        let mut cache = cache("the screenshot", 32);
+        for cell in &mut Arc::make_mut(&mut cache.sources[0])[4..14] {
+            cell.hyperlink = Some(Arc::from("file:///tmp/a%20b.png"));
+        }
+        assert_eq!(
+            cache.image_paths_at(Point::new(0, 6)),
+            [("file:///tmp/a%20b.png".into(), 4, 13)]
+        );
+        assert!(cache.image_paths_at(Point::new(0, 1)).is_empty());
+    }
+
+    #[test]
+    fn a_resting_pointer_reports_the_cells_of_a_picture_path() {
+        let mut gesture = Gesture::new();
+        gesture.cache = cache("see /tmp/a.png", 80);
+        gesture.cache.cell = egui::vec2(8.0, 20.0);
+        let (painted, _) = gesture.frame(Vec::new(), egui::Modifiers::NONE);
+        // The path alone is the likeliest reading; the whole line is the other.
+        assert_eq!(painted.image_paths.len(), 2);
+        assert_eq!(painted.image_paths[0].text, "/tmp/a.png");
+        assert_eq!(
+            painted.image_paths[0].rows,
+            [Rect::from_min_max(
+                egui::pos2(42.0, 10.0),
+                egui::pos2(122.0, 30.0)
+            )]
+        );
+        let pos = egui::pos2(50.0, 20.0);
+        let (pressed, _) = gesture.frame(
+            vec![Gesture::button(pos, true, egui::Modifiers::NONE)],
+            egui::Modifiers::NONE,
+        );
+        assert!(pressed.image_paths.is_empty());
     }
 
     struct Gesture {

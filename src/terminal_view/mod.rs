@@ -6,4 +6,5 @@ mod links;
 mod paint;
 
 pub use cache::Cache;
+pub use links::ImagePath;
 pub use paint::{PaintResult, SelectionInteraction};

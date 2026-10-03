@@ -19,6 +19,10 @@ their preparation records remain in Git history.
   them is highlighted while the files are held over the window.
 - Ctrl+V reaches the program in the terminal when the clipboard holds no text,
   so CLI agents can read a copied image themselves.
+- Rest the pointer on the path of a picture in a terminal to preview it beside
+  the path, such as a screenshot or chart a CLI agent reports having written.
+  Click the preview to see the picture as large as the window allows, and
+  scroll to zoom in.
 
 ## [0.1.0-rc.2] - 2026-10-03
 
