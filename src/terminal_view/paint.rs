@@ -19,6 +19,8 @@ pub struct PaintResult {
     pub response: egui::Response,
     pub interaction: Option<SelectionInteraction>,
     pub open_link: Option<crate::platform::links::WebLink>,
+    /// Readings of a picture path the pointer rests on, likeliest first.
+    pub image_paths: Vec<super::ImagePath>,
 }
 
 impl Cache {
@@ -39,6 +41,7 @@ impl Cache {
             egui::Sense::click_and_drag(),
         );
         let (hovered_link, open_link) = self.link_interaction(ui, &response, rect);
+        let image_paths = self.image_path_hover(ui, &response, rect);
         response.clone().on_hover_cursor(if hovered_link.is_some() {
             egui::CursorIcon::PointingHand
         } else {
@@ -288,6 +291,7 @@ impl Cache {
             response,
             interaction,
             open_link,
+            image_paths,
         }
     }
 }

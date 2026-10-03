@@ -4,6 +4,7 @@ mod attachments;
 mod closing;
 mod coordinator;
 mod diagnostics;
+mod image_preview;
 mod input;
 mod ssh;
 #[cfg(test)]
@@ -100,6 +101,7 @@ pub struct App {
     desktop_notifier: crate::platform::notifications::DesktopNotifier,
     updates: crate::runtime::updates::Updates,
     attachments: attachments::Attachments,
+    image_preview: image_preview::ImagePreview,
     file_drag: crate::platform::file_drag::FileDragSource,
     paste_chord: crate::input::PasteChord,
     /// A paste chord pressed this frame that the toolkit did not deliver.
@@ -210,6 +212,7 @@ impl App {
             desktop_notifier: Default::default(),
             updates: Default::default(),
             attachments: attachments::Attachments::new(data.join("pasted-images")),
+            image_preview: Default::default(),
             file_drag: Default::default(),
             paste_chord: Default::default(),
             swallowed_paste: None,
@@ -908,6 +911,7 @@ impl eframe::App for App {
         // A drag lasts only while its header reports it, so it cannot outlive a
         // release, a workspace switch or the pane itself.
         self.ui.pane_drag = output.dragging;
+        self.preview_image(ui, p, bounds, output.image_paths.take());
         for action in actions.drain(..) {
             self.action(&ctx, action);
         }

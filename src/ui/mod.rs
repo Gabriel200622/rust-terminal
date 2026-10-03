@@ -4,6 +4,7 @@ pub mod chrome;
 pub mod controls;
 pub mod dialogs;
 pub mod helpers;
+pub mod image_preview;
 pub mod notifications;
 pub mod palette;
 pub mod preferences;
@@ -41,6 +42,8 @@ pub enum OverlayState {
     Ssh(Option<WorkspaceId>),
     SshInGroup(WorkspaceGroupId),
     ConfirmClose(Close),
+    /// A picture named in a terminal, as large as the window allows.
+    Image,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CloseStatus {

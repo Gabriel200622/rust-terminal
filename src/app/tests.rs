@@ -51,6 +51,7 @@ pub(super) fn fixture(root: &std::path::Path) -> (App, mpsc::SyncSender<Startup>
         desktop_notifier: Default::default(),
         updates: Default::default(),
         attachments: attachments::Attachments::new(root.join("pasted-images")),
+        image_preview: Default::default(),
         file_drag: Default::default(),
         paste_chord: Default::default(),
         swallowed_paste: None,
@@ -2874,6 +2875,171 @@ fn capture_file_drop_native() {
                 split,
                 agent,
                 applied: false,
+            }))
+        }),
+    )
+    .unwrap();
+}
+
+/// A real Neptune window with the pointer resting on a picture's path in
+/// terminal output, as after a CLI agent reports the file it wrote. Ignored in
+/// headless CI.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "Manual native visual QA; needs a desktop and NEPTUNE_PREVIEW_CAPTURE"]
+fn capture_image_preview_native() {
+    use winit::platform::x11::EventLoopBuilderExtX11;
+    let output = PathBuf::from(
+        std::env::var("NEPTUNE_PREVIEW_CAPTURE").expect("Set a task-owned capture path"),
+    );
+    let bottom = std::env::var_os("NEPTUNE_PREVIEW_BOTTOM").is_some();
+    let zoom = if std::env::var_os("NEPTUNE_PREVIEW_ZOOM").is_some() {
+        4
+    } else {
+        0
+    };
+    let open = zoom > 0 || std::env::var_os("NEPTUNE_PREVIEW_OPEN").is_some();
+    let size = if std::env::var_os("NEPTUNE_PREVIEW_NARROW").is_some() {
+        [640.0, 400.0]
+    } else {
+        [900.0, 640.0]
+    };
+    let data = tempfile::tempdir().unwrap();
+    let data_path = data.path().to_path_buf();
+    std::fs::write(data_path.join("config.toml"), "shell = \"/bin/sh\"\n").unwrap();
+    // The path is printed relative to the terminal's directory unless a
+    // picture of the reviewer's own is named.
+    let project = data_path.join("project");
+    std::fs::create_dir_all(project.join("out")).unwrap();
+    let printed = match std::env::var("NEPTUNE_PREVIEW_IMAGE") {
+        Ok(path) => path,
+        Err(_) => {
+            let bars = [0.35, 0.5, 0.42, 0.68, 0.8, 0.74, 0.93];
+            image::RgbImage::from_fn(960, 600, |x, y| {
+                let column = (x as usize).saturating_sub(60) / 120;
+                let inside = x >= 60 && (x - 60) % 120 < 84 && column < bars.len();
+                if inside && (540 - y.min(540)) as f32 <= bars[column] * 460.0 && y < 540 {
+                    image::Rgb([64, 120, 242])
+                } else if (540..543).contains(&y) {
+                    image::Rgb([150, 154, 164])
+                } else {
+                    image::Rgb([247, 248, 250])
+                }
+            })
+            .save(project.join("out/revenue-chart.png"))
+            .unwrap();
+            "out/revenue-chart.png".into()
+        }
+    };
+    let name = std::path::Path::new(&printed)
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let lead = if bottom {
+        "i=0; while [ $i -lt 60 ]; do echo; i=$((i+1)); done; "
+    } else {
+        ""
+    };
+    let command = format!(
+        " clear; {lead}printf '\\n  Wrote the chart to %s and updated the report.\\n\\n' '{printed}'"
+    );
+    let options = eframe::NativeOptions {
+        renderer: eframe::Renderer::Wgpu,
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size(size)
+            .with_decorations(false),
+        event_loop_builder: Some(Box::new(|builder| {
+            builder.with_any_thread(true);
+        })),
+        ..Default::default()
+    };
+    struct NativeCapture {
+        app: App,
+        name: String,
+        /// Click the card for the full view once it is showing.
+        open: bool,
+        steps: u8,
+        /// Zoom steps still to take in the full view.
+        zoom: u8,
+    }
+    impl NativeCapture {
+        /// The middle of the printed file name, once the shell has shown it.
+        fn pointer(&self, ctx: &egui::Context) -> Option<egui::Pos2> {
+            let pane = self.app.controller.model().active_pane()?;
+            let body = ctx.read_response(self.app.terminal_focus?)?.rect;
+            let cell = self.app.renders.get(&pane)?.cache.cell;
+            let snapshot = self.app.sessions.get(pane)?.viewport();
+            snapshot.rows.iter().enumerate().rev().find_map(|(y, row)| {
+                let text: String = row.iter().map(|cell| cell.c).collect();
+                let x = text.find(&self.name).filter(|_| !text.contains("printf"))?;
+                Some(body.min + egui::vec2((x as f32 + 4.5) * cell.x, (y as f32 + 0.5) * cell.y))
+            })
+        }
+    }
+    impl eframe::App for NativeCapture {
+        fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+            eframe::App::logic(&mut self.app, ctx, frame);
+        }
+        fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+            eframe::App::ui(&mut self.app, ui, frame);
+        }
+        fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
+            eframe::App::raw_input_hook(&mut self.app, ctx, input);
+            // Sent every frame, after whatever the desktop's pointer did.
+            if let Some(card) = self.app.image_preview.card.filter(|_| self.open) {
+                // Travel onto the card, settle, then click it.
+                let pos = card.center();
+                self.steps += 1;
+                input.events.push(match self.steps {
+                    3 | 4 => egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed: self.steps == 3,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                    _ => egui::Event::PointerMoved(pos),
+                });
+            } else if self.zoom > 0 && self.app.ui.overlay == OverlayState::Image {
+                // Zoom the full view in with the keyboard, a step a frame.
+                self.zoom -= 1;
+                input.events.push(egui::Event::Key {
+                    key: egui::Key::Plus,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            } else if let Some(pos) = self.pointer(ctx) {
+                input.events.push(egui::Event::PointerMoved(pos));
+            }
+        }
+        fn on_exit(&mut self) {
+            eframe::App::on_exit(&mut self.app);
+        }
+    }
+    eframe::run_native(
+        "Neptune image preview visual QA",
+        options,
+        Box::new(move |cc| {
+            let mut app = App::new(
+                cc,
+                Launch {
+                    cwd: Some(project),
+                    data_root: Some(data_path),
+                    command: Some(command),
+                    screenshot: Some(output),
+                    ..Default::default()
+                },
+                window_state::LoadReport::default(),
+            );
+            app.file_drag = crate::platform::file_drag::FileDragSource::detached();
+            Ok(Box::new(NativeCapture {
+                app,
+                name,
+                open,
+                steps: 0,
+                zoom,
             }))
         }),
     )

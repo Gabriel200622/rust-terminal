@@ -73,6 +73,21 @@ window. It shows the highlight, not an actual drag: a drop from a real file
 manager, and where the pointer is during it, need a hand-driven native check on
 each of X11 and Wayland.
 
+The preview of a picture whose path is under the pointer is captured likewise,
+with a shell printing the path of a generated chart and the pointer held on it:
+
+```sh
+NEPTUNE_PREVIEW_CAPTURE="$PWD/artifacts/native-image-preview.png" \
+  cargo test -p neptune-terminal --lib app::tests::capture_image_preview_native --locked -- --ignored --nocapture
+```
+
+`NEPTUNE_PREVIEW_BOTTOM=1` prints the path at the bottom of the terminal, where
+the preview opens above it, `NEPTUNE_PREVIEW_OPEN=1` clicks the preview for the
+full view, `NEPTUNE_PREVIEW_ZOOM=1` also zooms it in with the keyboard, `NEPTUNE_PREVIEW_NARROW=1` uses a 640×400 window,
+and `NEPTUNE_PREVIEW_IMAGE` names a picture of your own by absolute path. The
+pointer is placed by the test: resting a real pointer, and leaving the path,
+need a hand-driven native check.
+
 The integrated shell regression needs a POSIX shell. X11 injection verifies
 Linux/X11 input, not Wayland, macOS or Windows input. Inspection events verify
 application routing; clipboard, IME and real OS keyboard behavior need native
