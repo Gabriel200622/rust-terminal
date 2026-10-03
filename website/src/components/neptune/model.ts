@@ -1,11 +1,13 @@
 // A small model of Neptune's workspace state for the in-page window. It follows
 // the shapes of `crates/neptune-model` and the saved `workspaces.json`: a
-// workspace owns a binary layout of panes, and every change is one action.
+// workspace owns a binary layout whose places each hold terminals as tabs, and
+// every change is one action.
 
 export type Axis = "vertical" | "horizontal";
 
 export type Layout =
-  | { kind: "pane"; pane: number }
+  /** Terminals sharing one place as tabs. Only `shown` is in view. */
+  | { kind: "tabs"; panes: number[]; shown: number }
   | {
       kind: "split";
       id: number;
@@ -49,29 +51,74 @@ export interface Workspace {
   name: string;
   cwd: string;
   remote?: string;
+  /** The folder group holding it, when it is not at the list's top level. */
+  group?: number;
   layout: Layout;
   active: number;
 }
 
+/** A folder of workspaces in the sidebar. */
+export interface Group {
+  id: number;
+  name: string;
+  collapsed: boolean;
+}
+
+/** Ungrouped workspaces and folder groups share one ordered list. */
+export type SidebarItem = { kind: "workspace"; id: number } | { kind: "group"; id: number };
+
+/** A terminal asking for attention through OSC 9, 99 or 777. */
+export interface Alert {
+  id: number;
+  pane: number;
+  title: string;
+  body: string;
+  unread: boolean;
+  /** When it arrived, in milliseconds since the epoch. */
+  at: number;
+}
+
+/** What a confirmation would close. */
+export type Close =
+  | { kind: "pane"; pane: number }
+  | { kind: "workspace"; workspace: number }
+  | { kind: "connection"; workspace: number };
+
+/** What a name sheet names. */
+export type Naming =
+  | { kind: "workspace"; workspace: number }
+  | { kind: "group"; group: number }
+  | { kind: "newGroup" };
+
 export type Overlay =
   | { kind: "none" }
   | { kind: "palette"; query: string; selected: number; typed: boolean }
-  | { kind: "settings" }
-  | { kind: "ssh"; workspace: number | null; host: string; typed: boolean }
-  | { kind: "menu"; workspace: number };
+  | { kind: "settings"; themes?: boolean }
+  | { kind: "ssh"; workspace: number | null; group?: number; host: string; typed: boolean }
+  | { kind: "menu"; workspace: number }
+  | { kind: "notifications" }
+  | { kind: "confirm"; close: Close }
+  | { kind: "name"; naming: Naming; text: string };
 
 export interface State {
   workspaces: Workspace[];
+  groups: Group[];
+  /** The sidebar's top level. A group's workspaces follow `workspaces`. */
+  order: SidebarItem[];
   panes: Record<number, Pane>;
+  /** Newest first. History is bounded, as in the app. */
+  alerts: Alert[];
   active: number | null;
   sidebar: boolean;
   zoomed: boolean;
   overlay: Overlay;
   search: { open: boolean; query: string; typed: boolean };
-  /** A terminal being carried by its header to another place. */
+  /** A terminal being carried by its tab to another place. */
   drag: Drag | null;
   /** The last shortcut performed, shown briefly over the window. */
   hud: { keys: string; label: string; n: number } | null;
+  /** The program new local terminals start. */
+  shell: string;
   nextId: number;
   /** Workspaces number themselves; their identity colour follows the id. */
   nextWorkspace: number;
@@ -81,10 +128,10 @@ export type Edge = "left" | "right" | "top" | "bottom";
 
 /** Where a carried terminal lands. */
 export type Destination =
-  /** Against an edge of another pane. */
+  /** In a place of its own against an edge of `pane`'s place. */
   | { kind: "beside"; pane: number; edge: Edge }
-  /** In another pane's place, which takes the carried one's. */
-  | { kind: "swap"; pane: number }
+  /** Among the tabs of `pane`'s place; an index past the end means last. */
+  | { kind: "tab"; pane: number; index: number }
   | { kind: "workspace"; workspace: number };
 
 export interface Drag {
@@ -104,18 +151,27 @@ export type Action =
   /** Lets go of a carried terminal, dropping it where it is held. */
   | { type: "release" }
   | { type: "split"; pane: number; axis: Axis }
+  | { type: "newTab"; pane: number }
   | { type: "closePane"; pane: number }
   | { type: "focus"; pane: number }
   | { type: "focusDirection"; direction: Direction }
   | { type: "ratio"; split: number; ratio: number }
   | { type: "zoom" }
-  | { type: "newWorkspace"; name?: string; cwd?: string; branch?: string }
-  | { type: "connect"; workspace: number | null; destination: string }
+  | { type: "newWorkspace"; name?: string; cwd?: string; branch?: string; group?: number }
+  | { type: "connect"; workspace: number | null; group?: number; destination: string }
   | { type: "disconnect"; workspace: number }
   | { type: "selectWorkspace"; workspace: number }
-  | { type: "moveWorkspace"; workspace: number; index: number }
+  /** Trades places with the sibling before (-1) or after (1) it. */
+  | { type: "moveWorkspace"; workspace: number; by: -1 | 1 }
+  | { type: "renameWorkspace"; workspace: number; name: string }
   | { type: "closeWorkspace"; workspace: number }
   | { type: "movePane"; pane: number; workspace: number }
+  | { type: "newGroup"; name: string }
+  | { type: "renameGroup"; group: number; name: string }
+  | { type: "collapseGroup"; group: number; collapsed: boolean }
+  /** Removes the folder and keeps its workspaces. */
+  | { type: "removeGroup"; group: number }
+  | { type: "moveToGroup"; workspace: number; group: number | null }
   | { type: "toggleSidebar" }
   | { type: "overlay"; overlay: Overlay }
   | { type: "search"; open: boolean; query?: string; typed?: boolean }
@@ -128,12 +184,22 @@ export type Action =
   | { type: "ready"; pane: number; ok?: boolean }
   | { type: "patch"; pane: number; patch: Partial<Pane> }
   | { type: "clear"; pane: number }
-  | { type: "restart"; pane: number };
+  | { type: "restart"; pane: number }
+  | { type: "notify"; pane: number; title: string; body: string; at: number }
+  | { type: "openAlert"; alert: number }
+  | { type: "dismissAlert"; alert: number }
+  | { type: "readAlerts" }
+  | { type: "clearAlerts" }
+  | { type: "shell"; name: string };
 
 export type Direction = "left" | "right" | "up" | "down";
 
+export type Dispatch = (action: Action) => void;
+
 /** History is bounded, as in the app; the page keeps far less of it. */
 const HISTORY = 240;
+/** Alert history is capped across the application. */
+const ALERTS = 128;
 
 export const out = (text: string, c?: Tone, b?: boolean): Line => ({
   k: "out",
@@ -144,21 +210,79 @@ export const row = (...spans: (Span | string)[]): Line => ({
   spans: spans.map((span) => (typeof span === "string" ? { t: span } : span)),
 });
 
+export const place = (pane: number): Layout => ({ kind: "tabs", panes: [pane], shown: pane });
+
+/** Every pane, including tabs that are not in view. */
 export function panesOf(layout: Layout): number[] {
-  return layout.kind === "pane"
-    ? [layout.pane]
+  return layout.kind === "tabs"
+    ? layout.panes
     : [...panesOf(layout.first), ...panesOf(layout.second)];
 }
 
-function replace(
-  layout: Layout,
-  pane: number,
-  make: (leaf: Layout) => Layout | null,
-): Layout | null {
-  if (layout.kind === "pane") return layout.pane === pane ? make(layout) : layout;
-  const first = replace(layout.first, pane, make);
-  const second = replace(layout.second, pane, make);
-  // Closing a pane gives its place to its sibling.
+/** The tabs sharing a place with `pane`, and which of them is in view. */
+export function tabsOf(layout: Layout, pane: number): { panes: number[]; shown: number } | null {
+  if (layout.kind === "tabs") return layout.panes.includes(pane) ? layout : null;
+  return tabsOf(layout.first, pane) ?? tabsOf(layout.second, pane);
+}
+
+/** The tab after or before `pane` in its place, wrapping around. */
+export function nextTab(layout: Layout, pane: number, forward: boolean): number | null {
+  const tabs = tabsOf(layout, pane)?.panes;
+  if (!tabs || tabs.length < 2) return null;
+  const step = forward ? 1 : tabs.length - 1;
+  return tabs[(tabs.indexOf(pane) + step) % tabs.length];
+}
+
+function edit(layout: Layout, target: number, make: (tabs: Extract<Layout, { kind: "tabs" }>) => Layout): Layout {
+  if (layout.kind === "tabs") return layout.panes.includes(target) ? make(layout) : layout;
+  const first = edit(layout.first, target, make);
+  const second = edit(layout.second, target, make);
+  return first === layout.first && second === layout.second ? layout : { ...layout, first, second };
+}
+
+/** Splits `target`'s place, putting `pane` against the given edge of it. */
+function splitAt(layout: Layout, target: number, pane: number, id: number, edge: Edge): Layout {
+  const leading = edge === "left" || edge === "top";
+  return edit(layout, target, (tabs) => ({
+    kind: "split",
+    id,
+    axis: edge === "left" || edge === "right" ? "vertical" : "horizontal",
+    ratio: 0.5,
+    first: leading ? place(pane) : tabs,
+    second: leading ? tabs : place(pane),
+  }));
+}
+
+/**
+ * Adds `pane` to `target`'s tabs and brings it into view. Without an index it
+ * follows `target`; an index past the end means last.
+ */
+function addTab(layout: Layout, target: number, pane: number, index?: number): Layout {
+  return edit(layout, target, (tabs) => {
+    const at = Math.min(index ?? tabs.panes.indexOf(target) + 1, tabs.panes.length);
+    return { kind: "tabs", panes: [...tabs.panes.slice(0, at), pane, ...tabs.panes.slice(at)], shown: pane };
+  });
+}
+
+/** Brings `pane` into view in its place. */
+const show = (layout: Layout, pane: number): Layout =>
+  edit(layout, pane, (tabs) => (tabs.shown === pane ? tabs : { ...tabs, shown: pane }));
+
+/**
+ * A place that loses the tab in view shows the one that followed it, or the
+ * new last tab. A place that loses its only tab gives its room to its sibling.
+ */
+function remove(layout: Layout, pane: number): Layout | null {
+  if (layout.kind === "tabs") {
+    const position = layout.panes.indexOf(pane);
+    if (position < 0) return layout;
+    const panes = layout.panes.filter((id) => id !== pane);
+    if (panes.length === 0) return null;
+    const shown = layout.shown === pane ? (panes[position] ?? panes[panes.length - 1]) : layout.shown;
+    return { kind: "tabs", panes, shown };
+  }
+  const first = remove(layout.first, pane);
+  const second = remove(layout.second, pane);
   if (!first) return second;
   if (!second) return first;
   return first === layout.first && second === layout.second
@@ -166,8 +290,16 @@ function replace(
     : { ...layout, first, second };
 }
 
+/** The same panes in the same places, whatever the ratios and tabs in view. */
+function sameArrangement(a: Layout, b: Layout): boolean {
+  if (a.kind === "tabs" || b.kind === "tabs") {
+    return a.kind === "tabs" && b.kind === "tabs" && a.panes.join() === b.panes.join();
+  }
+  return a.axis === b.axis && sameArrangement(a.first, b.first) && sameArrangement(a.second, b.second);
+}
+
 function setRatio(layout: Layout, split: number, ratio: number): Layout {
-  if (layout.kind === "pane") return layout;
+  if (layout.kind === "tabs") return layout;
   if (layout.id === split) return { ...layout, ratio };
   return {
     ...layout,
@@ -204,20 +336,31 @@ const FULL: Box = {
   h: { pct: 100, px: 0 },
 };
 
+/** One place of the layout: its tabs, the one in view and where it sits. */
+export interface Place {
+  tabs: number[];
+  shown: number;
+  box: Box;
+}
+
 /**
- * Where each pane and divider sits. Lengths stay symbolic so the browser
- * resolves them, and panes glide when a ratio changes.
+ * Where each place and divider sits. Lengths stay symbolic so the browser
+ * resolves them, and panes glide when a ratio changes. `panes` holds the
+ * place of every terminal in view.
  */
 export function arrange(layout: Layout): {
+  places: Place[];
   panes: Map<number, Box>;
   dividers: Divider[];
 } {
+  const places: Place[] = [];
   const panes = new Map<number, Box>();
   const dividers: Divider[] = [];
   const half = GUTTER / 2;
   const visit = (node: Layout, box: Box) => {
-    if (node.kind === "pane") {
-      panes.set(node.pane, box);
+    if (node.kind === "tabs") {
+      places.push({ tabs: node.panes, shown: node.shown, box });
+      panes.set(node.shown, box);
       return;
     }
     const vertical = node.axis === "vertical";
@@ -247,10 +390,10 @@ export function arrange(layout: Layout): {
     }
   };
   visit(layout, FULL);
-  return { panes, dividers };
+  return { places, panes, dividers };
 }
 
-/** The area a carried terminal would take: half of a pane, or all of it. */
+/** The area a carried terminal would take: half of a place, or all of it. */
 export function dropArea(box: Box, to: Destination): Box {
   if (to.kind !== "beside") return box;
   const half = (span: Span1D): Span1D => ({ pct: span.pct / 2, px: span.px / 2 - GUTTER / 2 });
@@ -270,23 +413,7 @@ export function dropArea(box: Box, to: Destination): Box {
   }
 }
 
-/** Exchanges two panes' places and keeps every split. */
-function swapLeaves(layout: Layout, a: number, b: number): Layout {
-  if (layout.kind === "pane") {
-    return layout.pane === a
-      ? { kind: "pane", pane: b }
-      : layout.pane === b
-        ? { kind: "pane", pane: a }
-        : layout;
-  }
-  return {
-    ...layout,
-    first: swapLeaves(layout.first, a, b),
-    second: swapLeaves(layout.second, a, b),
-  };
-}
-
-/** The pane nearest to `pane` in a direction, by the layout's geometry. */
+/** The pane in view nearest to `pane`'s place in a direction, by geometry. */
 export function adjacent(
   layout: Layout,
   pane: number,
@@ -294,7 +421,8 @@ export function adjacent(
 ): number | null {
   const unit = (span: Span1D) => span.pct / 100;
   const { panes } = arrange(layout);
-  const from = panes.get(pane);
+  const origin = tabsOf(layout, pane)?.shown;
+  const from = origin === undefined ? undefined : panes.get(origin);
   if (!from) return null;
   const rect = (box: Box) => ({
     l: unit(box.x),
@@ -305,7 +433,7 @@ export function adjacent(
   const a = rect(from);
   let best: { id: number; overlap: number } | null = null;
   for (const [id, box] of panes) {
-    if (id === pane) continue;
+    if (id === origin) continue;
     const b = rect(box);
     const touches =
       direction === "left"
@@ -323,6 +451,18 @@ export function adjacent(
     if (overlap > 1e-6 && (!best || overlap > best.overlap)) best = { id, overlap };
   }
   return best?.id ?? null;
+}
+
+/**
+ * Workspaces in the sidebar's order, including those of collapsed folders.
+ * It decides workspace navigation and the shortcut each one answers to.
+ */
+export function ordered(state: State): Workspace[] {
+  return state.order.flatMap((item) =>
+    state.workspaces.filter((workspace) =>
+      item.kind === "workspace" ? workspace.id === item.id : workspace.group === item.id,
+    ),
+  );
 }
 
 export const activeWorkspace = (state: State): Workspace | undefined =>
@@ -350,10 +490,10 @@ export function validDestination(text: string): boolean {
   );
 }
 
-function shell(id: number, from: Partial<Pane>): Pane {
+function shell(id: number, from: Partial<Pane>, program = "zsh"): Pane {
   return {
     id,
-    title: from.remote ? "ssh" : "zsh",
+    title: from.remote ? "ssh" : program,
     cwd: from.cwd ?? "~",
     branch: from.branch,
     remote: from.remote,
@@ -383,46 +523,121 @@ function editPane(state: State, id: number, edit: (pane: Pane) => Pane): State {
   return pane ? { ...state, panes: { ...state.panes, [id]: edit(pane) } } : state;
 }
 
-const owner = (state: State, pane: number): Workspace | undefined =>
+export const owner = (state: State, pane: number): Workspace | undefined =>
   state.workspaces.find((workspace) => panesOf(workspace.layout).includes(pane));
 
-function removeWorkspace(state: State, id: number): State {
-  const index = state.workspaces.findIndex((workspace) => workspace.id === id);
-  if (index < 0) return state;
-  const panes = { ...state.panes };
-  for (const pane of panesOf(state.workspaces[index].layout)) delete panes[pane];
-  const workspaces = state.workspaces.filter((workspace) => workspace.id !== id);
-  const next = workspaces[Math.min(index, workspaces.length - 1)];
-  return {
-    ...state,
-    workspaces,
-    panes,
-    active: state.active === id ? (next?.id ?? null) : state.active,
-    zoomed: state.active === id ? false : state.zoomed,
-  };
+/** Unread alerts of the given panes. */
+export const unreadIn = (state: State, panes: number[]): Alert[] =>
+  state.alerts.filter((alert) => alert.unread && panes.includes(alert.pane));
+
+/** Focusing a pane or typing in it acknowledges its alerts. */
+function acknowledge(state: State, pane: number): State {
+  return state.alerts.some((alert) => alert.unread && alert.pane === pane)
+    ? {
+        ...state,
+        alerts: state.alerts.map((alert) =>
+          alert.pane === pane ? { ...alert, unread: false } : alert,
+        ),
+      }
+    : state;
 }
 
-function removePane(state: State, id: number, keepSession: boolean): State {
+/** Closing or restarting a terminal discards its session's alerts. */
+const forget = (state: State, panes: number[]): State =>
+  state.alerts.some((alert) => panes.includes(alert.pane))
+    ? { ...state, alerts: state.alerts.filter((alert) => !panes.includes(alert.pane)) }
+    : state;
+
+/** The workspaces that are reordered together: a folder's, or the top level's. */
+const siblings = (state: State, workspace: Workspace): Workspace[] =>
+  state.workspaces.filter((other) => other.group === workspace.group);
+
+/** Selecting a workspace reveals it when its folder is collapsed. */
+function reveal(state: State, id: number | null): State {
+  const group = state.workspaces.find((workspace) => workspace.id === id)?.group;
+  return state.groups.some((item) => item.id === group && item.collapsed)
+    ? {
+        ...state,
+        groups: state.groups.map((item) =>
+          item.id === group ? { ...item, collapsed: false } : item,
+        ),
+      }
+    : state;
+}
+
+function removeWorkspace(state: State, id: number, keep: number[] = []): State {
+  const index = state.workspaces.findIndex((workspace) => workspace.id === id);
+  if (index < 0) return state;
+  const closed = panesOf(state.workspaces[index].layout).filter((pane) => !keep.includes(pane));
+  const panes = { ...state.panes };
+  for (const pane of closed) delete panes[pane];
+  const workspaces = state.workspaces.filter((workspace) => workspace.id !== id);
+  const next = workspaces[Math.min(index, workspaces.length - 1)];
+  const active = state.active === id ? (next?.id ?? null) : state.active;
+  return reveal(
+    forget(
+      {
+        ...state,
+        workspaces,
+        order: state.order.filter((item) => item.kind !== "workspace" || item.id !== id),
+        panes,
+        active,
+        zoomed: state.active === id ? false : state.zoomed,
+      },
+      closed,
+    ),
+    active,
+  );
+}
+
+/** Takes a terminal out of its workspace's layout; the session is untouched. */
+function detach(state: State, id: number): State {
   const workspace = owner(state, id);
   if (!workspace) return state;
-  const layout = replace(workspace.layout, id, () => null);
-  if (!layout) {
-    // A workspace's last terminal takes the workspace with it.
-    const without = removeWorkspace(state, workspace.id);
-    return keepSession ? { ...without, panes: { ...without.panes, [id]: state.panes[id] } } : without;
-  }
+  const layout = remove(workspace.layout, id);
+  // A workspace's last terminal takes the workspace with it.
+  if (!layout) return removeWorkspace(state, workspace.id, [id]);
   const remaining = panesOf(layout);
-  let next = editWorkspace(state, workspace.id, (current) => ({
+  const next = editWorkspace(state, workspace.id, (current) => ({
     ...current,
     layout,
-    active: current.active === id ? remaining[remaining.length - 1] : current.active,
+    // The place it left shows its next tab; a place that is gone hands focus on.
+    active:
+      current.active !== id
+        ? current.active
+        : (tabsOf(workspace.layout, id)?.panes.length ?? 1) > 1
+          ? tabsOf(layout, tabsOf(workspace.layout, id)!.panes.find((tab) => tab !== id)!)!.shown
+          : remaining[remaining.length - 1],
   }));
-  if (!keepSession) {
-    const panes = { ...next.panes };
-    delete panes[id];
-    next = { ...next, panes };
-  }
   return { ...next, zoomed: remaining.length > 1 && next.zoomed };
+}
+
+function removePane(state: State, id: number): State {
+  const next = detach(state, id);
+  if (next === state) return state;
+  const panes = { ...next.panes };
+  delete panes[id];
+  return forget({ ...next, panes }, [id]);
+}
+
+/** Opens a terminal beside `source`: as a tab, or in a place of its own. */
+function addPane(state: State, source: number, axis: Axis | null): State {
+  const workspace = owner(state, source);
+  const from = state.panes[source];
+  if (!workspace || !from) return state;
+  const pane = state.nextId;
+  const layout =
+    axis === null
+      ? addTab(workspace.layout, source, pane)
+      : splitAt(workspace.layout, source, pane, state.nextId + 1, axis === "vertical" ? "right" : "bottom");
+  return {
+    ...editWorkspace(state, workspace.id, (current) => ({ ...current, layout, active: pane })),
+    // A new terminal starts in the source's directory, on its machine.
+    panes: { ...state.panes, [pane]: shell(pane, from, state.shell) },
+    active: workspace.id,
+    zoomed: axis === null ? state.zoomed : false,
+    nextId: state.nextId + 2,
+  };
 }
 
 export function reduce(state: State, action: Action): State {
@@ -448,72 +663,45 @@ export function reduce(state: State, action: Action): State {
         return reduce(settled, { type: "movePane", pane, workspace: to.workspace });
       }
       const workspace = owner(state, pane);
-      // A drop where the terminal already is changes nothing.
-      if (!workspace || to.pane === pane || owner(state, to.pane) !== workspace) return settled;
-      if (to.kind === "swap") {
-        return editWorkspace(settled, workspace.id, (current) => ({
-          ...current,
-          layout: swapLeaves(current.layout, pane, to.pane),
-          active: pane,
-        }));
-      }
-      const without = replace(workspace.layout, pane, () => null);
-      if (!without) return settled;
-      const leading = to.edge === "left" || to.edge === "top";
-      const carried: Layout = { kind: "pane", pane };
-      const layout = replace(without, to.pane, (leaf) => ({
-        kind: "split",
-        id: state.nextId,
-        axis: to.edge === "left" || to.edge === "right" ? "vertical" : "horizontal",
-        ratio: 0.5,
-        first: leading ? carried : leaf,
-        second: leading ? leaf : carried,
-      }))!;
-      return {
-        ...editWorkspace(settled, workspace.id, (current) => ({
-          ...current,
-          layout,
-          active: pane,
-        })),
-        nextId: state.nextId + 1,
-      };
+      if (!workspace || owner(state, to.pane) !== workspace) return settled;
+      const focused = (layout: Layout) =>
+        editWorkspace(settled, workspace.id, (current) => ({ ...current, layout, active: pane }));
+      // A terminal placed relative to itself is placed relative to the tabs
+      // it shares a place with. Alone there, it is already where it would land.
+      const target =
+        to.pane === pane
+          ? tabsOf(workspace.layout, pane)?.panes.find((tab) => tab !== pane)
+          : to.pane;
+      const without = remove(workspace.layout, pane);
+      if (target === undefined || !without) return focused(show(workspace.layout, pane));
+      const layout =
+        to.kind === "beside"
+          ? splitAt(without, target, pane, state.nextId, to.edge)
+          : addTab(without, target, pane, to.index);
+      // Dropped where it already was: keep the split and its ratio.
+      if (sameArrangement(layout, workspace.layout)) return focused(show(workspace.layout, pane));
+      return { ...focused(layout), nextId: state.nextId + 1 };
     }
 
-    case "split": {
-      const workspace = owner(state, action.pane);
-      const source = state.panes[action.pane];
-      if (!workspace || !source) return state;
-      const pane = state.nextId;
-      const split = state.nextId + 1;
-      const layout = replace(workspace.layout, action.pane, (leaf) => ({
-        kind: "split",
-        id: split,
-        axis: action.axis,
-        ratio: 0.5,
-        first: leaf,
-        second: { kind: "pane", pane },
-      }))!;
-      return {
-        ...editWorkspace(state, workspace.id, (current) => ({
-          ...current,
-          layout,
-          active: pane,
-        })),
-        // A split starts in the source terminal's directory, on its machine.
-        panes: { ...state.panes, [pane]: shell(pane, source) },
-        zoomed: false,
-        nextId: state.nextId + 2,
-      };
-    }
+    case "split":
+      return addPane(state, action.pane, action.axis);
+
+    case "newTab":
+      return addPane(state, action.pane, null);
 
     case "closePane":
-      return removePane(state, action.pane, false);
+      return removePane(state, action.pane);
 
     case "focus": {
       const workspace = owner(state, action.pane);
-      if (!workspace || workspace.active === action.pane) return state;
-      return editWorkspace(state, workspace.id, (current) => ({
+      if (!workspace) return state;
+      const read = acknowledge(state, action.pane);
+      if (workspace.active === action.pane && tabsOf(workspace.layout, action.pane)?.shown === action.pane) {
+        return read;
+      }
+      return editWorkspace(read, workspace.id, (current) => ({
         ...current,
+        layout: show(current.layout, action.pane),
         active: action.pane,
       }));
     }
@@ -522,9 +710,7 @@ export function reduce(state: State, action: Action): State {
       const workspace = activeWorkspace(state);
       if (!workspace) return state;
       const target = adjacent(workspace.layout, workspace.active, action.direction);
-      return target === null
-        ? state
-        : editWorkspace(state, workspace.id, (current) => ({ ...current, active: target }));
+      return target === null ? state : reduce(state, { type: "focus", pane: target });
     }
 
     case "ratio": {
@@ -541,7 +727,7 @@ export function reduce(state: State, action: Action): State {
     case "zoom": {
       const workspace = activeWorkspace(state);
       if (!workspace) return state;
-      const several = panesOf(workspace.layout).length > 1;
+      const several = workspace.layout.kind === "split";
       return { ...state, zoomed: several && !state.zoomed };
     }
 
@@ -549,26 +735,35 @@ export function reduce(state: State, action: Action): State {
       const id = state.nextWorkspace;
       const pane = state.nextId;
       const cwd = action.cwd ?? "~";
-      return {
-        ...state,
-        workspaces: [
-          ...state.workspaces,
-          {
-            id,
-            // Named after its folder; the home directory is "Home".
-            name: action.name ?? (cwd === "~" ? "Home" : (cwd.split("/").pop() ?? cwd)),
-            cwd,
-            layout: { kind: "pane", pane },
-            active: pane,
+      return reveal(
+        {
+          ...state,
+          workspaces: [
+            ...state.workspaces,
+            {
+              id,
+              // Named after its folder; the home directory is "Home".
+              name: action.name ?? (cwd === "~" ? "Home" : (cwd.split("/").pop() ?? cwd)),
+              cwd,
+              group: action.group,
+              layout: place(pane),
+              active: pane,
+            },
+          ],
+          order:
+            action.group === undefined ? [...state.order, { kind: "workspace", id }] : state.order,
+          panes: {
+            ...state.panes,
+            [pane]: shell(pane, { cwd, branch: action.branch }, state.shell),
           },
-        ],
-        panes: { ...state.panes, [pane]: shell(pane, { cwd, branch: action.branch }) },
-        active: id,
-        zoomed: false,
-        overlay: { kind: "none" },
-        nextId: state.nextId + 1,
-        nextWorkspace: state.nextWorkspace + 1,
-      };
+          active: id,
+          zoomed: false,
+          overlay: { kind: "none" },
+          nextId: state.nextId + 1,
+          nextWorkspace: state.nextWorkspace + 1,
+        },
+        id,
+      );
     }
 
     case "connect": {
@@ -577,75 +772,112 @@ export function reduce(state: State, action: Action): State {
       if (action.workspace === null) {
         const id = state.nextWorkspace;
         const pane = state.nextId;
-        return {
-          ...state,
-          workspaces: [
-            ...state.workspaces,
-            {
-              id,
-              name: remoteLabel(destination),
-              cwd: "~",
-              remote: destination,
-              layout: { kind: "pane", pane },
-              active: pane,
-            },
-          ],
-          panes: { ...state.panes, [pane]: shell(pane, { cwd: "~", remote: destination }) },
-          active: id,
-          zoomed: false,
-          overlay: { kind: "none" },
-          nextId: state.nextId + 1,
-          nextWorkspace: state.nextWorkspace + 1,
-        };
+        return reveal(
+          {
+            ...state,
+            workspaces: [
+              ...state.workspaces,
+              {
+                id,
+                name: remoteLabel(destination),
+                cwd: "~",
+                remote: destination,
+                group: action.group,
+                layout: place(pane),
+                active: pane,
+              },
+            ],
+            order:
+              action.group === undefined
+                ? [...state.order, { kind: "workspace", id }]
+                : state.order,
+            panes: { ...state.panes, [pane]: shell(pane, { cwd: "~", remote: destination }) },
+            active: id,
+            zoomed: false,
+            overlay: { kind: "none" },
+            nextId: state.nextId + 1,
+            nextWorkspace: state.nextWorkspace + 1,
+          },
+          id,
+        );
       }
       // Connecting an existing workspace restarts its terminals on the host.
       const workspace = state.workspaces.find((w) => w.id === action.workspace);
       if (!workspace) return state;
+      const ids = panesOf(workspace.layout);
       const panes = { ...state.panes };
-      for (const pane of panesOf(workspace.layout)) {
-        panes[pane] = shell(pane, { cwd: "~", remote: destination });
-      }
-      return {
-        ...editWorkspace(state, workspace.id, (current) => ({
-          ...current,
-          remote: destination,
-        })),
-        panes,
-        overlay: { kind: "none" },
-      };
+      for (const pane of ids) panes[pane] = shell(pane, { cwd: "~", remote: destination });
+      return forget(
+        {
+          ...editWorkspace(state, workspace.id, (current) => ({
+            ...current,
+            remote: destination,
+          })),
+          panes,
+          overlay: { kind: "none" },
+        },
+        ids,
+      );
     }
 
     case "disconnect": {
       const workspace = state.workspaces.find((w) => w.id === action.workspace);
       if (!workspace) return state;
+      const ids = panesOf(workspace.layout);
       const panes = { ...state.panes };
-      for (const pane of panesOf(workspace.layout)) {
-        panes[pane] = shell(pane, { cwd: workspace.cwd });
-      }
-      return {
-        ...editWorkspace(state, workspace.id, (current) => ({
-          ...current,
-          remote: undefined,
-        })),
-        panes,
-        overlay: { kind: "none" },
-      };
+      for (const pane of ids) panes[pane] = shell(pane, { cwd: workspace.cwd }, state.shell);
+      return forget(
+        {
+          ...editWorkspace(state, workspace.id, (current) => ({
+            ...current,
+            remote: undefined,
+          })),
+          panes,
+          overlay: { kind: "none" },
+        },
+        ids,
+      );
     }
 
     case "selectWorkspace":
-      return state.active === action.workspace ||
-        !state.workspaces.some((workspace) => workspace.id === action.workspace)
+      return !state.workspaces.some((workspace) => workspace.id === action.workspace)
         ? state
-        : { ...state, active: action.workspace, zoomed: false };
+        : state.active === action.workspace
+          ? reveal(state, action.workspace)
+          : reveal({ ...state, active: action.workspace, zoomed: false }, action.workspace);
 
     case "moveWorkspace": {
-      const from = state.workspaces.findIndex((w) => w.id === action.workspace);
-      const to = Math.min(state.workspaces.length - 1, Math.max(0, action.index));
-      if (from < 0 || from === to) return state;
-      const workspaces = [...state.workspaces];
-      const [moved] = workspaces.splice(from, 1);
-      workspaces.splice(to, 0, moved);
-      return { ...state, workspaces };
+      const workspace = state.workspaces.find((w) => w.id === action.workspace);
+      if (!workspace) return state;
+      const row = siblings(state, workspace);
+      const other = row[row.indexOf(workspace) + action.by];
+      if (!other) return state;
+      const trade = <T,>(list: T[], a: number, b: number) => {
+        const next = [...list];
+        [next[a], next[b]] = [next[b], next[a]];
+        return next;
+      };
+      const at = (id: number) => state.order.findIndex((item) => item.kind === "workspace" && item.id === id);
+      return {
+        ...state,
+        workspaces: trade(
+          state.workspaces,
+          state.workspaces.indexOf(workspace),
+          state.workspaces.indexOf(other),
+        ),
+        // Ungrouped workspaces also hold places in the sidebar's top level.
+        order: workspace.group === undefined ? trade(state.order, at(workspace.id), at(other.id)) : state.order,
+      };
+    }
+
+    case "renameWorkspace": {
+      const name = action.name.trim();
+      return name
+        ? {
+            ...editWorkspace(state, action.workspace, (current) => ({ ...current, name })),
+            overlay: { kind: "none" },
+          }
+        : state;
     }
 
     case "closeWorkspace":
@@ -659,33 +891,88 @@ export function reduce(state: State, action: Action): State {
         return state;
       }
       const last = panesOf(source.layout).length === 1;
-      const removed = removePane(state, action.pane, true);
-      const split = removed.nextId;
-      const moved = editWorkspace(removed, target.id, (current) => ({
+      const moved = editWorkspace(detach(state, action.pane), target.id, (current) => ({
         ...current,
-        layout: replace(current.layout, current.active, (leaf) => ({
-          kind: "split",
-          id: split,
-          axis: "vertical",
-          ratio: 0.5,
-          first: leaf,
-          second: { kind: "pane", pane: action.pane },
-        }))!,
+        // It joins the tabs of the workspace's focused terminal, as the last.
+        layout: addTab(current.layout, current.active, action.pane, Number.MAX_SAFE_INTEGER),
         active: action.pane,
       }));
+      // The view stays where it was; a workspace's last terminal is followed.
+      return last ? reveal({ ...moved, active: target.id }, target.id) : moved;
+    }
+
+    case "newGroup": {
+      const name = action.name.trim();
+      if (!name) return state;
+      const id = Math.max(0, ...state.groups.map((group) => group.id)) + 1;
       return {
-        ...moved,
-        // Moving a workspace's last terminal follows the terminal.
-        active: last ? target.id : moved.active,
-        nextId: removed.nextId + 1,
+        ...state,
+        groups: [...state.groups, { id, name, collapsed: false }],
+        order: [...state.order, { kind: "group", id }],
+        overlay: { kind: "none" },
       };
+    }
+
+    case "renameGroup": {
+      const name = action.name.trim();
+      return name
+        ? {
+            ...state,
+            groups: state.groups.map((group) =>
+              group.id === action.group ? { ...group, name } : group,
+            ),
+            overlay: { kind: "none" },
+          }
+        : state;
+    }
+
+    case "collapseGroup":
+      return {
+        ...state,
+        groups: state.groups.map((group) =>
+          group.id === action.group ? { ...group, collapsed: action.collapsed } : group,
+        ),
+      };
+
+    case "removeGroup": {
+      const members = state.workspaces.filter((workspace) => workspace.group === action.group);
+      return {
+        ...state,
+        groups: state.groups.filter((group) => group.id !== action.group),
+        workspaces: state.workspaces.map((workspace) =>
+          workspace.group === action.group ? { ...workspace, group: undefined } : workspace,
+        ),
+        // Its workspaces take the folder's place in the list.
+        order: state.order.flatMap((item): SidebarItem[] =>
+          item.kind === "group" && item.id === action.group
+            ? members.map((workspace) => ({ kind: "workspace", id: workspace.id }))
+            : [item],
+        ),
+      };
+    }
+
+    case "moveToGroup": {
+      const workspace = state.workspaces.find((w) => w.id === action.workspace);
+      const group = action.group ?? undefined;
+      if (!workspace || workspace.group === group) return state;
+      const order = state.order.filter(
+        (item) => item.kind !== "workspace" || item.id !== workspace.id,
+      );
+      return reveal(
+        {
+          ...editWorkspace(state, workspace.id, (current) => ({ ...current, group })),
+          order: group === undefined ? [...order, { kind: "workspace", id: workspace.id }] : order,
+        },
+        state.active,
+      );
     }
 
     case "toggleSidebar":
       return { ...state, sidebar: !state.sidebar };
 
     case "overlay":
-      return { ...state, overlay: action.overlay };
+      // An opening sheet cancels a carried terminal.
+      return { ...state, overlay: action.overlay, drag: action.overlay.kind === "none" ? state.drag : null };
 
     case "search":
       return {
@@ -704,7 +991,10 @@ export function reduce(state: State, action: Action): State {
       };
 
     case "input":
-      return editPane(state, action.pane, (pane) => ({ ...pane, input: action.input }));
+      return editPane(acknowledge(state, action.pane), action.pane, (pane) => ({
+        ...pane,
+        input: action.input,
+      }));
 
     case "commit":
       return editPane(state, action.pane, (pane) => ({
@@ -746,9 +1036,52 @@ export function reduce(state: State, action: Action): State {
       return editPane(state, action.pane, (pane) => ({ ...pane, lines: [] }));
 
     case "restart":
-      return editPane(state, action.pane, (pane) =>
-        shell(pane.id, { cwd: pane.cwd, branch: pane.branch, remote: pane.remote }),
+      return editPane(forget(state, [action.pane]), action.pane, (pane) =>
+        shell(pane.id, { cwd: pane.cwd, branch: pane.branch, remote: pane.remote }, state.shell),
       );
+
+    case "notify":
+      return state.panes[action.pane]
+        ? {
+            ...state,
+            alerts: [
+              {
+                id: Math.max(0, ...state.alerts.map((alert) => alert.id)) + 1,
+                pane: action.pane,
+                title: action.title,
+                body: action.body,
+                unread: true,
+                at: action.at,
+              },
+              ...state.alerts,
+            ].slice(0, ALERTS),
+          }
+        : state;
+
+    case "openAlert": {
+      // Opens the alert's workspace and pane, even one hidden by zoom.
+      const alert = state.alerts.find((item) => item.id === action.alert);
+      const workspace = alert && owner(state, alert.pane);
+      if (!alert || !workspace) return state;
+      const selected = reduce(state, { type: "selectWorkspace", workspace: workspace.id });
+      return {
+        ...reduce(selected, { type: "focus", pane: alert.pane }),
+        zoomed: false,
+        overlay: { kind: "none" },
+      };
+    }
+
+    case "dismissAlert":
+      return { ...state, alerts: state.alerts.filter((alert) => alert.id !== action.alert) };
+
+    case "readAlerts":
+      return { ...state, alerts: state.alerts.map((alert) => ({ ...alert, unread: false })) };
+
+    case "clearAlerts":
+      return { ...state, alerts: [] };
+
+    case "shell":
+      return state.shell === action.name ? state : { ...state, shell: action.name };
   }
 }
 

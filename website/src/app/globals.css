@@ -29,6 +29,8 @@
   --thumb: color-mix(in srgb, white 16%, var(--elevated));
   --thumb-shadow: rgb(0 0 0 / 0.2);
   --tile-alpha: 20%;
+  --pill-alpha: 22%;
+  --pill-ink-mix: 0%;
   --selection-mix: 34%;
 
   --ansi-0: #2c2c31;
@@ -95,6 +97,8 @@
   --thumb: #ffffff;
   --thumb-shadow: rgb(0 0 0 / 0.086);
   --tile-alpha: 16%;
+  --pill-alpha: 20%;
+  --pill-ink-mix: 38%;
   --selection-mix: 24%;
 
   --ansi-0: #1d1d1f;
@@ -137,6 +141,12 @@
 [data-accent] {
   --accent: var(--blue);
   --on-accent: #ffffff;
+  --on-red: #ffffff;
+  /* Unread terminal alerts. Amber, and apart from an amber focus accent. */
+  --attention: var(--orange);
+  /* An imported palette brings its own terminal text and cursor. */
+  --term-fg: var(--fg);
+  --cursor: var(--accent);
   /* Opaque, so selected cells keep their exact colour under any glyph. */
   --selection: color-mix(in srgb, var(--accent) var(--selection-mix), var(--bg));
 }
@@ -160,6 +170,7 @@
 [data-accent="orange"] [data-theme] {
   --accent: var(--orange);
   --on-accent: var(--on-orange);
+  --attention: var(--amber);
 }
 [data-accent="yellow"],
 [data-accent="yellow"] [data-theme] {
@@ -196,6 +207,8 @@
   --color-ok: var(--green);
   --color-warn: var(--yellow);
   --color-danger: var(--red);
+  --color-on-danger: var(--on-red);
+  --color-attention: var(--attention);
   --color-scrim: var(--scrim);
 
   /* Concentric radii: window = pane + gutter. */
@@ -330,6 +343,7 @@ html.theme-shift *::after {
   /* Terminal text: JetBrains Mono on the pane's own grid. */
   .term {
     font-family: var(--font-mono);
+    color: var(--term-fg);
     font-size: var(--term-size, 14px);
     line-height: var(--term-leading, 1.4);
     font-variant-ligatures: none;
@@ -352,13 +366,13 @@ html.theme-shift *::after {
   }
   [data-focused="true"] > .term .cursor {
     box-shadow: none;
-    background: color-mix(in srgb, var(--accent) 42%, transparent);
+    background: color-mix(in srgb, var(--cursor) 42%, transparent);
   }
   [data-cursor="beam"] [data-focused="true"] > .term .cursor {
-    background: linear-gradient(var(--accent), var(--accent)) left / 1.5px 100% no-repeat;
+    background: linear-gradient(var(--cursor), var(--cursor)) left / 1.5px 100% no-repeat;
   }
   [data-cursor="underline"] [data-focused="true"] > .term .cursor {
-    background: linear-gradient(var(--accent), var(--accent)) bottom / 100% 2px no-repeat;
+    background: linear-gradient(var(--cursor), var(--cursor)) bottom / 100% 2px no-repeat;
   }
   [data-blink="true"] [data-focused="true"] > .term .cursor {
     animation: blink 1s steps(1) infinite;

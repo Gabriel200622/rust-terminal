@@ -8,6 +8,7 @@ import {
   arrange,
   length,
   out,
+  place,
   row,
   type Action,
   type Box,
@@ -20,27 +21,29 @@ import { CARGO_TEST, GIT_LOG, TEST_COUNT } from "./shell";
 const ctx = (cwd: string, branch?: string): Line => ({ k: "ctx", cwd, branch });
 const cmd = (text: string): Line => ({ k: "cmd", text, ok: true });
 
-/** Three workspaces, as a restored session would open them. */
+/** Three workspaces, two of them in a folder, as a restored session opens them. */
 export const BASE: State = {
   workspaces: [
     {
       id: 1,
       name: "neptune",
       cwd: "~/code/neptune",
-      layout: { kind: "pane", pane: 1 },
+      group: 1,
+      layout: place(1),
       active: 1,
     },
     {
       id: 2,
       name: "api",
       cwd: "~/code/api",
+      group: 1,
       layout: {
         kind: "split",
         id: 10,
         axis: "vertical",
         ratio: 0.5,
-        first: { kind: "pane", pane: 2 },
-        second: { kind: "pane", pane: 3 },
+        first: place(2),
+        second: place(3),
       },
       active: 3,
     },
@@ -48,10 +51,17 @@ export const BASE: State = {
       id: 3,
       name: "notes",
       cwd: "~/notes",
-      layout: { kind: "pane", pane: 4 },
+      layout: place(4),
       active: 4,
     },
   ],
+  groups: [{ id: 1, name: "Work", collapsed: false }],
+  order: [
+    { kind: "group", id: 1 },
+    { kind: "workspace", id: 3 },
+  ],
+  alerts: [],
+  shell: "zsh",
   panes: {
     1: {
       id: 1,
@@ -119,6 +129,9 @@ export const BASE: State = {
   nextWorkspace: 4,
 };
 
+const BUILDING = row({ t: "   Compiling", c: 2, b: true }, " neptune-terminal v0.1.0");
+const BUILT = row({ t: "    Finished", c: 2, b: true }, " `release` profile [optimized] target(s) in 41.07s");
+
 const log = (time: string, level: "INFO" | "WARN" | "ERROR", text: string): Line =>
   row(
     { t: `${time} `, c: "muted" },
@@ -184,7 +197,7 @@ async function key(s: Script, keys: string, label: string) {
   await s.wait(420);
 }
 
-/** Carries a terminal by its header to an edge of another pane. */
+/** Carries a terminal by its tab to an edge of another place. */
 async function carry(
   s: Script,
   pane: number,
@@ -255,10 +268,40 @@ export const CHAPTERS: Chapter[] = [
     },
   },
   {
+    id: "tabs",
+    label: "Tabs",
+    caption: "Terminals share a place as tabs. A finished job rings its tab, the sidebar and the bell.",
+    async run(s) {
+      await key(s, "T", "New tab");
+      s.d({ type: "newTab", pane: 1 });
+      const build = active(s);
+      await s.wait(700);
+      await type(s, build, "cargo build --release; printf '\\e]9;Build finished\\a'");
+      await s.wait(260);
+      s.d({ type: "commit", pane: build });
+      s.d({ type: "print", pane: build, lines: [BUILDING] });
+      await s.wait(900);
+      // The build keeps running while its tab is out of view.
+      await key(s, "PgUp", "Previous tab");
+      s.d({ type: "focus", pane: 1 });
+      await s.wait(1500);
+      s.d({ type: "print", pane: build, lines: [BUILT] });
+      s.d({ type: "notify", pane: build, title: "", body: "Build finished", at: Date.now() });
+      s.d({ type: "ready", pane: build });
+      await s.wait(2200);
+      // Looking at the terminal acknowledges its alert.
+      await key(s, "PgDn", "Next tab");
+      s.d({ type: "focus", pane: build });
+      await s.wait(1300);
+      s.d({ type: "focus", pane: 1 });
+      await s.wait(700);
+    },
+  },
+  {
     id: "splits",
     label: "Splits",
     caption:
-      "Split right or below, then carry a terminal by its header to rearrange. Each pane is its own shell.",
+      "Split right or below, then carry a terminal by its tab to rearrange. Each pane is its own shell.",
     async run(s) {
       let second: number | null = null;
       if (s.compact) {
@@ -383,16 +426,18 @@ export const CHAPTERS: Chapter[] = [
   {
     id: "workspaces",
     label: "Workspaces",
-    caption: "One workspace per project. Folders and layouts come back on launch; shells start fresh.",
+    caption: "One workspace per project, gathered in folders. Layouts come back on launch; shells start fresh.",
     async run(s) {
       s.d({ type: "selectWorkspace", workspace: 2 });
       await s.wait(1400);
       s.d({ type: "selectWorkspace", workspace: 3 });
       await s.wait(1100);
       if (!s.compact) {
-        // Reordering: the row moves and its neighbours ease aside.
-        s.d({ type: "moveWorkspace", workspace: 3, index: 0 });
-        await s.wait(1200);
+        // Folders gather workspaces; collapsing one never suspends its shells.
+        s.d({ type: "collapseGroup", group: 1, collapsed: true });
+        await s.wait(1300);
+        s.d({ type: "collapseGroup", group: 1, collapsed: false });
+        await s.wait(1000);
         await key(s, "B", "Toggle sidebar");
         s.d({ type: "toggleSidebar" });
         await s.wait(1300);

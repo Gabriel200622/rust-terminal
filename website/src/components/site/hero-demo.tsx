@@ -57,8 +57,8 @@ export function HeroDemo() {
     tour.current = instance;
     if (reduced) {
       // Without motion, show a finished layout instead of a performance.
-      void instance.show(1).then(() => {
-        setSelected(1);
+      void instance.show(2).then(() => {
+        setSelected(2);
         setPlaying(null);
       });
       return () => instance.stop();

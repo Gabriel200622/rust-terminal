@@ -107,7 +107,7 @@ export function Terminal({ pane, search }: { pane: Pane; search: string }) {
   }, []);
 
   return (
-    <div ref={scroller} className="term h-full overflow-hidden text-fg">
+    <div ref={scroller} className="term h-full overflow-hidden">
       {pane.lines.map((line, index) => (
         <Row key={index} line={line} search={search} />
       ))}

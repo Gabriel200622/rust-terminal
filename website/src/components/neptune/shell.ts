@@ -1,7 +1,8 @@
 // A stand-in shell for the in-page window. It answers a handful of commands so
 // a visitor can type; it is a demonstration, not Neptune's terminal engine.
 
-import { ACCENTS, THEMES, type Accent, type Prefs, type Theme } from "../prefs";
+import { ACCENTS, type Accent, type Prefs } from "../prefs";
+import { BUILTINS } from "./themes";
 import { out, row, type Action, type Line, type Pane } from "./model";
 
 export interface ShellEnv {
@@ -70,7 +71,23 @@ const HELP: Line[] = [
   row({ t: "  cargo test   git log   git status", c: 6 }),
   row({ t: "  neptune --help  neptune --version", c: 6 }),
   row({ t: "  theme dusk   accent pink", c: 6 }),
+  row({ t: "  printf '\\e]9;Build finished\\a'", c: 6 }),
 ];
+
+/**
+ * The attention request a `printf` argument carries, if any: OSC 9 with a
+ * message, or OSC 777 with a title and a body.
+ */
+function notification(text: string): { title: string; body: string } | null {
+  const escape = String.raw`(?:\\e|\\033|\\x1b)`;
+  const match = new RegExp(
+    String.raw`${escape}\](9|777;notify);(.*?)(?:\\a|\\007|${escape}\\\\)`,
+    "i",
+  ).exec(text);
+  if (!match) return null;
+  const [title, ...body] = match[2].split(";");
+  return match[1] === "9" ? { title: "", body: match[2] } : { title, body: body.join(";") };
+}
 
 function resolve(cwd: string, target: string): string {
   if (!target) return cwd;
@@ -119,6 +136,14 @@ export function execute(env: ShellEnv, pane: Pane) {
     case "date":
       print(out(new Date().toString()));
       break;
+    case "printf": {
+      const text = rest.replace(/^(['"])(.*)\1$/, "$2");
+      const alert = notification(text);
+      // A program asks for attention through its terminal; the rest is text.
+      if (alert) dispatch({ type: "notify", pane: id, ...alert, at: Date.now() });
+      else if (text) print(out(text.replace(/\\n$/, "")));
+      break;
+    }
     case "ls": {
       const entries = pane.remote ? [] : (LISTINGS[resolve(pane.cwd, args.find((a) => !a.startsWith("-")) ?? "")] ?? []);
       if (entries.length) {
@@ -176,10 +201,10 @@ export function execute(env: ShellEnv, pane: Pane) {
       }
       break;
     case "theme":
-      if ((THEMES as readonly string[]).includes(args[0])) {
-        env.setPrefs({ theme: args[0] as Theme });
+      if (BUILTINS.some((theme) => theme.id === args[0])) {
+        env.setPrefs({ theme: BUILTINS.find((theme) => theme.id === args[0]) });
       } else {
-        print(out(`usage: theme ${THEMES.join("|")}`));
+        print(out(`usage: theme ${BUILTINS.map((theme) => theme.id).join("|")}`));
         ok = false;
       }
       break;
@@ -192,7 +217,7 @@ export function execute(env: ShellEnv, pane: Pane) {
       }
       break;
     default:
-      print(out(`zsh: command not found: ${name}`));
+      print(out(`${pane.remote ? "bash" : pane.title}: command not found: ${name}`));
       ok = false;
   }
   dispatch({ type: "ready", pane: id, ok });

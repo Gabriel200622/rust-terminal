@@ -60,6 +60,36 @@ const sun = Array.from({ length: 8 }, (_, index) => {
   ]);
 }).join("");
 
+const bell = (() => {
+  // A dome that flares into the rim, closed along the base.
+  const bezier = (from: number[], a: number[], b: number[], to: number[]) =>
+    Array.from({ length: 8 }, (_, index) => {
+      const t = (index + 1) / 8;
+      const u = 1 - t;
+      return [0, 1].map(
+        (i) => u * u * u * from[i] + 3 * u * u * t * a[i] + 3 * u * t * t * b[i] + t * t * t * to[i],
+      );
+    });
+  const outline: number[][] = [];
+  for (let step = 0; step <= 12; step++) {
+    const angle = Math.PI * (1 + step / 12);
+    outline.push([12 + 6 * Math.cos(angle), 8.5 + 6 * Math.sin(angle)]);
+  }
+  outline.push(...bezier([18, 8.5], [18, 14.5], [19.5, 16], [20.5, 17.5]));
+  outline.push([3.5, 17.5]);
+  outline.push(...bezier([3.5, 17.5], [4.5, 16], [6, 14.5], [6, 8.5]));
+  return path(outline);
+})();
+
+const star = path(
+  Array.from({ length: 10 }, (_, step) => {
+    const angle = ((step * 36 - 90) * Math.PI) / 180;
+    const radius = step % 2 === 0 ? 9.5 : 4.4;
+    return [12 + radius * Math.cos(angle), 12.9 + radius * Math.sin(angle)];
+  }),
+  true,
+);
+
 const frame = <rect x="3" y="4" width="18" height="16" rx="3" />;
 const dot = (x: number, y: number, r: number) => (
   <circle key={`${x}-${y}`} cx={x} cy={y} r={r} fill="currentColor" stroke="none" />
@@ -75,7 +105,16 @@ const GLYPHS = {
   plus: <path d="M12 5v14M5 12h14" />,
   close: <path d="M6 6l12 12M18 6L6 18" />,
   chevronRight: <path d="M9 5l7 7-7 7" />,
+  chevronLeft: <path d="M15 5l-7 7 7 7" />,
   chevronDown: <path d="M5 9l7 7 7-7" />,
+  bell: (
+    <>
+      <path d={bell} />
+      <path d="M10 20.5l1 1h2l1-1" />
+    </>
+  ),
+  folder: <path d="M3 7v11l1 1h16l1-1V9l-1-1h-8l-2-3H4L3 6v1" />,
+  star: <path d={star} />,
   settings: (
     <>
       <path d={gear} />
