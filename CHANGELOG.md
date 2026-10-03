@@ -11,6 +11,10 @@ their preparation records remain in Git history.
 
 ### What's New
 
+- Avoid multi-second GPU presentation stalls observed after idle on Linux with
+  NVIDIA graphics under XWayland. The reported intermittent native Wayland
+  freeze still needs a capture of the blocking state.
+
 ## [0.1.0-rc.1] - 2026-10-02
 
 ### What's New
