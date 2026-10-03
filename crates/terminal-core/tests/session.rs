@@ -583,13 +583,19 @@ fn process_activity_detects_exec_replacing_the_shell_and_jobs_without_job_contro
 fn notification_focus_reporting_enabled_in_a_hidden_pane_reports_current_focus() {
     for enable in [r"\033[?1004h", r"\033[?2026h\033[?1004h"] {
         let session = shell(&format!(
-            r"stty raw -echo; printf READY; dd bs=1 count=1 >/dev/null 2>&1; printf '{enable}'; dd bs=1 count=3 2>/dev/null | od -An -tx1",
+            r"stty raw -echo; printf 'READY\r\n'; dd bs=1 count=1 >/dev/null 2>&1; printf '{enable}'; dd bs=1 count=3 2>/dev/null | od -An -tx1",
         ));
         wait_for(|| screen(&session).contains("READY"));
         session.focus(false).unwrap();
         session.write(b"x").unwrap();
         wait_for(|| matches!(session.metadata().status, SessionStatus::Exited { .. }));
-        assert!(screen(&session).contains("1b 5b 4f"));
+        let output = screen(&session);
+        // GNU and BSD od use different spacing; compare the actual reply bytes.
+        let bytes: Vec<u8> = output
+            .split_whitespace()
+            .filter_map(|word| u8::from_str_radix(word, 16).ok())
+            .collect();
+        assert_eq!(bytes, b"\x1b[O", "Missing focus-out reply: {output}");
         wait_for(|| session.metrics().active_workers == 0);
     }
 }
