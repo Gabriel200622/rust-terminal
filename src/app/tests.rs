@@ -1528,6 +1528,95 @@ fn rename_requests_field_focus_and_cancels_without_touching_workspaces() {
 }
 
 #[test]
+fn workspace_sidebar_follows_the_panes_current_directory() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let home = directories::BaseDirs::new()
+        .unwrap()
+        .home_dir()
+        .to_path_buf();
+    app.controller
+        .dispatch(Command::AddWorkspace {
+            group: None,
+            cwd: home.clone(),
+            name: "biggabo".into(),
+            remote: None,
+        })
+        .unwrap();
+    let pane = app.controller.model().active_pane().unwrap();
+    let project = home.join("Documents/Projects/kreando/kreando");
+    app.controller
+        .dispatch(Command::PaneCwdChanged {
+            pane,
+            generation: 1,
+            cwd: project.clone(),
+        })
+        .unwrap();
+
+    assert_eq!(app.controller.model().pane(pane).unwrap().cwd(), project);
+    assert_eq!(app.views()[0].cwd, project);
+    assert_eq!(app.controller.model().workspaces()[0].cwd(), home);
+
+    let saved =
+        crate::persistence::workspace_state::StateSnapshot::from_model(app.controller.model());
+    app.controller = Controller::new(saved.into_model(neptune_model::Limits::default()).unwrap());
+    assert_eq!(app.views()[0].cwd, project);
+    app.controller
+        .dispatch(Command::PaneCwdChanged {
+            pane,
+            generation: 1,
+            cwd: home.clone(),
+        })
+        .unwrap();
+    assert_eq!(app.views()[0].cwd, home);
+}
+
+#[test]
+fn workspace_sidebar_uses_each_workspaces_focused_pane() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut app, _sender) = fixture(root.path());
+    let workspace = add_workspace(&mut app, root.path(), None);
+    let first = app.controller.model().active_pane().unwrap();
+    let second_directory = root.path().join("second");
+    app.controller
+        .dispatch(Command::AddTab {
+            workspace,
+            pane: first,
+            cwd: second_directory.clone(),
+        })
+        .unwrap();
+    let second = app.controller.model().active_pane().unwrap();
+    assert_eq!(app.views()[0].cwd, second_directory);
+
+    let first_directory = root.path().join("first");
+    app.controller
+        .dispatch(Command::PaneCwdChanged {
+            pane: first,
+            generation: 1,
+            cwd: first_directory.clone(),
+        })
+        .unwrap();
+    assert_eq!(app.views()[0].cwd, second_directory);
+    add_workspace(&mut app, root.path(), None);
+    assert_eq!(app.views()[0].cwd, second_directory);
+    assert_eq!(app.views()[1].cwd, root.path());
+
+    app.controller
+        .dispatch(Command::FocusPane {
+            workspace,
+            pane: first,
+        })
+        .unwrap();
+    assert_eq!(app.views()[0].cwd, first_directory);
+    app.controller.dispatch(Command::ClosePane(first)).unwrap();
+    assert_eq!(app.views()[0].cwd, second_directory);
+    app.controller
+        .dispatch(Command::RestartPane(second))
+        .unwrap();
+    assert_eq!(app.views()[0].cwd, second_directory);
+}
+
+#[test]
 fn new_workspace_opens_at_home_without_a_dialog_and_can_be_renamed() {
     let root = tempfile::tempdir().unwrap();
     let (mut app, _sender) = fixture(root.path());

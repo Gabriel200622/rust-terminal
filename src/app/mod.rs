@@ -483,7 +483,7 @@ impl App {
                     id: w.id(),
                     group: w.group(),
                     name: w.name().into(),
-                    cwd: w.cwd().into(),
+                    cwd: w.pane(w.active()).map_or(w.cwd(), |pane| pane.cwd()).into(),
                     remote: w.remote().map(|remote| remote.destination().to_owned()),
                     panes: w.panes().len(),
                     unread,
