@@ -24,6 +24,8 @@ Hold Command on macOS or Ctrl on Linux/Windows to reveal small shortcut hints in
 
 New workspace opens and selects a fresh shell at `~` immediately. Rename it later by double-clicking its sidebar row or choosing Rename workspace from its menu or the command palette.
 
+The directory beneath a local workspace's name follows its focused terminal. Switching between tabs or split panes updates that directory; inactive workspaces show their last focused terminal's directory. Long paths are shortened to fit the sidebar. SSH workspaces show their host there.
+
 ## Workspace groups
 
 Secondary-click the **Workspaces** heading or empty sidebar space for **New workspace**, **New SSH workspace**, and **New workspace group**. A group is a folder containing local or SSH workspaces. Click its name to expand or collapse it; hover the row and click **+** to open a new shell inside it. Secondary-click the folder to create an SSH workspace, rename it, or remove the group. Double-click also renames.

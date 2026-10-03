@@ -171,6 +171,7 @@ pub struct WorkspaceView {
     pub id: WorkspaceId,
     pub group: Option<WorkspaceGroupId>,
     pub name: String,
+    /// Current local directory of this workspace's focused terminal.
     pub cwd: PathBuf,
     /// SSH destination of a remote workspace.
     pub remote: Option<String>,
