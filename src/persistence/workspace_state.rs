@@ -10,7 +10,7 @@ use std::{
 };
 
 /// Version 6 adds per-pane agent resume references. Versions 1–5 remain readable.
-pub const SCHEMA_VERSION: u32 = 6;
+pub const SCHEMA_VERSION: u32 = 7;
 const MAX_STATE_BYTES: u64 = 8 * 1024 * 1024;
 
 /// This DTO is the disk contract. Runtime layout serialization cannot change it.
@@ -101,6 +101,11 @@ pub struct SavedPane {
 pub enum SavedLayout {
     Pane {
         pane: PaneId,
+    },
+    /// Several terminals in one place, written from schema version 7.
+    Tabs {
+        panes: Vec<PaneId>,
+        shown: PaneId,
     },
     Split {
         id: SplitId,
@@ -217,7 +222,13 @@ impl SavedWorkspace {
 impl SavedLayout {
     fn from_layout(layout: &Layout) -> Self {
         match layout {
-            Layout::Leaf(pane) => Self::Pane { pane: *pane },
+            Layout::Tabs { panes, shown } => match panes[..] {
+                [pane] => Self::Pane { pane },
+                _ => Self::Tabs {
+                    panes: panes.clone(),
+                    shown: *shown,
+                },
+            },
             Layout::Split {
                 id,
                 axis,
@@ -238,7 +249,8 @@ impl SavedLayout {
     }
     fn into_layout(self) -> Layout {
         match self {
-            Self::Pane { pane } => Layout::Leaf(pane),
+            Self::Pane { pane } => Layout::pane(pane),
+            Self::Tabs { panes, shown } => Layout::Tabs { panes, shown },
             Self::Split {
                 id,
                 axis,
@@ -617,14 +629,14 @@ fn restore_legacy(legacy: LegacyState, limits: Limits, report: &mut LoadReport) 
             });
             next_pane += 1;
         }
-        let mut layout = Layout::Leaf(panes[0].id);
+        let mut layout = Layout::pane(panes[0].id);
         for pane in panes.iter().skip(1) {
             layout = Layout::Split {
                 id: SplitId::new(next_split),
                 axis: Axis::Vertical,
                 ratio: 0.5,
                 first: Box::new(layout),
-                second: Box::new(Layout::Leaf(pane.id)),
+                second: Box::new(Layout::pane(pane.id)),
             };
             next_split += 1;
         }
@@ -674,7 +686,7 @@ fn migrate_layout(
     match layout {
         LegacyLayout::Leaf(old) => {
             let pane = *mapping.get(&old)?;
-            seen.insert(pane).then_some(Layout::Leaf(pane))
+            seen.insert(pane).then_some(Layout::pane(pane))
         }
         LegacyLayout::Split {
             vertical,
@@ -917,10 +929,57 @@ mod tests {
     }
 
     #[test]
+    fn tabs_round_trip_while_a_terminal_alone_in_its_place_keeps_the_earlier_form() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("workspaces.json");
+        let mut controller = Controller::new(
+            sample(directory.path())
+                .into_model(Limits::default())
+                .unwrap(),
+        );
+        let workspace = controller.model().active_workspace().unwrap();
+        let first = controller.model().workspaces()[0].panes()[0].id();
+        controller
+            .dispatch(Command::AddTab {
+                workspace,
+                pane: first,
+                cwd: directory.path().into(),
+            })
+            .unwrap();
+        let tab = controller.model().active_pane().unwrap();
+        // The focused terminal is restored in view, so focus the other place.
+        let beside = controller.model().workspaces()[0].panes()[1].id();
+        controller
+            .dispatch(Command::FocusPane {
+                workspace,
+                pane: beside,
+            })
+            .unwrap();
+        let saved = serde_json::to_value(StateSnapshot::from_model(controller.model())).unwrap();
+        let layout = &saved["workspaces"][0]["layout"];
+        assert_eq!(
+            layout["first"],
+            serde_json::json!({ "kind": "tabs", "panes": [first, tab], "shown": tab })
+        );
+        assert_eq!(
+            layout["second"],
+            serde_json::json!({ "kind": "pane", "pane": beside })
+        );
+        std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let report = load_state(&path, Limits::default());
+        assert!(report.can_write && !report.migrated);
+        assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+        assert_eq!(
+            report.model.unwrap().workspaces(),
+            controller.model().workspaces()
+        );
+    }
+
+    #[test]
     fn earlier_schema_versions_are_read_without_loss_and_saved_as_the_current_version() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("workspaces.json");
-        for version in [1, 2, 3, 4, 5] {
+        for version in [1, 2, 3, 4, 5, 6] {
             let mut saved = serde_json::to_value(sample(directory.path())).unwrap();
             saved["version"] = version.into();
             saved.as_object_mut().unwrap().remove("groups");
@@ -1117,7 +1176,7 @@ mod tests {
         std::fs::write(&path, text).unwrap();
         let report = load_state(&path, Limits::default());
         let model = report.model.unwrap();
-        assert_eq!(model.workspaces()[0].layout().leaves().len(), 2);
+        assert_eq!(model.workspaces()[0].layout().panes().len(), 2);
         assert!(
             report
                 .diagnostics

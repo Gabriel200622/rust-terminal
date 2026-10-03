@@ -85,7 +85,7 @@ and macOS. Windows draws its own corners and border, so the window paints square
 corners there. Maximized windows keep rounded corners on macOS and use square
 corners on Linux. Fullscreen windows use square corners on every platform;
 restoring the window brings the rounded corners back.
-The toolbar is 44 points tall and pane headers 30. Controls are 30 points high;
+The toolbar is 44 points tall and pane headers 34. Controls are 30 points high;
 icon buttons keep a 28-point target around a 16-point glyph.
 
 ## Layout
@@ -144,20 +144,26 @@ icon buttons keep a 28-point target around a 16-point glyph.
 - **Panes.** Rounded surfaces in the chrome, separated by a 6-point gutter that
   is also the split handle (a grip appears on hover; double-click evens the
   split). The surface takes the terminal's resolved background, so a program
-  that changes it stays seamless. With several panes, each has a header with
-  the program and directory (the host, for a remote terminal); the focused
-  pane carries an accent ring and the others recede slightly. Zooming shows one pane and a "Zoomed" chip in the
-  toolbar that restores the layout.
-- **Moving a terminal.** A pane's header title is its handle. Dragging it lifts
+  that changes it stays seamless. Each place in the layout holds one or more
+  terminals as tabs, with one in view. With several terminals, each place has
+  a header with a tab per terminal, naming the program and directory (the
+  host, for a remote terminal), followed by "New tab", zoom and split
+  controls. The tab in view is filled once it has neighbours; a tab out of
+  view shows a dot for unread alerts, and each tab closes from its own button
+  or a middle click. The focused pane carries an accent ring and the others
+  recede slightly. Zooming shows one place, with its tabs, and a "Zoomed" chip
+  in the toolbar that restores the layout.
+- **Moving a terminal.** A terminal's tab is its handle. Dragging it lifts
   the terminal: its pane recedes, a chip with its name follows the pointer, and
-  the pane under the pointer shows in the accent the area a drop would take.
-  The nearest edge places the terminal beside that pane; the centre swaps the
-  two, marked by a swap badge. The preview glides between areas and fades where
-  it is released. Dropping on another workspace's sidebar row moves the
-  terminal there, beside that workspace's roomiest pane and across its longer
-  side, so arrivals fill a grid instead of narrowing one pane; the view stays
-  where it was; moving a workspace's last terminal removes the workspace
-  and follows the terminal. The shell keeps running throughout. A drop where
+  the place under the pointer shows in the accent the area a drop would take.
+  The nearest edge gives the terminal a place of its own beside that one,
+  which is also how a tab leaves the place it shares; the centre adds it to
+  that place's tabs, and a drop on the header puts it between the tabs under
+  the pointer, marked by an insertion line. The preview glides between areas
+  and fades where it is released. Dropping on another workspace's sidebar row
+  moves the terminal there as the last tab beside that workspace's focused
+  terminal; the view stays where it was; moving a workspace's last terminal
+  removes the workspace and follows the terminal. The shell keeps running throughout. A drop where
   the terminal already is changes nothing, and Escape or an opening sheet
   cancels the drag. A single terminal has no header, so it moves through the
   command palette's "Move terminal to …" commands.

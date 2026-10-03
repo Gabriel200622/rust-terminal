@@ -31,7 +31,7 @@ pub mod metrics {
     pub const GUTTER: f32 = 6.0;
     pub const PANE_RADIUS: u8 = 10;
     pub const TOOLBAR_HEIGHT: f32 = 44.0;
-    pub const PANE_HEADER: f32 = 30.0;
+    pub const PANE_HEADER: f32 = 34.0;
     pub const SHEET_RADIUS: u8 = 14;
     pub const CONTROL_RADIUS: u8 = 8;
     pub const ROW_RADIUS: u8 = 8;

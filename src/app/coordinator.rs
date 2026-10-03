@@ -468,35 +468,8 @@ impl App {
                 self.ui.overlay = OverlayState::None;
             }
             Action::Disconnect(workspace) => self.request_close(ctx, Close::Connection(workspace)),
-            Action::Split(pane, axis) => {
-                if let Some(workspace) = self.controller.model().workspace_for_pane(pane) {
-                    let local = self.remote_of(pane).is_none();
-                    let metadata = self.sessions.get(pane).map(|session| session.metadata());
-                    if let Some(metadata) = &metadata {
-                        self.sync_directory(ctx, pane, metadata);
-                    }
-                    let cwd = self
-                        .controller
-                        .model()
-                        .pane(pane)
-                        .map(|p| p.cwd().to_path_buf());
-                    let cwd = metadata
-                        .as_ref()
-                        .filter(|_| local)
-                        .map(|metadata| metadata.cwd.clone())
-                        .or(cwd)
-                        .unwrap_or_default();
-                    self.dispatch(
-                        ctx,
-                        Command::SplitPane {
-                            workspace,
-                            pane,
-                            axis,
-                            cwd,
-                        },
-                    );
-                }
-            }
+            Action::Split(pane, axis) => self.open_beside(ctx, pane, Some(axis)),
+            Action::NewTab(pane) => self.open_beside(ctx, pane, None),
             Action::SelectWorkspace(id) => {
                 self.dispatch(ctx, Command::SelectWorkspace(id));
                 if self.controller.model().active_workspace() == Some(id)
@@ -769,6 +742,51 @@ impl App {
     }
 
     /// Adds a workspace named after its folder, or after its host when remote.
+    /// Opens a terminal beside `pane`, in the directory that terminal is in:
+    /// across a split, or as a tab in the same place without an axis.
+    fn open_beside(
+        &mut self,
+        ctx: &egui::Context,
+        pane: PaneId,
+        axis: Option<neptune_model::Axis>,
+    ) {
+        let Some(workspace) = self.controller.model().workspace_for_pane(pane) else {
+            return;
+        };
+        let local = self.remote_of(pane).is_none();
+        let metadata = self.sessions.get(pane).map(|session| session.metadata());
+        if let Some(metadata) = &metadata {
+            self.sync_directory(ctx, pane, metadata);
+        }
+        let cwd = self
+            .controller
+            .model()
+            .pane(pane)
+            .map(|p| p.cwd().to_path_buf());
+        let cwd = metadata
+            .as_ref()
+            .filter(|_| local)
+            .map(|metadata| metadata.cwd.clone())
+            .or(cwd)
+            .unwrap_or_default();
+        self.dispatch(
+            ctx,
+            match axis {
+                Some(axis) => Command::SplitPane {
+                    workspace,
+                    pane,
+                    axis,
+                    cwd,
+                },
+                None => Command::AddTab {
+                    workspace,
+                    pane,
+                    cwd,
+                },
+            },
+        );
+    }
+
     pub(super) fn create_workspace(
         &mut self,
         ctx: &egui::Context,

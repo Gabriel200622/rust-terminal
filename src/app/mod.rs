@@ -325,10 +325,7 @@ impl App {
                             && self.controller.model().active_pane() == Some(pane);
                         let visible = ctx
                             .input(|i| i.focused && !i.viewport().minimized.unwrap_or(false))
-                            && self.controller.model().workspace_for_pane(pane)
-                                == self.controller.model().active_workspace()
-                            && (!self.ui.zoomed
-                                || self.controller.model().active_pane() == Some(pane));
+                            && self.shown().contains(&pane);
                         if matches!(
                             notification.occasion,
                             terminal_core::NotificationOccasion::Unfocused
@@ -459,6 +456,16 @@ impl App {
             })
             .collect()
     }
+    /// The terminals in view: the tab shown in each place of the active
+    /// workspace, or only the focused one while it is zoomed.
+    fn shown(&self) -> Vec<PaneId> {
+        let model = self.controller.model();
+        match model.active_workspace().and_then(|id| model.workspace(id)) {
+            Some(workspace) if self.ui.zoomed => vec![workspace.active()],
+            Some(workspace) => workspace.layout().shown(),
+            None => Vec::new(),
+        }
+    }
     fn presentations(&self) -> BTreeMap<PaneId, PanePresentation> {
         let Some(workspace) = self
             .controller
@@ -471,17 +478,21 @@ impl App {
         let remote = workspace
             .remote()
             .map(|remote| remote.destination().to_owned());
+        // Tabs out of view contribute a title, not their content.
+        let shown = self.shown();
         workspace
             .panes()
             .iter()
-            .filter(|pane| !self.ui.zoomed || pane.id() == workspace.active())
             .map(|pane| {
+                let shown = shown.contains(&pane.id());
                 let presentation = if let Some(session) = self.sessions.get(pane.id()) {
-                    session.acknowledge_repaint();
+                    if shown {
+                        session.acknowledge_repaint();
+                    }
                     PanePresentation {
                         unread: self.notifications.unread(Some(pane.id())),
                         metadata: session.metadata(),
-                        snapshot: session.viewport(),
+                        snapshot: shown.then(|| session.viewport()),
                         starting: false,
                         remote: remote.clone(),
                     }
@@ -509,10 +520,10 @@ impl App {
                             bell_count: 0,
                         },
                         // A placeholder has no shell, so it shows no cursor.
-                        snapshot: ViewportSnapshot {
+                        snapshot: shown.then(|| ViewportSnapshot {
                             mode: Mode::NONE,
                             ..ViewportSnapshot::blank(80, 24)
-                        },
+                        }),
                         starting: !matches!(pane.lifecycle(), Lifecycle::Failed(_)),
                         remote: remote.clone(),
                     }
@@ -801,21 +812,7 @@ impl eframe::App for App {
             drawn: stage_from(edge),
             settled: stage_from(rest),
         };
-        let visible: std::collections::HashSet<_> = self
-            .controller
-            .model()
-            .active_workspace()
-            .and_then(|id| self.controller.model().workspace(id))
-            .map(|w| {
-                if self.ui.zoomed {
-                    vec![w.active()]
-                } else {
-                    w.panes().iter().map(|p| p.id()).collect()
-                }
-            })
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
+        let visible = self.shown();
         let cache_limit =
             self.sessions.policy().max_sessions * self.sessions.policy().cache_bytes_per_session;
         let mut cache_bytes = self
@@ -836,15 +833,18 @@ impl eframe::App for App {
         let overlay = self.ui.overlay != OverlayState::None;
         let mut output = ui::workspace::StageOutput::default();
         if let Some(workspace) = active.and_then(|id| self.controller.model().workspace(id)) {
-            let layout = if self.ui.zoomed {
-                neptune_model::Layout::Leaf(workspace.active())
-            } else {
-                workspace.layout().clone()
+            // A zoomed terminal keeps the tabs it shares its place with.
+            let layout = match workspace.layout().tabs(workspace.active()) {
+                Some((tabs, shown)) if self.ui.zoomed => neptune_model::Layout::Tabs {
+                    panes: tabs.to_vec(),
+                    shown,
+                },
+                _ => workspace.layout().clone(),
             };
             let stage_view = ui::workspace::Stage {
                 presentations: &presentations,
                 active: workspace.active(),
-                multiple: layout.leaves().len() > 1,
+                multiple: layout.panes().len() > 1,
                 zoomed: self.ui.zoomed,
                 keyboard: !overlay,
                 previous_terminal: self.terminal_focus,

@@ -88,6 +88,8 @@ pub struct UiState {
 #[derive(Clone)]
 pub enum Action {
     Split(PaneId, Axis),
+    /// Open a terminal as a tab beside this one.
+    NewTab(PaneId),
     MovePane(PaneId, Destination),
     ClosePane(PaneId),
     CloseWorkspace(WorkspaceId),
