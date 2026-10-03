@@ -59,6 +59,20 @@ Preferences opens on Updates; `NEPTUNE_PREFERENCES_PANE` names another pane
 exits after its capture and removes its temporary data root. These are visual
 fixtures, not proof of an actual published/signed installer download.
 
+The file-drop highlight can be captured the same way, with files held over the
+focused terminal as another application's drag would leave them:
+
+```sh
+NEPTUNE_DROP_CAPTURE="$PWD/artifacts/native-file-drop.png" \
+  cargo test -p neptune-terminal --lib app::tests::capture_file_drop_native --locked -- --ignored --nocapture
+```
+
+`NEPTUNE_DROP_SPLIT=1` shows two terminals, `NEPTUNE_DROP_AGENT=1` marks the
+focused one as running Claude Code, and `NEPTUNE_DROP_NARROW=1` uses a 640×400
+window. It shows the highlight, not an actual drag: a drop from a real file
+manager, and where the pointer is during it, need a hand-driven native check on
+each of X11 and Wayland.
+
 The integrated shell regression needs a POSIX shell. X11 injection verifies
 Linux/X11 input, not Wayland, macOS or Windows input. Inspection events verify
 application routing; clipboard, IME and real OS keyboard behavior need native

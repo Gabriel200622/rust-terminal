@@ -43,6 +43,7 @@ pub enum Icon {
     Swap,
     Globe,
     Star,
+    Image,
 }
 
 /// Paint an icon into its visual bounds. The caller controls the hit area.
@@ -326,6 +327,12 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
                 meridian.push([12.0 + 4.0 * angle.cos(), 12.0 + 9.0 * angle.sin()]);
             }
             line(&meridian);
+        }
+        Icon::Image => {
+            rectangle(3.0, 4.0, 18.0, 16.0, 3.0);
+            circle(8.5, 9.5, 1.7);
+            line(&[[4.5, 18.0], [10.0, 12.5], [13.5, 16.0]]);
+            line(&[[13.5, 16.0], [16.0, 13.5], [20.0, 17.5]]);
         }
         Icon::Star => {
             // Closed, so all five points are mitred alike.

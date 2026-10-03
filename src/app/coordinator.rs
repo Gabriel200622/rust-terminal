@@ -669,17 +669,11 @@ impl App {
                     crate::platform::clipboard::copy(ctx, text);
                 }
             }
-            Action::Paste(pane) => match crate::platform::clipboard::read() {
-                Ok(text) => {
-                    if let Some(session) = self.sessions.get(pane) {
-                        match session.paste(&text) {
-                            Ok(()) => self.notifications.acknowledge(Some(pane)),
-                            Err(error) => self.ui.error = Some(error.to_string()),
-                        }
-                    }
-                }
-                Err(error) => self.ui.error = Some(error),
-            },
+            Action::Paste(pane) => self.paste_clipboard(ctx, pane, false),
+            Action::DropFiles(pane, paths) => {
+                self.action(ctx, Action::Focus(pane));
+                self.paste_paths(pane, &paths);
+            }
             Action::Preferences(mut config) => {
                 if let Err(error) = config.validate() {
                     self.ui.error = Some(error.to_string());

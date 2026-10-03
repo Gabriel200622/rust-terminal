@@ -6,6 +6,7 @@ impl App {
         ctx: &egui::Context,
         rect: Rect,
         context: RoutingContext,
+        swallowed_paste: Option<egui::Modifiers>,
     ) {
         let Some(id) = self.controller.model().active_pane() else {
             return;
@@ -24,6 +25,14 @@ impl App {
             }
             return;
         }
+        // The toolkit keeps a paste chord to itself when the clipboard has no
+        // text. Ctrl+V still belongs to the program, which may read a picture
+        // from the clipboard itself; the host chord pastes the picture's path.
+        let terminal_chord =
+            swallowed_paste.filter(|chord| chord.ctrl && !chord.shift && !chord.mac_cmd);
+        if swallowed_paste.is_some() && terminal_chord.is_none() {
+            self.paste_clipboard(ctx, id, true);
+        }
         let Some(session) = self.sessions.get(id) else {
             return;
         };
@@ -32,7 +41,19 @@ impl App {
         };
         let mode = session.modes();
         let events = ctx.input(|i| i.events.clone());
-        let normalized = crate::input::normalize_events(&events, ctx.input(|i| i.modifiers));
+        let mut normalized = crate::input::normalize_events(&events, ctx.input(|i| i.modifiers));
+        if let Some(chord) = terminal_chord {
+            normalized.insert(
+                0,
+                crate::input::InputEvent::Key {
+                    key: terminal_core::input::Key::V,
+                    physical_key: None,
+                    modifiers: crate::input::modifiers(chord),
+                    pressed: true,
+                    repeat: false,
+                },
+            );
+        }
         for input in crate::input::route_events(context, &normalized, mode) {
             let result = match input.action {
                 InputAction::Write(bytes) => {

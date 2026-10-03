@@ -134,6 +134,8 @@ pub enum Action {
     Restart(PaneId),
     Copy(PaneId),
     Paste(PaneId),
+    /// Files from another application released over this terminal.
+    DropFiles(PaneId, Vec<PathBuf>),
     Zoom,
     ZoomUiIn,
     ZoomUiOut,

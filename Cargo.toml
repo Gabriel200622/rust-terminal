@@ -59,6 +59,13 @@ mac-notification-sys = "0.6.15"
 objc2 = "0.6.4"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "NSEvent", "NSWindow"] }
 
+# Already part of the window backend. File drags need the pointer position,
+# which the window toolkit does not report, and Wayland drops entirely.
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = "0.13"
+wayland-client = "0.31"
+wayland-backend = { version = "0.3", features = ["client_system"] }
+
 [target."cfg(windows)".dependencies]
 winreg = "0.10.1"
 
