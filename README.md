@@ -70,7 +70,8 @@ running processes** asks when a terminal has an active job, even if the first
 switch is off. They apply to terminals, whole workspaces, SSH disconnects and
 quitting Neptune, including terminals in hidden workspaces. One confirmation
 covers the whole action; Cancel preserves the sessions. Process checks do not
-show a dialog until confirmation is needed; Escape can cancel a pending check.
+show a dialog or dim the window until confirmation is needed; Escape can cancel
+a pending check.
 
 The process check runs on session workers only when closing is requested. It
 uses OS metadata rather than terminal titles or output, detects foreground,

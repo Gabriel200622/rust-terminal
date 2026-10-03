@@ -204,6 +204,144 @@ mod tests {
         sender
     }
 
+    fn close_frame(
+        app: &mut App,
+        ctx: &egui::Context,
+        size: Vec2,
+        time: f64,
+        events: Vec<egui::Event>,
+    ) -> Vec<egui::epaint::ClippedShape> {
+        let mut frame = eframe::Frame::_new_kittest();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+            |ui| eframe::App::ui(app, ui, &mut frame),
+        );
+        output.textures_delta.clear();
+        output.shapes
+    }
+
+    fn has_scrim(shapes: &[egui::epaint::ClippedShape], size: Vec2) -> bool {
+        shapes.iter().any(|shape| {
+            matches!(&shape.shape, egui::Shape::Rect(rect)
+                if rect.rect == Rect::from_min_size(Pos2::ZERO, size)
+                    && rect.fill.a() > 0
+                    && rect.fill.r() == 0 && rect.fill.g() == 0 && rect.fill.b() == 0)
+        })
+    }
+
+    fn has_close_sheet(shapes: &[egui::epaint::ClippedShape], target: Close) -> bool {
+        shapes.iter().any(|shape| {
+            matches!(&shape.shape, egui::Shape::Text(text)
+                if text.galley.text() == ui::dialogs::close_copy(target).0)
+        })
+    }
+
+    #[test]
+    fn close_idle_checks_never_dim_the_window_including_the_completion_frame() {
+        for size in [egui::vec2(900.0, 640.0), egui::vec2(640.0, 400.0)] {
+            for kind in 0..4 {
+                for cancel in [false, true] {
+                    let (mut app, ctx, _root, pane) = setup();
+                    app.config.confirm_close = false;
+                    let workspace = app.controller.model().active_workspace().unwrap();
+                    let target = match kind {
+                        0 => Close::Pane(pane),
+                        1 => Close::Workspace(workspace),
+                        2 => Close::Connection(workspace),
+                        _ => Close::App,
+                    };
+                    ctx.set_fonts(crate::platform::fonts::bundled_definitions());
+                    theme::apply(&ctx, &app.config);
+                    close_frame(&mut app, &ctx, size, 0.0, vec![]);
+                    let sender = observation(&mut app, target);
+                    // Keep the worker pending longer than the scrim animation.
+                    for tick in 1..=4 {
+                        let shapes = close_frame(&mut app, &ctx, size, tick as f64 * 0.1, vec![]);
+                        assert!(!has_scrim(&shapes, size), "{target:?}: checking");
+                        assert!(!has_close_sheet(&shapes, target));
+                        assert!(app.pending_close.is_some());
+                        assert!(app.controller.model().pane(pane).is_some());
+                    }
+                    sender.send(ProcessActivity::Idle).unwrap();
+                    let events = if cancel {
+                        vec![egui::Event::Key {
+                            key: egui::Key::Escape,
+                            physical_key: None,
+                            pressed: true,
+                            repeat: false,
+                            modifiers: egui::Modifiers::NONE,
+                        }]
+                    } else {
+                        vec![]
+                    };
+                    // The completed result is polled after this frame paints.
+                    let shapes = close_frame(&mut app, &ctx, size, 0.5, events);
+                    assert!(!has_scrim(&shapes, size), "{target:?}: completion");
+                    assert!(!has_close_sheet(&shapes, target));
+                    assert!(app.pending_close.is_none());
+                    assert_eq!(app.exit_approved, target == Close::App && !cancel);
+                    if cancel {
+                        assert!(app.controller.model().pane(pane).is_some());
+                    } else if matches!(target, Close::Pane(_) | Close::Workspace(_)) {
+                        assert!(app.controller.model().pane(pane).is_none());
+                    }
+                    for tick in 6..=9 {
+                        let shapes = close_frame(&mut app, &ctx, size, tick as f64 * 0.1, vec![]);
+                        assert!(!has_scrim(&shapes, size), "{target:?}: after completion");
+                        assert!(!has_close_sheet(&shapes, target));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn close_confirmation_dims_only_after_a_check_requires_a_sheet() {
+        for result in [
+            ProcessActivity::Idle,
+            ProcessActivity::Running,
+            ProcessActivity::Unknown,
+        ] {
+            let (mut app, ctx, _root, pane) = setup();
+            app.config.confirm_close = result == ProcessActivity::Idle;
+            let target = Close::Pane(pane);
+            let size = egui::vec2(640.0, 400.0);
+            ctx.set_fonts(crate::platform::fonts::bundled_definitions());
+            theme::apply(&ctx, &app.config);
+            close_frame(&mut app, &ctx, size, 0.0, vec![]);
+            let sender = observation(&mut app, target);
+            for tick in 1..=4 {
+                let shapes = close_frame(&mut app, &ctx, size, tick as f64 * 0.1, vec![]);
+                assert!(!has_scrim(&shapes, size));
+                assert!(!has_close_sheet(&shapes, target));
+            }
+            sender.send(result).unwrap();
+            let shapes = close_frame(&mut app, &ctx, size, 0.5, vec![]);
+            assert!(!has_scrim(&shapes, size));
+            assert!(!has_close_sheet(&shapes, target));
+            assert!(app.controller.model().pane(pane).is_some());
+            for tick in 6..=9 {
+                close_frame(&mut app, &ctx, size, tick as f64 * 0.1, vec![]);
+            }
+            let shapes = close_frame(&mut app, &ctx, size, 1.0, vec![]);
+            assert!(has_scrim(&shapes, size), "{result:?}: confirmed warning");
+            assert!(has_close_sheet(&shapes, target));
+            app.action(&ctx, Action::CancelClose);
+            for tick in 11..=14 {
+                close_frame(&mut app, &ctx, size, tick as f64 * 0.1, vec![]);
+            }
+            let shapes = close_frame(&mut app, &ctx, size, 1.5, vec![]);
+            assert!(!has_scrim(&shapes, size));
+            assert!(!has_close_sheet(&shapes, target));
+            assert!(app.controller.model().pane(pane).is_some());
+        }
+    }
+
     #[test]
     fn close_idle_app_and_pane_wait_for_checks_and_honor_escape() {
         for whole_app in [false, true] {
