@@ -2665,7 +2665,11 @@ fn capture_update_native() {
                 },
                 window_state::LoadReport::default(),
             );
-            if screen == "preferences" {
+            if screen == "preferences-update" {
+                app.updates.release = Some(crate::runtime::updates::tests::visual_release());
+                app.updates.status = crate::runtime::updates::UpdateStatus::Available;
+            }
+            if screen.starts_with("preferences") {
                 use ui::preferences::Pane;
                 if let Ok(query) = std::env::var("NEPTUNE_PREFERENCES_SEARCH") {
                     app.ui.preference_view = ui::preferences::View::searching(&query);
@@ -2676,7 +2680,11 @@ fn capture_update_native() {
                     .find(|entry| entry.title().eq_ignore_ascii_case(&pane))
                     .unwrap_or(Pane::Updates);
             } else {
-                app.updates.release = Some(crate::runtime::updates::tests::visual_release());
+                let mut release = crate::runtime::updates::tests::visual_release();
+                if let Some(notes) = std::env::var_os("NEPTUNE_UPDATE_NOTES") {
+                    release.notes = std::fs::read_to_string(notes).unwrap();
+                }
+                app.updates.release = Some(release);
                 use crate::runtime::updates::UpdateStatus;
                 app.updates.status = match screen.as_str() {
                     "ready" => UpdateStatus::Ready,
@@ -2685,7 +2693,7 @@ fn capture_update_native() {
                 };
             }
             let overlay = match screen.as_str() {
-                "preferences" => OverlayState::Settings,
+                "preferences" | "preferences-update" => OverlayState::Settings,
                 "notification" => OverlayState::None,
                 _ => OverlayState::Update,
             };

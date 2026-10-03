@@ -11,6 +11,9 @@ their preparation records remain in Git history.
 
 ### What's New
 
+- Read release notes in a redesigned update sheet, with wrapped lists, a status
+  that stays in view while the notes scroll and actions at the trailing edge.
+
 ## [0.1.0-rc.2] - 2026-10-03
 
 ### What's New
