@@ -202,6 +202,12 @@ icon buttons keep a 28-point target around a 16-point glyph.
   "Disconnect from SSH?", "Quit Neptune?"). The SSH sheet asks only for a host,
   states that connecting an existing workspace restarts its terminals, and
   names the problem in place of that note while the host is unusable.
+- **Software update.** The sheet leads with the version on offer, the
+  installed version and a link to the release. The release notes scroll
+  beneath as headed lists that wrap to the sheet, followed by how to install.
+  Progress, a verified download or a failure sits in a card above the action
+  bar and stays in view while the notes scroll; "Later" and the download
+  action trail the bar.
 - **Preferences.** A source list beside one pane of settings, as a desktop
   settings window is laid out. The list is a surface of its own in the window
   material, concentric with the sheet, and names the panes with an icon:

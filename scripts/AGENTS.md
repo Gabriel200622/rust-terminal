@@ -49,7 +49,9 @@ NEPTUNE_UPDATE_CAPTURE="$PWD/artifacts/native-update.png" \
 ```
 
 `NEPTUNE_UPDATE_SCREEN=notification` selects the notification; `preferences`
-selects Preferences; `ready` and `error` review those sheet states.
+selects Preferences and `preferences-update` shows it with a release on offer;
+`ready` and `error` review those sheet states. `NEPTUNE_UPDATE_NOTES` names a
+Markdown file to show as the release notes, such as a changelog section.
 Preferences opens on Updates; `NEPTUNE_PREFERENCES_PANE` names another pane
 (`general`, `appearance`, `text`, `shell`, `notifications`), and
 `NEPTUNE_PREFERENCES_SEARCH` opens it on the results for a query.
