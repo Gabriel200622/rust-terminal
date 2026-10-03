@@ -151,7 +151,7 @@ const NOTE_LINE: f32 = 19.0;
 fn body(text: &str, color: Color32) -> LayoutJob {
     let mut job = LayoutJob::default();
     // An unpaired backtick is ordinary text.
-    let paired = text.matches('`').count() % 2 == 0;
+    let paired = text.matches('`').count().is_multiple_of(2);
     for (index, span) in text.split('`').enumerate() {
         let code = paired && index % 2 == 1;
         if !paired && index > 0 {
